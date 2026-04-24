@@ -1,0 +1,11 @@
+node_modules/
+functions/node_modules/
+.firebase/
+.claude/
+public/.claude/
+public/발주앱/firebase-config.js
+public/발주앱/.backup/
+public/발주앱/app.js.backup_20260403
+functions/.env
+*.docx
+.fuse_hidden*

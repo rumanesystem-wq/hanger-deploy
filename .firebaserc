@@ -1,0 +1,12 @@
+{
+  "projects": {
+    "default": "tooktakproject"
+  },
+  "targets": {
+    "tooktakproject": {
+      "hosting": {
+        "hanger": ["hanger-deploy"]
+      }
+    }
+  }
+}
