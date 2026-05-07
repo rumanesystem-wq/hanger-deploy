@@ -857,7 +857,6 @@ function initData(){
         {name:'이불장 목대',              category:'옵션',isSubtype:true,
           colorProdCdMap:{'솔리드화이트':'191','화이트오크':'192','메이플':'193','다크월넛':'194','진그레이':'195','스톤그레이':'196'}},
         {name:'이불장손잡이(1구)',         category:'옵션',isSubtype:true,noColor:true,prodCd:'00014'},
-        {name:'이불장 우라',              category:'옵션',isSubtype:true,noColor:true,prodCd:'00049'},
         {name:'이불 긴장문',              category:'옵션',isSubtype:true,
           colorProdCdMap:{'솔리드화이트':'179','화이트오크':'180','메이플':'181','다크월넛':'182','진그레이':'183','스톤그레이':'184'}},
         {name:'이불 반장문',              category:'옵션',isSubtype:true,
@@ -1155,7 +1154,6 @@ function initData(){
        {name:'디바이더 속서랍',category:'옵션',isSubtype:true},
        {name:'이불장 목대',category:'옵션',isSubtype:true},
        {name:'이불장손잡이(1구)',category:'옵션',isSubtype:true,noColor:true},
-       {name:'이불장 우라',category:'옵션',isSubtype:true,noColor:true},
        {name:'이불 긴장문',category:'옵션',isSubtype:true},
        {name:'이불 반장문',category:'옵션',isSubtype:true},
       ].forEach(_ensure);

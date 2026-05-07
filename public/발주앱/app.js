@@ -800,7 +800,6 @@ function renderPriceSettings(){
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;gap:12px;flex-wrap:wrap">
       <div><div class="section-title">단가 관리</div><div class="section-sub">발주 등록 시 자동 적용되는 단가표를 관리합니다.</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-sm" onclick="openAddPriceItemModal()" style="background:#1e3a5f;color:#fff;font-weight:700"><i class="fas fa-plus"></i> 품목 추가</button>
         <button class="btn btn-outline btn-sm" onclick="saveAllPrices()" style="border-color:#1e40af;color:#1e40af;font-weight:700"><i class="fas fa-floppy-disk"></i> 전체 저장</button>
         <button class="btn btn-outline btn-sm" onclick="restoreDefaultPrices()" style="border-color:#92400e;color:#92400e;font-weight:700"><i class="fas fa-rotate-left"></i> 기본값 복원</button>
       </div>
@@ -1442,13 +1441,11 @@ const ITEM_SUBTYPES = {
     { name: '이불 긴장문',                                       colors: ['솔리드화이트','화이트오크','메이플','다크월넛','진그레이','스톤그레이'] },
     { name: '이불장 목대',       qty: 2,                         colors: ['솔리드화이트','화이트오크','메이플','다크월넛','진그레이','스톤그레이'] },
     { name: '이불장손잡이(1구)', itemName: '이불장손잡이(1구)', colors: null },
-    { name: '이불장 우라',       itemName: '이불장 우라',        colors: null },
   ],
   '이불 반장': [
     { name: '이불 반장문',                                       colors: SHELF_COLORS },
     { name: '이불장 목대',                                       colors: ['솔리드화이트','화이트오크','메이플','다크월넛','진그레이','스톤그레이'] },
     { name: '이불장손잡이(1구)', itemName: '이불장손잡이(1구)', colors: null },
-    { name: '이불장 우라',       itemName: '이불장 우라',        colors: null },
   ],
   '화장대세트': [
     { name: '화장대(대)',      colors: ['솔리드화이트','화이트오크','메이플','다크월넛','진그레이','스톤그레이'] },
