@@ -799,16 +799,13 @@ function initData(){
         }
       });
       if(_changed)DB.set('items',_items);
-      // price_settings에도 추가 + 기존 잘못된 단가 강제 업데이트
+      // price_settings에 누락 시 추가 (기존 가격은 보존 — UI 변경값 유지)
       let _ps=DB.get('price_settings',[]);
       let _psChanged=false;
-      [{name:'이불 반장',price:80000},{name:'이불 긴장',price:220000}].forEach(ni=>{
+      [{name:'이불 반장',price:80000},{name:'이불 긴장',price:255000}].forEach(ni=>{
         const existing=_ps.find(p=>p.name===ni.name);
         if(!existing){
           _ps.push({name:ni.name,category:'서랍/옵션',price:ni.price});
-          _psChanged=true;
-        } else if(existing.price!==ni.price){
-          existing.price=ni.price; // 잘못된 단가 강제 수정
           _psChanged=true;
         }
       });
