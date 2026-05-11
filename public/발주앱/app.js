@@ -473,12 +473,13 @@ function renderDashboard(){
   if(recentOrders.length===0){
     html+=`<div class="empty"><i class="fas fa-file-invoice"></i><p>등록된 발주서가 없습니다.</p></div>`;
   }else{
-    html+=`<div class="table-wrap"><table class="dash-recent-tbl"><thead><tr><th>납품처</th><th>발주일</th><th class="td-center">발주상태</th><th class="td-center">재고</th></tr></thead><tbody>
+    html+=`<div class="table-wrap"><table class="dash-recent-tbl"><thead><tr><th>납품처</th><th>발주번호 / 발주일</th><th class="td-center">발주상태</th><th class="td-center">재고</th></tr></thead><tbody>
     ${recentOrders.map(o=>{const hasS=o.items&&o.items.some(i=>i.shortageQty>0);
       const dTo2=o.deliveryTo||o.siteName||'-';
       const region=(o.address||'').split(' ')[0];
+      const orderNumDisp=o.orderNum||('#'+o.id);
       const stockBadge=o.status==='임시저장'?'<span class="badge badge-gray" style="font-size:11px">-</span>':(hasS?'<span class="badge badge-red">부족 발생</span>':'<span class="badge badge-done">재고 충분</span>');
-      return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer"><td class="td-name">${dTo2}${region?`<span style="font-size:11px;color:#94a3b8;margin-left:5px">${region}</span>`:''}</td><td class="td-muted" style="font-size:12px">${fmt(o.orderDate)}</td><td class="td-center">${orderStatusBadge(o.status)}</td><td class="td-center">${stockBadge}</td></tr>`;
+      return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer"><td class="td-name">${dTo2}${region?`<span style="font-size:11px;color:#94a3b8;margin-left:5px">${region}</span>`:''}</td><td class="td-muted" style="font-size:12px"><div style="font-weight:700;color:#475569">${orderNumDisp}</div><div style="color:#94a3b8;font-size:11px">${fmt(o.orderDate)}</div></td><td class="td-center">${orderStatusBadge(o.status)}</td><td class="td-center">${stockBadge}</td></tr>`;
     }).join('')}</tbody></table></div>`;
   }
   html+=`</div>`;
