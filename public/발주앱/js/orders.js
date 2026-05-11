@@ -637,7 +637,7 @@ function renderOrders(){
   if(orders.length===0){
     rows='<div class="empty"><i class="fas fa-file-invoice"></i><p>등록된 발주서가 없습니다.</p>'+(isAdmin()?'':'<button class="btn btn-primary" style="margin-top:12px" id="empty-order-btn">첫 번째 발주서 등록</button>')+'</div>';
   }else{
-    rows=`<div class="table-wrap"><table><thead><tr><th>#</th><th>납품처</th><th>시공주소</th><th>발주일</th><th>출고일</th><th class="td-center">상태</th><th class="td-center">등록일</th>${orderListSubTab==='cancelled'?'<th>취소 사유</th>':''}${isAdmin()?'<th class="td-center">관리</th>':''}</tr></thead><tbody>
+    rows=`<div class="table-wrap"><table><thead><tr><th>납품처</th><th>시공주소</th><th>발주번호</th><th>발주일</th><th>출고일</th><th class="td-center">상태</th><th class="td-center">등록일</th>${orderListSubTab==='cancelled'?'<th>취소 사유</th>':''}${isAdmin()?'<th class="td-center">관리</th>':''}</tr></thead><tbody>
     ${orders.map(o=>{
       const dTo=o.deliveryTo||o.siteName||'-';
       const addr=o.address||o.customerName||'-';
@@ -648,7 +648,7 @@ function renderOrders(){
       const cancelBtn=isAdmin()&&orderListSubTab==='active'?`<button class="btn btn-ghost btn-xs order-cancel-btn" data-order-id="${o.id}" style="color:var(--danger);white-space:nowrap"><i class="fas fa-ban"></i> 발주 취소</button>`:'';
       const reorderBtn=`<button class="btn btn-outline btn-xs reorder-btn" data-order-id="${o.id}" title="이 발주서로 재발주" style="border:1.5px solid #0ea5e9;color:#0369a1;font-weight:700;white-space:nowrap"><i class="fas fa-rotate-right"></i> 재발주</button>`;
       const cancelReasonCell=orderListSubTab==='cancelled'?`<td class="td-muted" style="font-size:12px;color:#dc2626;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${o.cancelReason||''}">${o.cancelReason||'-'}</td>`:'';
-      return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer" title="클릭하여 상세 보기"><td class="td-muted" style="font-size:12px;font-weight:600">${o.orderNum||('#'+o.id)}${lockBadge}</td><td class="td-name">${dTo}</td><td class="td-muted" style="font-size:12px">${addr}</td><td class="td-muted">${fmt(o.orderDate)}</td><td class="td-muted">${o.shipDate?fmt(o.shipDate):'-'}</td><td class="td-center">${statusBadge}</td><td class="td-center td-muted">${fmt(o.createdAt)}</td>${cancelReasonCell}<td class="td-center">${cancelBtn} ${reorderBtn}</td></tr>`;
+      return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer" title="클릭하여 상세 보기"><td class="td-name">${dTo}</td><td class="td-muted" style="font-size:12px">${addr}</td><td style="font-size:12px;font-weight:600;color:#0f172a">${o.orderNum||('#'+o.id)}${lockBadge}</td><td class="td-muted">${fmt(o.orderDate)}</td><td class="td-muted">${o.shipDate?fmt(o.shipDate):'-'}</td><td class="td-center">${statusBadge}</td><td class="td-center td-muted">${fmt(o.createdAt)}</td>${cancelReasonCell}<td class="td-center">${cancelBtn} ${reorderBtn}</td></tr>`;
     }).join('')}</tbody></table></div>`;
   }
   // 지역 드롭다운: 모든 발주서의 주소에서 첫 단어(시/도) 추출

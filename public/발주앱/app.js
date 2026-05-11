@@ -479,7 +479,7 @@ function renderDashboard(){
       const region=(o.address||'').split(' ')[0];
       const orderNumDisp=o.orderNum||('#'+o.id);
       const stockBadge=o.status==='임시저장'?'<span class="badge badge-gray" style="font-size:11px">-</span>':(hasS?'<span class="badge badge-red">부족 발생</span>':'<span class="badge badge-done">재고 충분</span>');
-      return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer"><td class="td-name">${dTo2}${region?`<span style="font-size:11px;color:#94a3b8;margin-left:5px">${region}</span>`:''}</td><td class="td-muted" style="font-size:12px"><div style="font-weight:700;color:#475569">${orderNumDisp}</div><div style="color:#94a3b8;font-size:11px">${fmt(o.orderDate)}</div></td><td class="td-center">${orderStatusBadge(o.status)}</td><td class="td-center">${stockBadge}</td></tr>`;
+      return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer"><td class="td-name">${dTo2}${region?`<span style="font-size:11px;color:#94a3b8;margin-left:5px">${region}</span>`:''}</td><td class="td-muted" style="font-size:12px"><div style="font-weight:700;color:#0f172a">${orderNumDisp}</div><div style="color:#94a3b8;font-size:11px">${fmt(o.orderDate)}</div></td><td class="td-center">${orderStatusBadge(o.status)}</td><td class="td-center">${stockBadge}</td></tr>`;
     }).join('')}</tbody></table></div>`;
   }
   html+=`</div>`;
