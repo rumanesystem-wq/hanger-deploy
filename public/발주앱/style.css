@@ -183,16 +183,16 @@ tbody tr:last-child td{border-bottom:none}
   .order-row:hover td{background:transparent!important}
   .order-row td{display:none!important}
 
-  /* ── 발주서 목록 전용 (columns: #, 납품처, 주소, 발주일, 출고일, 상태, 등록일) ── */
-  .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:nth-child(2){
+  /* ── 발주서 목록 전용 (columns: 납품처, 시공주소, 발주번호, 발주일, 출고일, 상태, 등록일) ── */
+  .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:nth-child(1){
     display:block!important;flex:1;min-width:0;
     font-size:15px;font-weight:800;color:#111827;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   }
   .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:nth-child(3){
-    display:block!important;
-    font-size:12px;color:#6b7280;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:80px;
+    display:block!important;flex-shrink:0;
+    font-size:12px;font-weight:600;color:#0f172a;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   }
   .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:nth-child(6){
     display:block!important;flex-shrink:0;
@@ -201,12 +201,17 @@ tbody tr:last-child td{border-bottom:none}
     display:block!important;flex-shrink:0;
   }
 
-  /* ── 대시보드 최근 발주 (columns: 납품처, 발주일, 상태, 재고) ── */
+  /* ── 대시보드 최근 발주 (columns: 납품처, 발주번호/발주일, 상태, 재고) ── */
   .dash-recent-tbl .order-row{padding:8px 14px;}
   .dash-recent-tbl .order-row td:nth-child(1){
     display:block!important;flex:1;min-width:0;
     font-size:14px;font-weight:700;color:#111827;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .dash-recent-tbl .order-row td:nth-child(2){
+    display:block!important;flex-shrink:0;
+    font-size:11px;font-weight:600;color:#0f172a;
+    text-align:right;
   }
   .dash-recent-tbl .order-row td:nth-child(3){
     display:block!important;flex-shrink:0;
