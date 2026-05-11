@@ -259,7 +259,7 @@ exports.createEcountSaleOrder = onCall(
         SUPPLY_AMT:      (it.price != null) ? String(Math.round(it.price) * it.qty) : "", // 공급가액
         SUPPLY_AMT_F:    "",                                           // 공급가액(외화)
         VAT_AMT:         (it.price != null) ? String(Math.round(Math.round(it.price) * it.qty * 0.1)) : "", // 부가세
-        REMARKS:         "",                                           // 적요
+        REMARKS:         remarks,                                      // 적요 (발주번호 표시)
         ITEM_CD:         "",                                           // 관리항목
         P_REMARKS1:      "",
         P_REMARKS2:      "",

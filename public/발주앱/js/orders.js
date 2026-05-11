@@ -299,7 +299,7 @@ async function _createEcountSaleFromOrder(order){
       empCd,
       whCd,
       ioDate,
-      remarks:`발주 #${order.id}`,
+      remarks: order.orderNum || `발주 #${order.id}`,
       items:ecountItems
     });
     toast(result.data.message||'이카운트 판매전표 생성 완료','success');
