@@ -247,7 +247,9 @@ function renderUpperTable(){
     const isFixed=UPPER_FIXED.includes(name);
     const price=getActivePriceForItem(name);
     const priceHtml=unitPriceHtml(price);
-    const noteCell=isFixed?'<td><input type="text" class="form-input upper-note" data-mat="'+name+'" placeholder="실제길이" style="padding:4px 6px;font-size:12px;max-width:110px"/></td>':'<td></td>';
+    const isPostBar=name.startsWith('포스트바');
+    const splitBtn=isPostBar?'<button type="button" class="upper-split-btn" data-mat="'+name+'" title="길이 분할" style="margin-left:4px;padding:3px 7px;font-size:11px;border:1px solid #1e40af;background:#fff;color:#1e40af;border-radius:4px;cursor:pointer;vertical-align:middle">📏 분할</button>':'';
+    const noteCell=isFixed?'<td><input type="text" class="form-input upper-note" data-mat="'+name+'" placeholder="실제길이" style="padding:4px 6px;font-size:12px;max-width:110px"/>'+splitBtn+'</td>':'<td></td>';
     return '<tr data-price-row="1"'+((!isFixed&&gi===UPPER_FIXED.length)?' class="cat-divider-row"':'')+'>'+
       '<td class="td-name" style="font-size:13px">'+name+' <span class="unit-badge">EA</span></td>'+
       '<td>'+priceHtml+'</td>'+
@@ -267,6 +269,13 @@ function renderUpperTable(){
   // 수량 변경 이벤트 연결
   tbody.querySelectorAll('.upper-qty').forEach(inp=>{
     inp.addEventListener('input',()=>updateUpperRowAmount(inp));
+  });
+  // 길이 분할 버튼 이벤트 (임시: 토스트만)
+  tbody.querySelectorAll('.upper-split-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const mat=btn.dataset.mat;
+      toast(`${mat} 길이 분할 — 곧 모달이 열립니다 (단계 2에서 구현)`,'info');
+    });
   });
   // 테이블 렌더 후 현재 선택된 색상으로 코드 체크 적용
   const ucCur=document.getElementById('upper-common-color');
