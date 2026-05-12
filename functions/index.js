@@ -218,8 +218,8 @@ exports.createEcountSaleOrder = onCall(
         PJT_CD:          "",           // 프로젝트
         DOC_NO:          "",           // 판매No.
         TTL_CTT:         remarks,       // 제목 (발주번호)
-        U_MEMO1:         "",           // 문자형식1
-        U_MEMO2:         "",           // 문자형식2
+        U_MEMO1:         remarks,      // 문자형식1 (발주번호 - 거래처관리대장 적요 후보)
+        U_MEMO2:         remarks,      // 문자형식2 (발주번호 - 거래처관리대장 적요 후보)
         U_MEMO3:         "",           // 문자형식3
         U_MEMO4:         "",           // 문자형식4
         U_MEMO5:         "",           // 문자형식5
@@ -261,7 +261,7 @@ exports.createEcountSaleOrder = onCall(
         VAT_AMT:         (it.price != null) ? String(Math.round(Math.round(it.price) * it.qty * 0.1)) : "", // 부가세
         REMARKS:         remarks,                                      // 적요 (발주번호 표시)
         ITEM_CD:         "",                                           // 관리항목
-        P_REMARKS1:      "",
+        P_REMARKS1:      remarks,                                      // 항목 추가 적요1 (발주번호 - 거래처관리대장 적요 후보)
         P_REMARKS2:      "",
         P_REMARKS3:      "",
         P_AMT1:          "",
