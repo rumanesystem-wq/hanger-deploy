@@ -186,12 +186,12 @@ tbody tr:last-child td{border-bottom:none}
   /* ── 발주서 목록 전용 (2줄 그리드 / columns: 납품처, 시공주소, 발주번호, 발주일, 출고일, 상태, 등록일) ── */
   .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row{
     display:grid!important;
-    grid-template-columns:auto 1fr auto auto;
+    grid-template-columns:auto 1fr auto;
     grid-template-rows:auto auto;
     column-gap:8px;row-gap:6px;
-    align-items:center;
+    align-items:center;justify-items:start;
   }
-  /* 1줄: 이름 | 발주번호 | (빈 공간) | 상태 */
+  /* 1줄: 이름 | 발주번호 | 상태(우측) */
   .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:nth-child(1){
     display:block!important;
     grid-column:1;grid-row:1;min-width:0;
@@ -206,9 +206,9 @@ tbody tr:last-child td{border-bottom:none}
   }
   .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:nth-child(6){
     display:block!important;
-    grid-column:4;grid-row:1;
+    grid-column:3;grid-row:1;justify-self:end;
   }
-  /* 2줄: 발주일 | 주소 | 발주 취소 + 재발주 */
+  /* 2줄: 발주일 | 주소 | 발주 취소 + 재발주(우측) */
   .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:nth-child(4){
     display:block!important;
     grid-column:1;grid-row:2;
@@ -223,8 +223,7 @@ tbody tr:last-child td{border-bottom:none}
   }
   .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:last-child{
     display:block!important;
-    grid-column:3/span 2;grid-row:2;
-    text-align:right;
+    grid-column:3;grid-row:2;justify-self:end;
   }
 
   /* ── 대시보드 최근 발주 (columns: 납품처, 발주번호/발주일, 상태, 재고) ── */
