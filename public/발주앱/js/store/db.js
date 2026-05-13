@@ -312,7 +312,8 @@ async function doLogin(){
     if(loginTab==='admin'){err.style.display='block';err.textContent='관리자 계정만 이 화면에서 로그인할 수 있습니다.';return;}
     const base=id.split('@')[0];
     const newId=accounts.find(a=>a.id===base)?`${base}_${Date.now()}`:base;
-    found={id:newId,name:base,deliveryName:base,email:id,role:'orderer',empCd:'',bizCd:''};
+    // 납품처(deliveryName)는 비워두고 사용자가 직접 설정하게 함 (개인정보 수정에서 변경 가능)
+    found={id:newId,name:base,deliveryName:'',email:id,role:'orderer',empCd:'',bizCd:''};
     accounts.push(found);
     DB.set('accounts',accounts);
   }

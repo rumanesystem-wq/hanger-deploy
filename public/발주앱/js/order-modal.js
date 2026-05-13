@@ -515,23 +515,15 @@ function _resetOrderModalBtn(){
 // 모달 DOM 렌더링만 담당 (initialData가 있으면 기본값으로 사용)
 function _openOrderModalRender(initialData){
   // 기본 정보 초기화
-  // 납품처: 발주자 계정 → 회원가입 시 입력한 deliveryName 자동 주입 + 수정 불가
+  // 납품처: 발주자 계정 → deliveryName 자동 주입(있을 때만) + 수정 가능
   //         관리자 → 자유 입력
-  const isOrderer=(!isAdmin()&&currentUser&&currentUser.deliveryName);
-  const autoDeliveryName=isOrderer?currentUser.deliveryName:'';
+  const autoDeliveryName=(!isAdmin()&&currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
   const delivToEl=document.getElementById('o-delivery-to');
   delivToEl.value=autoDeliveryName;
-  if(isOrderer){
-    delivToEl.readOnly=true;
-    delivToEl.style.background='#f1f5f9';
-    delivToEl.style.color='#64748b';
-    delivToEl.style.cursor='default';
-  } else {
-    delivToEl.readOnly=false;
-    delivToEl.style.background='';
-    delivToEl.style.color='';
-    delivToEl.style.cursor='';
-  }
+  delivToEl.readOnly=false;
+  delivToEl.style.background='';
+  delivToEl.style.color='';
+  delivToEl.style.cursor='';
   document.getElementById('o-address').value=initialData?initialData.address||initialData.customerName||'':'';
   setDateValue('o-date',initialData?initialData.orderDate||todayStr():todayStr());
   setDateValue('o-ship-date',initialData?initialData.shipDate||'':'');
@@ -793,13 +785,11 @@ function _openOrderModalRender(initialData){
 
 // draft 발주서 데이터를 열린 모달에 복원
 function _restoreDraftToModal(order){
-  // 기본정보 — 발주자 계정이면 deliveryName 고정, 관리자만 복원
+  // 기본정보 — 저장된 납품처 값 우선 복원, 없으면 본인 deliveryName fallback. 수정 가능.
   const delivToEl2=document.getElementById('o-delivery-to');
-  if(!isAdmin()&&currentUser&&currentUser.deliveryName){
-    delivToEl2.value=currentUser.deliveryName;
-  } else {
-    delivToEl2.value=order.deliveryTo||order.siteName||'';
-  }
+  const savedDeliv=order.deliveryTo||order.siteName||'';
+  const fallback=(!isAdmin()&&currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
+  delivToEl2.value=savedDeliv||fallback;
   document.getElementById('o-address').value=order.address||order.customerName||'';
   setDateValue('o-date',order.orderDate||todayStr());
   setDateValue('o-ship-date',order.shipDate||'');

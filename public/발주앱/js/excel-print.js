@@ -1,5 +1,11 @@
 // ── 엑셀 다운로드 / 발주서 문서 / 프린트 ──
 
+// XSS 방지: 사용자 자유 입력 필드를 innerHTML에 주입하기 전 escape
+function _escHtml(s){
+  if(s===null||s===undefined)return '';
+  return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
 function xlsxDownload(wb, filename){
   if(typeof XLSX==='undefined'){toast('엑셀 라이브러리를 불러오는 중입니다. 잠시 후 다시 시도해주세요.','error');return;}
   XLSX.writeFile(wb, filename, {bookType:'xlsx',type:'binary'});
@@ -309,8 +315,9 @@ function downloadInventoryExcel(){
 
 // ── 발주서 문서 HTML 생성 (상세보기 + 인쇄 공유) ──
 function renderOrderDocument(order){
-  const dTo=order.deliveryTo||order.siteName||'-';
-  const addr=order.address||order.customerName||'-';
+  // 자유 입력 필드는 모두 _escHtml로 감싸 XSS 방지
+  const dTo=_escHtml(order.deliveryTo||order.siteName||'-');
+  const addr=_escHtml(order.address||order.customerName||'-');
   const dbItems=DB.get('items',[]);
 
   // 공통: 행 금액 표시 헬퍼
@@ -361,9 +368,9 @@ function renderOrderDocument(order){
         const supply=r.amount!==undefined?r.amount:(up!==null?up*qty:null);
         const vat=supply!==null?Math.round(supply*0.1):null;
         const {s,v}=rowAmt(supply,vat);
-        const noteDisp=r.note?`<span style="font-size:13px;font-weight:800;color:#111">실제길이: ${r.note}mm</span>`:'';
+        const noteDisp=r.note?`<span style="font-size:13px;font-weight:800;color:#111">실제길이: ${_escHtml(r.note)}mm</span>`:'';
         upperRows+=`<tr><td class="doc-name">${n}</td><td class="doc-num">${qty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td><td class="doc-note doc-note-bigo${noteDisp?'':' doc-note-empty'}" style="text-align:center">${noteDisp}</td></tr>`;
-        if(r.note) upperRows+=`<tr class="doc-mobile-note-row"><td colspan="4">실제길이: ${r.note}mm</td></tr>`;
+        if(r.note) upperRows+=`<tr class="doc-mobile-note-row"><td colspan="4">실제길이: ${_escHtml(r.note)}mm</td></tr>`;
       }
     });
     if(order.rodItems&&order.rodItems.length>0){
@@ -439,7 +446,7 @@ function renderOrderDocument(order){
     const upStr=up!==null&&up!==undefined?up.toLocaleString('ko-KR')+'원':'미정';
     drawerRows+=`<tr><td class="doc-name">${iName}</td><td class="doc-num">${oi.requiredQty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td></tr>`;
   });
-  if(order.drawerMemo) drawerRows+=`<tr><td colspan="4" class="doc-note" style="color:#555;font-style:italic">${order.drawerMemo}</td></tr>`;
+  if(order.drawerMemo) drawerRows+=`<tr><td colspan="4" class="doc-note" style="color:#555;font-style:italic">${_escHtml(order.drawerMemo)}</td></tr>`;
   const drawerSection=(drawerRows)?`
     <div class="doc-section">
       <div class="doc-sec-title">서랍 / 옵션</div>
@@ -454,7 +461,7 @@ function renderOrderDocument(order){
       </table>
     </div>`:'';
 
-  const etcRow=order.etcMemo?`<div class="doc-section"><div class="doc-sec-title">기타</div><p class="doc-etc">${order.etcMemo}</p></div>`:'';
+  const etcRow=order.etcMemo?`<div class="doc-section"><div class="doc-sec-title">기타</div><p class="doc-etc">${_escHtml(order.etcMemo)}</p></div>`:'';
 
   // 총합계 summary (공통 함수 활용)
   const fin=getOrderFinancialSummary(order);
@@ -502,8 +509,8 @@ function renderOrderDocument(order){
           <td class="doc-info-label">출고 창고</td>
           <td class="doc-info-val" colspan="3"><span style="font-weight:700;color:${order.warehouse==='평택'?'#065f46':'#1e40af'}">${order.warehouse||'시흥'}</span></td>
         </tr>
-        ${order.note?`<tr><td class="doc-info-label">비고</td><td class="doc-info-val" colspan="3">${order.note}</td></tr>`:''}
-        ${order.cancelReason?`<tr><td class="doc-info-label" style="color:#dc2626;font-weight:700">취소 사유</td><td class="doc-info-val" colspan="3" style="color:#dc2626">${order.cancelReason}</td></tr>`:''}
+        ${order.note?`<tr><td class="doc-info-label">비고</td><td class="doc-info-val" colspan="3">${_escHtml(order.note)}</td></tr>`:''}
+        ${order.cancelReason?`<tr><td class="doc-info-label" style="color:#dc2626;font-weight:700">취소 사유</td><td class="doc-info-val" colspan="3" style="color:#dc2626">${_escHtml(order.cancelReason)}</td></tr>`:''}
       </tbody>
     </table>
     ${upperSection}${shelfSection}${drawerSection}${etcRow}${summarySection}
