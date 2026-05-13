@@ -248,8 +248,16 @@ function renderUpperTable(){
     const price=getActivePriceForItem(name);
     const priceHtml=unitPriceHtml(price);
     const isPostBar=name.startsWith('포스트바');
-    const splitBtn=isPostBar?'<button type="button" class="upper-split-btn" data-mat="'+name+'" title="길이 분할" style="margin-left:4px;padding:3px 7px;font-size:11px;border:1px solid #1e40af;background:#fff;color:#1e40af;border-radius:4px;cursor:pointer;vertical-align:middle">📏 분할</button>':'';
-    const noteCell=isFixed?'<td><input type="text" class="form-input upper-note" data-mat="'+name+'" placeholder="실제길이" style="padding:4px 6px;font-size:12px;max-width:110px"/>'+splitBtn+'</td>':'<td></td>';
+    let noteCell;
+    if(isPostBar){
+      // 포스트바: 길이 분할 버튼만 (비고 입력칸 제거)
+      noteCell='<td><button type="button" class="upper-split-btn" data-mat="'+name+'" title="길이 분할" style="padding:5px 10px;font-size:12px;border:1px solid #1e40af;background:#fff;color:#1e40af;border-radius:4px;cursor:pointer;font-weight:600">📏 길이 분할</button></td>';
+    }else if(isFixed){
+      // 선반바 등 고정 품목: 비고 입력칸 유지
+      noteCell='<td><input type="text" class="form-input upper-note" data-mat="'+name+'" placeholder="실제길이" style="padding:4px 6px;font-size:12px;max-width:110px"/></td>';
+    }else{
+      noteCell='<td></td>';
+    }
     return '<tr data-price-row="1"'+((!isFixed&&gi===UPPER_FIXED.length)?' class="cat-divider-row"':'')+'>'+
       '<td class="td-name" style="font-size:13px">'+name+' <span class="unit-badge">EA</span></td>'+
       '<td>'+priceHtml+'</td>'+
@@ -1164,32 +1172,39 @@ function setRowLengthSplits(matName,splits){
   const inp=document.querySelector(`.upper-qty[data-mat="${matName}"]`);
   if(!inp)return;
   inp.dataset.splits=JSON.stringify(splits||[]);
-  // 비고 셀 표시 갱신
+  // 셀 표시 갱신
+  const btn=document.querySelector(`.upper-split-btn[data-mat="${matName}"]`);
   const noteEl=document.querySelector(`.upper-note[data-mat="${matName}"]`);
-  if(!noteEl)return;
   const splitInfoEl=document.querySelector(`.upper-split-info[data-mat="${matName}"]`);
+  const isPostBar=matName.startsWith('포스트바');
   if(splits&&splits.length>0){
-    // 분할 있으면 비고 입력 숨기고 분할 정보 표시
-    noteEl.style.display='none';
+    // 분할 정보 HTML
     const std=POSTBAR_STD_LENGTH[matName]||0;
     const html=splits.map(s=>{
       const isStd=Number(s.length)===std;
-      return `<div style="font-size:11px;color:#0f172a;line-height:1.4">${s.length}mm × ${s.qty}개${isStd?' (정척)':''}</div>`;
+      return `<div style="font-size:11px;color:#0f172a;line-height:1.5">${s.length}mm × ${s.qty}개${isStd?' (정척)':''}</div>`;
     }).join('');
+    // 분할 정보 표시 (분할 정보 div를 분할 버튼 앞에 삽입)
     if(splitInfoEl){
       splitInfoEl.innerHTML=html;
       splitInfoEl.style.display='block';
     }else{
-      const div=document.createElement('div');
-      div.className='upper-split-info';
-      div.dataset.mat=matName;
-      div.innerHTML=html;
-      noteEl.parentNode.insertBefore(div,noteEl);
+      const container=isPostBar?btn?.parentNode:noteEl?.parentNode;
+      if(container){
+        const div=document.createElement('div');
+        div.className='upper-split-info';
+        div.dataset.mat=matName;
+        div.style.cssText='margin-bottom:6px';
+        div.innerHTML=html;
+        const anchor=isPostBar?btn:noteEl;
+        if(anchor)container.insertBefore(div,anchor);
+      }
     }
+    // 비고 입력칸 있으면 숨김 (선반바엔 없음)
+    if(noteEl)noteEl.style.display='none';
   }else{
-    // 분할 없으면 비고 입력 표시, 분할 정보 숨김
-    noteEl.style.display='';
     if(splitInfoEl)splitInfoEl.style.display='none';
+    if(noteEl)noteEl.style.display='';
   }
 }
 
