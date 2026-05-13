@@ -271,12 +271,15 @@ function renderUpperTable(){
     }
     return html;
   }).join('');
-  // EA 구분행 삽입
-  const rows=tbody.querySelectorAll('tr');
-  if(rows[UPPER_FIXED.length]){
-    const divRow=document.createElement('tr');
-    divRow.innerHTML='<td colspan="5" style="background:#f8fafc;font-size:11px;font-weight:700;color:var(--text-3);padding:4px 8px">EA 수량형</td>';
-    rows[UPPER_FIXED.length].before(divRow);
+  // EA 구분행 삽입 (첫 번째 UPPER_EA 행 앞에)
+  const firstEAName=UPPER_EA.find(n=>allItems.includes(n));
+  if(firstEAName){
+    const firstEARow=tbody.querySelector(`.upper-qty[data-mat="${firstEAName}"]`)?.closest('tr');
+    if(firstEARow){
+      const divRow=document.createElement('tr');
+      divRow.innerHTML='<td colspan="5" style="background:#f8fafc;font-size:11px;font-weight:700;color:var(--text-3);padding:4px 8px">EA 수량형</td>';
+      firstEARow.before(divRow);
+    }
   }
   // 수량 변경 이벤트 연결
   tbody.querySelectorAll('.upper-qty').forEach(inp=>{
