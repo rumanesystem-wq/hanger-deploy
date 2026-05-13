@@ -1284,6 +1284,17 @@ function toggleLengthSplitInline(matName){
         updateSummary();
         autoSave();
       });
+      // 자동 정척 보충 (blur 시): 1행만 있고 길이 != 정척이면 남은 수량 자동 추가
+      inp.addEventListener('blur',()=>{
+        if(splits.length!==1)return;
+        if(splits[0].length===stdLen)return;
+        if(!splits[0].qty||!splits[0].length)return;
+        const remain=totalQty-splits[0].qty;
+        if(remain<=0)return;
+        splits.push({qty:remain,length:stdLen});
+        renderRows();
+        autoSave();
+      });
     });
     rowsEl.querySelectorAll('.split-del-btn').forEach(btn=>{
       btn.addEventListener('click',()=>{
