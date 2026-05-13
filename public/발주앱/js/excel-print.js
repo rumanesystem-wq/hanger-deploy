@@ -342,13 +342,29 @@ function renderOrderDocument(order){
         for(const k of ['white','black','silver','champagne']){if(r[k]>0){color=cm[k];qty=r[k];break;}}
       }
       const up=r.unitPrice!==undefined?r.unitPrice:getActivePriceForItem(n);
-      const supply=r.amount!==undefined?r.amount:(up!==null?up*qty:null);
-      const vat=supply!==null?Math.round(supply*0.1):null;
-      const {s,v}=rowAmt(supply,vat);
       const upStr=up!==null&&up!==undefined?up.toLocaleString('ko-KR')+'원':'미정';
-      const noteDisp=r.note?`<span style="font-size:13px;font-weight:800;color:#111">실제길이: ${r.note}mm</span>`:'';
-      upperRows+=`<tr><td class="doc-name">${n}</td><td class="doc-num">${qty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td><td class="doc-note doc-note-bigo${noteDisp?'':' doc-note-empty'}" style="text-align:center">${noteDisp}</td></tr>`;
-      if(r.note) upperRows+=`<tr class="doc-mobile-note-row"><td colspan="4">실제길이: ${r.note}mm</td></tr>`;
+      // 길이 분할: 분할별로 행 분리 출력 (포스트바)
+      const splits=Array.isArray(r.lengthSplits)?r.lengthSplits:null;
+      if(splits&&splits.length>0){
+        splits.forEach(sp=>{
+          const sQty=sp.qty||0;
+          const sSupply=up!==null?up*sQty:null;
+          const sVat=sSupply!==null?Math.round(sSupply*0.1):null;
+          const {s:sStr}=rowAmt(sSupply,sVat);
+          const stdLen={'포스트바 2050':2050,'포스트바 2250':2250,'포스트바 2400':2400}[n]||0;
+          const isStd=Number(sp.length)===stdLen;
+          const noteHtml=`<span style="font-size:13px;font-weight:800;color:#111">실제길이: ${sp.length}mm${isStd?' (정척)':''}</span>`;
+          upperRows+=`<tr><td class="doc-name">${n}</td><td class="doc-num">${sQty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${sStr}</td><td class="doc-note doc-note-bigo" style="text-align:center">${noteHtml}</td></tr>`;
+          upperRows+=`<tr class="doc-mobile-note-row"><td colspan="4">실제길이: ${sp.length}mm${isStd?' (정척)':''}</td></tr>`;
+        });
+      }else{
+        const supply=r.amount!==undefined?r.amount:(up!==null?up*qty:null);
+        const vat=supply!==null?Math.round(supply*0.1):null;
+        const {s,v}=rowAmt(supply,vat);
+        const noteDisp=r.note?`<span style="font-size:13px;font-weight:800;color:#111">실제길이: ${r.note}mm</span>`:'';
+        upperRows+=`<tr><td class="doc-name">${n}</td><td class="doc-num">${qty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td><td class="doc-note doc-note-bigo${noteDisp?'':' doc-note-empty'}" style="text-align:center">${noteDisp}</td></tr>`;
+        if(r.note) upperRows+=`<tr class="doc-mobile-note-row"><td colspan="4">실제길이: ${r.note}mm</td></tr>`;
+      }
     });
     if(order.rodItems&&order.rodItems.length>0){
       const rodColor=order.upperCommonColor||(order.upperMaterials&&order.upperMaterials[0]&&order.upperMaterials[0].color)||'-';

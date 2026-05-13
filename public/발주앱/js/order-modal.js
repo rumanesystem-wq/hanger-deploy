@@ -270,11 +270,11 @@ function renderUpperTable(){
   tbody.querySelectorAll('.upper-qty').forEach(inp=>{
     inp.addEventListener('input',()=>updateUpperRowAmount(inp));
   });
-  // 길이 분할 버튼 이벤트 (임시: 토스트만)
+  // 길이 분할 버튼 이벤트
   tbody.querySelectorAll('.upper-split-btn').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const mat=btn.dataset.mat;
-      toast(`${mat} 길이 분할 — 곧 모달이 열립니다 (단계 2에서 구현)`,'info');
+      openLengthSplitModal(mat);
     });
   });
   // 테이블 렌더 후 현재 선택된 색상으로 코드 체크 적용
@@ -815,6 +815,12 @@ function _restoreDraftToModal(order){
       if(!nEl){const cn=compatUpperName(rawName);if(cn!==rawName)nEl=document.querySelector(`.upper-note[data-mat="${cn}"]`);}
       if(nEl)nEl.value=r.note;
     }
+    // 길이 분할 복원 (포스트바)
+    if(r.lengthSplits&&Array.isArray(r.lengthSplits)&&r.lengthSplits.length>0){
+      const matKey=inp?.dataset?.mat||rawName;
+      if(inp){inp.dataset.splits=JSON.stringify(r.lengthSplits);}
+      if(typeof setRowLengthSplits==='function')setRowLengthSplits(matKey,r.lengthSplits);
+    }
   });
 
   // 공통 색상 복원 + 서랍 코드 체크
@@ -1016,6 +1022,17 @@ function submitOrder(saveMode='발주확정'){
       const vatAmt=supply!==null?Math.round(supply*0.1):null;
       const row={name:mat,color:upperCommonColor,qty:val,note,unitPrice,amount:supply,vatAmount:vatAmt,white:0,black:0,silver:0,champagne:0};
       row[colorKey]=val;
+      // 길이 분할 (포스트바만)
+      try{
+        const splitsRaw=inp.dataset.splits;
+        if(splitsRaw){
+          const splits=JSON.parse(splitsRaw);
+          if(Array.isArray(splits)&&splits.length>0){
+            const sum=splits.reduce((a,s)=>a+(s.qty||0),0);
+            if(sum===val)row.lengthSplits=splits;
+          }
+        }
+      }catch{}
       upperMaterials.push(row);
     }
   });
@@ -1128,5 +1145,154 @@ function renderStatusTimeline(order){
     <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:14px"><i class="fas fa-clock-rotate-left" style="margin-right:6px;color:#94a3b8"></i>상태 변경 이력</div>
     ${items}
   </div>`;
+}
+
+// ── 길이 분할 (포스트바) ─────────────────────────────────────
+const POSTBAR_STD_LENGTH={
+  '포스트바 2050':2050,
+  '포스트바 2250':2250,
+  '포스트바 2400':2400,
+};
+
+function getRowLengthSplits(matName){
+  const inp=document.querySelector(`.upper-qty[data-mat="${matName}"]`);
+  if(!inp)return [];
+  try{return JSON.parse(inp.dataset.splits||'[]');}catch{return [];}
+}
+
+function setRowLengthSplits(matName,splits){
+  const inp=document.querySelector(`.upper-qty[data-mat="${matName}"]`);
+  if(!inp)return;
+  inp.dataset.splits=JSON.stringify(splits||[]);
+  // 비고 셀 표시 갱신
+  const noteEl=document.querySelector(`.upper-note[data-mat="${matName}"]`);
+  if(!noteEl)return;
+  const splitInfoEl=document.querySelector(`.upper-split-info[data-mat="${matName}"]`);
+  if(splits&&splits.length>0){
+    // 분할 있으면 비고 입력 숨기고 분할 정보 표시
+    noteEl.style.display='none';
+    const std=POSTBAR_STD_LENGTH[matName]||0;
+    const html=splits.map(s=>{
+      const isStd=Number(s.length)===std;
+      return `<div style="font-size:11px;color:#0f172a;line-height:1.4">${s.length}mm × ${s.qty}개${isStd?' (정척)':''}</div>`;
+    }).join('');
+    if(splitInfoEl){
+      splitInfoEl.innerHTML=html;
+      splitInfoEl.style.display='block';
+    }else{
+      const div=document.createElement('div');
+      div.className='upper-split-info';
+      div.dataset.mat=matName;
+      div.innerHTML=html;
+      noteEl.parentNode.insertBefore(div,noteEl);
+    }
+  }else{
+    // 분할 없으면 비고 입력 표시, 분할 정보 숨김
+    noteEl.style.display='';
+    if(splitInfoEl)splitInfoEl.style.display='none';
+  }
+}
+
+function openLengthSplitModal(matName){
+  const qtyInp=document.querySelector(`.upper-qty[data-mat="${matName}"]`);
+  const totalQty=parseInt(qtyInp?.value)||0;
+  if(totalQty<=0){toast('수량을 먼저 입력해주세요.','error');return;}
+  const stdLen=POSTBAR_STD_LENGTH[matName]||0;
+  const current=getRowLengthSplits(matName);
+  const initSplits=current.length>0?current:[{qty:totalQty,length:stdLen}];
+
+  const overlay=document.createElement('div');
+  overlay.className='modal-overlay open';
+  overlay.innerHTML=`
+    <div class="modal" style="max-width:480px;width:92%">
+      <div class="modal-header">
+        <div class="modal-title"><i class="fas fa-ruler" style="margin-right:6px"></i>${matName} — 길이 분할</div>
+        <button class="modal-close" onclick="this.closest('.modal-overlay').remove()"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body" style="padding:18px 20px">
+        <div style="font-size:13px;color:var(--text-2);margin-bottom:12px">발주 수량: <strong style="color:#0f172a">${totalQty}개</strong> · 정척: <strong>${stdLen}mm</strong></div>
+        <div id="split-rows" style="display:flex;flex-direction:column;gap:8px"></div>
+        <button type="button" id="split-add-btn" class="btn btn-outline btn-sm" style="margin-top:12px;width:100%;justify-content:center"><i class="fas fa-plus"></i> 분할 추가</button>
+        <div id="split-summary" style="margin-top:14px;padding:10px 12px;border-radius:6px;font-size:12px"></div>
+      </div>
+      <div class="modal-footer" style="display:flex;gap:8px;justify-content:space-between;padding:12px 20px;border-top:1px solid var(--border)">
+        <button class="btn btn-ghost btn-sm" id="split-reset-btn"><i class="fas fa-rotate-left"></i> 초기화</button>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline btn-sm" onclick="this.closest('.modal-overlay').remove()">취소</button>
+          <button class="btn btn-sm" id="split-save-btn" style="background:#1e3a5f;color:#fff;font-weight:700"><i class="fas fa-check"></i> 저장</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  let splits=JSON.parse(JSON.stringify(initSplits));
+
+  function renderRows(){
+    const rowsEl=overlay.querySelector('#split-rows');
+    rowsEl.innerHTML=splits.map((s,i)=>`
+      <div style="display:flex;gap:8px;align-items:center" data-row-i="${i}">
+        <div style="flex:0 0 80px"><label style="font-size:11px;color:var(--text-3);display:block;margin-bottom:2px">수량</label><input type="number" class="form-input split-qty" value="${s.qty}" min="1" style="width:100%;padding:6px 8px;font-size:13px"/></div>
+        <div style="flex:1"><label style="font-size:11px;color:var(--text-3);display:block;margin-bottom:2px">길이(mm)</label><input type="number" class="form-input split-len" value="${s.length}" min="1" style="width:100%;padding:6px 8px;font-size:13px"/></div>
+        <button type="button" class="btn btn-ghost btn-xs split-del-btn" style="margin-top:14px;color:#dc2626" title="삭제"><i class="fas fa-times"></i></button>
+      </div>`).join('');
+    // 이벤트
+    rowsEl.querySelectorAll('.split-qty,.split-len').forEach(inp=>{
+      inp.addEventListener('input',()=>{
+        const row=inp.closest('[data-row-i]');
+        const i=parseInt(row.dataset.rowI);
+        if(inp.classList.contains('split-qty'))splits[i].qty=parseInt(inp.value)||0;
+        else splits[i].length=parseInt(inp.value)||0;
+        updateSummary();
+      });
+    });
+    rowsEl.querySelectorAll('.split-del-btn').forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        const row=btn.closest('[data-row-i]');
+        const i=parseInt(row.dataset.rowI);
+        splits.splice(i,1);
+        renderRows();
+        updateSummary();
+      });
+    });
+    updateSummary();
+  }
+  function updateSummary(){
+    const sum=splits.reduce((a,s)=>a+(s.qty||0),0);
+    const overLen=splits.some(s=>s.length>stdLen);
+    const ok=sum===totalQty&&splits.every(s=>s.qty>0&&s.length>0);
+    const el=overlay.querySelector('#split-summary');
+    el.style.background=ok?'#f0fdf4':'#fef2f2';
+    el.style.color=ok?'#15803d':'#dc2626';
+    el.innerHTML=`📊 합계: <strong>${sum}개</strong> / 발주: <strong>${totalQty}개</strong> ${ok?'✓':'✗'}${overLen?'<br>⚠️ 정척 초과 길이 있음 (확인 필요)':''}`;
+  }
+
+  overlay.querySelector('#split-add-btn').addEventListener('click',()=>{
+    const used=splits.reduce((a,s)=>a+(s.qty||0),0);
+    const remain=Math.max(totalQty-used,1);
+    splits.push({qty:remain,length:stdLen});
+    renderRows();
+  });
+  overlay.querySelector('#split-reset-btn').addEventListener('click',()=>{
+    splits=[{qty:totalQty,length:stdLen}];
+    renderRows();
+  });
+  overlay.querySelector('#split-save-btn').addEventListener('click',()=>{
+    // 유효성
+    const clean=splits.filter(s=>s.qty>0&&s.length>0);
+    const sum=clean.reduce((a,s)=>a+s.qty,0);
+    if(clean.length===0){toast('최소 1개 분할이 필요합니다.','error');return;}
+    if(sum!==totalQty){toast(`합계 ${sum}개 / 발주 ${totalQty}개 — 수량이 맞지 않습니다.`,'error');return;}
+    // 분할이 1행이고 정척만 있으면 분할 없음으로 처리
+    if(clean.length===1&&clean[0].length===stdLen){
+      setRowLengthSplits(matName,[]);
+      toast(`${matName} 분할 초기화됨`,'success');
+    }else{
+      setRowLengthSplits(matName,clean);
+      toast(`${matName} 길이 분할 저장됨 (${clean.length}종)`,'success');
+    }
+    overlay.remove();
+  });
+
+  renderRows();
 }
 

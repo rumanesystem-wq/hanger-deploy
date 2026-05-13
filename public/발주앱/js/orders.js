@@ -176,7 +176,15 @@ async function _createEcountSaleFromOrder(order){
       const prodCd=dbItem.colorProdCdMap?.[colorKey]||dbItem.colorProdCdMap?.[order.upperCommonColor]||dbItem.prodCd||'';
       if(!prodCd)return;
       const price=r.unitPrice??getActivePriceForItem(name)??null;
-      ecountItems.push({prodCd,qty,prodNm:name,sizeNm:colorKey,price});
+      // 길이 분할이 있으면 분할별로 행 분리 (같은 품목코드, 수량만 분리)
+      const splits=Array.isArray(r.lengthSplits)?r.lengthSplits:null;
+      if(splits&&splits.length>0&&splits.reduce((a,s)=>a+(s.qty||0),0)===qty){
+        splits.forEach(sp=>{
+          if(sp.qty>0)ecountItems.push({prodCd,qty:sp.qty,prodNm:name,sizeNm:colorKey,price});
+        });
+      }else{
+        ecountItems.push({prodCd,qty,prodNm:name,sizeNm:colorKey,price});
+      }
     } else {
       // 색상별 수량이 따로 있는 경우 → 색상별로 각각 생성
       ['white','black','silver','champagne'].forEach(engKey=>{
