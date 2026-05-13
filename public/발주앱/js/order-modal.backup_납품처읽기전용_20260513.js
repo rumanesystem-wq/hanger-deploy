@@ -515,13 +515,15 @@ function _resetOrderModalBtn(){
 // 모달 DOM 렌더링만 담당 (initialData가 있으면 기본값으로 사용)
 function _openOrderModalRender(initialData){
   // 기본 정보 초기화
-  // 납품처: 관리자/일반 사용자 모두 currentUser.deliveryName 강제 + 읽기 전용
-  //         (이카운트 코드 등 다른 필드는 별개)
-  const autoDeliveryName=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
+  // 납품처: 발주자 계정 → deliveryName 자동 주입(있을 때만) + 수정 가능
+  //         관리자 → 자유 입력
+  const autoDeliveryName=(!isAdmin()&&currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
   const delivToEl=document.getElementById('o-delivery-to');
   delivToEl.value=autoDeliveryName;
-  delivToEl.readOnly=true;
-  delivToEl.tabIndex=-1;
+  delivToEl.readOnly=false;
+  delivToEl.style.background='';
+  delivToEl.style.color='';
+  delivToEl.style.cursor='';
   document.getElementById('o-address').value=initialData?initialData.address||initialData.customerName||'':'';
   setDateValue('o-date',initialData?initialData.orderDate||todayStr():todayStr());
   setDateValue('o-ship-date',initialData?initialData.shipDate||'':'');
@@ -783,12 +785,11 @@ function _openOrderModalRender(initialData){
 
 // draft 발주서 데이터를 열린 모달에 복원
 function _restoreDraftToModal(order){
-  // 기본정보 — 납품처는 저장된 값 무시하고 현재 본인 deliveryName으로 강제 덮어쓰기 + 읽기 전용
+  // 기본정보 — 저장된 납품처 값 우선 복원, 없으면 본인 deliveryName fallback. 수정 가능.
   const delivToEl2=document.getElementById('o-delivery-to');
-  const forcedDeliv=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
-  delivToEl2.value=forcedDeliv;
-  delivToEl2.readOnly=true;
-  delivToEl2.tabIndex=-1;
+  const savedDeliv=order.deliveryTo||order.siteName||'';
+  const fallback=(!isAdmin()&&currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
+  delivToEl2.value=savedDeliv||fallback;
   document.getElementById('o-address').value=order.address||order.customerName||'';
   setDateValue('o-date',order.orderDate||todayStr());
   setDateValue('o-ship-date',order.shipDate||'');
@@ -897,11 +898,7 @@ function _restoreDraftToModal(order){
 
 
 function submitOrder(saveMode='발주확정'){
-  // 콘솔 우회 방어 — 발주 저장 직전 납품처를 현재 본인 deliveryName으로 강제 덮어쓰기
-  const _forceDeliv=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
-  const _delivEl=document.getElementById('o-delivery-to');
-  if(_delivEl) _delivEl.value=_forceDeliv;
-  const deliveryTo=_forceDeliv;
+  const deliveryTo=document.getElementById('o-delivery-to').value.trim();
   const address=document.getElementById('o-address').value.trim();
   // 날짜 입력 최종 동기화 (키보드 입력 후 blur 없이 제출한 경우 대비)
   syncDateParts('o-date');

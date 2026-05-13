@@ -419,11 +419,7 @@ function openOrderConfirmModal(){
   const _ol=document.getElementById('order-confirm-ok-label');if(_ol)_ol.textContent=_lbl;
 
   // 1) 기존 검증 로직 (저장은 아직 안 함)
-  // 콘솔 우회 방어 — 납품처는 항상 현재 본인 deliveryName으로 강제
-  const _forceDeliv1=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
-  const _delivEl1=document.getElementById('o-delivery-to');
-  if(_delivEl1) _delivEl1.value=_forceDeliv1;
-  const deliveryTo=_forceDeliv1;
+  const deliveryTo=document.getElementById('o-delivery-to').value.trim();
   const address=document.getElementById('o-address').value.trim();
   syncDateParts('o-date'); syncDateParts('o-ship-date');
   const orderDate=document.getElementById('o-date').value;
@@ -573,11 +569,7 @@ function _buildPreviewOrderFromForm(){
     return null;
   }
 
-  // 콘솔 우회 방어 — 납품처는 항상 현재 본인 deliveryName으로 강제
-  const _forceDeliv2=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
-  const _delivEl2=document.getElementById('o-delivery-to');
-  if(_delivEl2) _delivEl2.value=_forceDeliv2;
-  const deliveryTo=_forceDeliv2;
+  const deliveryTo=document.getElementById('o-delivery-to').value.trim();
   const address=document.getElementById('o-address').value.trim();
   const orderDate=document.getElementById('o-date').value;
   const shipDate=document.getElementById('o-ship-date').value;
@@ -1431,12 +1423,10 @@ function openEditOrder(orderId){
 
   // ── 3단계: 기존 발주값 복원 (재고 롤백과 독립적으로 order 원본 참조) ──
   setTimeout(()=>{
-    // 기본 정보 — 납품처는 저장된 값 무시하고 현재 본인 deliveryName으로 강제 덮어쓰기 + 읽기 전용
+    // 기본 정보 — 저장된 납품처 우선 복원, 빈 값일 때만 본인 deliveryName fallback. 수정 가능.
     const editDelivEl=document.getElementById('o-delivery-to');
-    const editForced=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
-    editDelivEl.value=editForced;
-    editDelivEl.readOnly=true;
-    editDelivEl.tabIndex=-1;
+    const editFallback=(!isAdmin()&&currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
+    editDelivEl.value=(order.deliveryTo||order.siteName||'')||editFallback;
     document.getElementById('o-address').value=order.address||order.customerName||'';
     setDateValue('o-date',order.orderDate||todayStr());
     setDateValue('o-ship-date',order.shipDate||'');
@@ -1535,12 +1525,10 @@ function copyOrder(orderId){
   // openOrderModal() 대신 직접 빈 모달 렌더 — 임시저장 자동불러오기 confirm 방지
   _openOrderModalRender(null);
   setTimeout(()=>{
-    // 기본 정보 — 납품처는 원본 무시하고 현재 본인 deliveryName으로 강제 덮어쓰기 + 읽기 전용
+    // 기본 정보 — 원본 납품처 우선 복사, 빈 값일 때만 본인 deliveryName fallback. 수정 가능.
     const copyDelivEl=document.getElementById('o-delivery-to');
-    const copyForced=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
-    copyDelivEl.value=copyForced;
-    copyDelivEl.readOnly=true;
-    copyDelivEl.tabIndex=-1;
+    const copyFallback=(!isAdmin()&&currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
+    copyDelivEl.value=(order.deliveryTo||order.siteName||'')||copyFallback;
     document.getElementById('o-address').value=order.address||order.customerName||'';
     setDateValue('o-date',todayStr());
     setDateValue('o-ship-date','');
