@@ -283,9 +283,21 @@ async function doLogin(){
   const err=document.getElementById('login-error');
   err.style.display='none';
 
-  const accounts=DB.get('accounts',[]);
+  let accounts=DB.get('accounts',[]);
   const isEmail=id.includes('@');
   let found=isEmail ? accounts.find(a=>a.email===id) : accounts.find(a=>a.id===id);
+  // 아이디로 로그인인데 로컬에 없으면 Firestore에서 최신 accounts 받아 재시도 (다른 기기에서 만든 새 계정 대응)
+  if(!found&&!isEmail&&window._FS){
+    try{
+      const remote=await window._FS.get('accounts');
+      if(Array.isArray(remote)&&remote.length>0){
+        const merged=_mergeById(accounts,remote);
+        localStorage.setItem('sh_accounts',JSON.stringify(merged));
+        accounts=merged;
+        found=accounts.find(a=>a.id===id);
+      }
+    }catch(e){console.warn('[로그인 시 accounts 새로고침 실패]',e.message);}
+  }
   if(!found&&!isEmail){err.style.display='block';err.textContent='아이디 또는 비밀번호가 올바르지 않습니다.';return;}
   if(!window._fbAuth){err.style.display='block';err.textContent='서버 연결 중입니다. 잠시 후 다시 시도해주세요.';return;}
 

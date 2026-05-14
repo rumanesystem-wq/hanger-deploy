@@ -2085,6 +2085,21 @@ document.addEventListener('keydown',e=>{
     window._FS.watchData('logs',()=>{
       if(currentView==='dashboard') renderDashboard();
     });
+    // 계정 실시간 동기화: 다른 기기에서 새 계정 추가/수정 시 즉시 반영
+    window._FS.watchData('accounts',()=>{
+      if(currentView==='accounts') renderAccounts();
+    });
+    // 품목 마스터 실시간 동기화: 다른 기기에서 품목 추가/수정/삭제 시 즉시 반영
+    window._FS.watchData('items',()=>{
+      if(currentView==='items') renderItems();
+      else if(currentView==='dashboard') renderDashboard();
+      else if(currentView==='purchase-requests') renderPurchaseRequests();
+    });
+    // 발주 필요 목록 실시간 동기화: 다른 기기에서 발주요청 발생/처리 시 즉시 반영
+    window._FS.watchData('purchase_requests',()=>{
+      if(currentView==='purchase-requests') renderPurchaseRequests();
+      else if(currentView==='dashboard') renderDashboard();
+    });
   }
 })();
 
