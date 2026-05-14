@@ -44,15 +44,31 @@
     window.addEventListener('focus',_swCheckUpdate);
   }
 
-  // version.txt 폴링 — 새 버전 감지 시 자동 새로고침
+  // version.txt 폴링 — 새 버전 감지 시 강제 새로고침 (캐시·SW 전부 비우고 리로드)
   (function(){
+    async function _hardReload(){
+      try{
+        // 1) Cache Storage 전부 삭제
+        if(window.caches){
+          const keys=await caches.keys();
+          await Promise.all(keys.map(k=>caches.delete(k)));
+        }
+        // 2) Service Worker 등록 해제
+        if(navigator.serviceWorker){
+          const regs=await navigator.serviceWorker.getRegistrations();
+          await Promise.all(regs.map(r=>r.unregister()));
+        }
+      }catch(e){console.warn('[PWA] 캐시·SW 정리 실패',e);}
+      // 3) 캐시 우회 리로드
+      location.replace(location.pathname+'?_v='+Date.now());
+    }
     function _checkVer(){
       fetch('./version.txt?_='+Date.now(),{cache:'no-store'})
         .then(r=>r.text()).then(v=>{
           v=v.trim();
           var stored=localStorage.getItem('_appVer');
           localStorage.setItem('_appVer',v);
-          if(stored&&stored!==v){console.log('[PWA] 새 버전 감지:',v,'→ 새로고침');location.reload();}
+          if(stored&&stored!==v){console.log('[PWA] 새 버전 감지:',v,'→ 강제 새로고침');_hardReload();}
         }).catch(()=>{});
     }
     window.addEventListener('load',()=>{_checkVer();setInterval(_checkVer,30000);});
@@ -556,7 +572,7 @@
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px" class="order-info-grid">
         <div class="form-group" style="margin-bottom:0">
           <label>납품처 <span class="req">*</span></label>
-          <input type="text" class="form-input" id="o-delivery-to" placeholder="자동 입력됨" readonly tabindex="-1"/>
+          <input type="text" class="form-input input-locked" id="o-delivery-to" placeholder="자동 입력됨" readonly tabindex="-1"/>
         </div>
         <div class="form-group" style="margin-bottom:0">
           <label>발주일 <span class="req">*</span></label>
