@@ -94,8 +94,57 @@ public/발주앱/
 | `updateEcountPrice` | onCall | 이카운트 품목 단가 수정 |
 | `dailyFirestoreBackup` | onSchedule | 매일 KST 00:00 Firestore 자동 백업 (7일치 보관) |
 
----
+# eCount API 연동 목록
 
+## 서버 정보
+
+| 구분 | URL |
+|------|-----|
+| 실서버 | `https://oapiaa.ecount.com` |
+| 테스트서버 | `https://sboapiaa.ecount.com` |
+| Zone 확인 | `https://oapi.ecount.com` |
+
+## API 목록
+
+| # | 엔드포인트 | 용도 | 메서드 |
+|---|-----------|------|--------|
+| 1 | `https://oapi.ecount.com/OAPI/V2/Zone` | Zone 조회 (서버 주소 확인) | POST |
+| 2 | `/OAPI/V2/OAPILogin` | 로그인 (SESSION_ID 발급) | POST |
+| 3 | `/OAPI/V2/InventoryBasic/GetBasicProductsList` | 품목 목록 조회 | POST |
+| 4 | `/OAPI/V2/InventoryBasic/SaveBasicProduct` | 품목 저장 | POST |
+| 5 | `/OAPI/V2/Sale/SaveSale` | 매출(발주) 저장 | POST |
+| 6 | `/OAPI/V2/Sale/DeleteSale` | 매출(발주) 삭제 | POST |
+
+## 인증 흐름
+
+Zone API 호출
+POST https://oapi.ecount.com/OAPI/V2/Zone
+{ COM_CODE }
+→ ZONE 값 반환 (예: "AA")
+
+서버 주소 결정
+https://oapi{zone}.ecount.com  (실서버)
+https://sboapi{zone}.ecount.com  (테스트서버)
+
+로그인
+POST {baseUrl}/OAPI/V2/OAPILogin
+{ COM_CODE, USER_ID, API_CERT_KEY, ZONE, LAN_TYPE }
+→ SESSION_ID 반환
+
+이후 API 호출
+POST {baseUrl}/OAPI/V2/...?SESSION_ID={SESSION_ID}
+
+## 관련 파일
+
+| 파일 | 역할 |
+|------|------|
+| `functions/index.js` | Cloud Functions 메인 (실서버 연동) |
+| `functions/fetch-ecount-products.js` | 품목 목록 가져오기 |
+| `functions/fetch-ecount-products-debug.js` | 품목 목록 디버그용 |
+| `functions/test-ecount.js` | 실서버 테스트 |
+| `functions/test-ecount-sboapi.js` | 테스트서버(SBO) 테스트 |
+
+---
 ## PWA 기능
 
 | 기능 | 설명 |
