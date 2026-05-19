@@ -9,3 +9,5 @@ public/발주앱/app.js.backup_20260403
 functions/.env
 *.docx
 .fuse_hidden*
+.gstack/
+.ai-backups/
