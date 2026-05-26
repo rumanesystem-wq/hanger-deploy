@@ -1902,7 +1902,7 @@ function deleteAccount(accId){
 }
 
 // 전역 이벤트 위임 (content 영역)
-document.getElementById('content').addEventListener('click',e=>{
+document.getElementById('content').addEventListener('click',async e=>{
   // 대시보드/공통 data-nav 카드 클릭
   const navEl=e.target.closest('[data-nav]');
   if(navEl&&!navEl.closest('#sb-nav')){navigate(navEl.dataset.nav);return;}
@@ -1917,7 +1917,8 @@ document.getElementById('content').addEventListener('click',e=>{
     const ns=statusChangeBtn.dataset.newStatus;
     const confirmMsg=ns==='취소'?'취소하면 차감된 재고가 복구됩니다. 계속하시겠습니까?':`상태를 '${ns}'으로 변경하시겠습니까?`;
     if(confirm(confirmMsg)){
-      if(changeOrderStatus(oid,ns)){closeModal('order-detail-modal');if(currentView==='orders')renderOrders();else if(currentView==='dashboard')renderDashboard();}
+      try{ if(await changeOrderStatus(oid,ns)){closeModal('order-detail-modal');if(currentView==='orders')renderOrders();else if(currentView==='dashboard')renderDashboard();} }
+      catch(_e){ toast(((_e&&_e.message)||'상태 변경 실패. 다시 시도해주세요.'),'error'); }
     }
     return;
   }
@@ -1933,7 +1934,8 @@ document.getElementById('content').addEventListener('click',e=>{
     e.stopPropagation();
     const oid=parseInt(uncancelBtn.dataset.orderId);
     if(confirm('이 발주서의 취소를 되돌립니다.\n재고가 다시 차감되고 상태가 취소 전으로 복원됩니다.\n계속할까요?')){
-      if(uncancelOrder(oid)) renderOrders();
+      try{ if(await uncancelOrder(oid)) renderOrders(); }
+      catch(_e){ toast(((_e&&_e.message)||'취소 되돌리기 실패. 다시 시도해주세요.'),'error'); }
     }
     return;
   }

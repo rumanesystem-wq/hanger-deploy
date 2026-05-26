@@ -14,7 +14,7 @@ function addStatusHistory(orderIdx, orders, newStatus, note){
 }
 
 
-function changeOrderStatus(orderId, newStatus){
+async function changeOrderStatus(orderId, newStatus){
   const orders=DB.get('orders',[]);
   const idx=orders.findIndex(o=>o.id===orderId);
   if(idx===-1){toast('발주서를 찾을 수 없습니다.','error');return false;}
@@ -31,7 +31,11 @@ function changeOrderStatus(orderId, newStatus){
   if(newStatus==='발주확정'&&order.status==='임시저장'&&!order.stockDeducted){
     const dbItems=DB.get('items',[]);
     const confWh=order.warehouse||'시흥';
-    (order.drawerItems||order.items||[]).forEach(oi=>{
+    // 서버에서 로그 id 배치 발급 (forEach 진입 전, 실패 시 throw)
+    let _logIds=[];
+    const _items=(order.drawerItems||order.items||[]);
+    if(_items.length>0) _logIds=await _serverGetLogIds(_items.length);
+    _items.forEach(oi=>{
       const iIdx=dbItems.findIndex(i=>i.id===oi.itemId);
       if(iIdx===-1)return;
       if(dbItems[iIdx].category!=='서랍장')return;
@@ -55,7 +59,7 @@ function changeOrderStatus(orderId, newStatus){
       }
       dbItems[iIdx].currentStock=(dbItems[iIdx].stockSiheung||0)+(dbItems[iIdx].stockPyeongtaek||0);
       const logs=DB.get('logs',[]);
-      logs.push({id:DB.nextId('logs'),itemId:oi.itemId,type:'발주차감',qty:-oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 확정`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:now});
+      logs.push({id:_logIds.shift(),itemId:oi.itemId,type:'발주차감',qty:-oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 확정`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:now});
       DB.set('logs',logs);
     });
     DB.set('items',dbItems);
@@ -66,7 +70,11 @@ function changeOrderStatus(orderId, newStatus){
   if(shouldRollback){
     const dbItems=DB.get('items',[]);
     const rollWh=order.warehouse||'시흥';
-    (order.drawerItems||order.items||[]).forEach(oi=>{
+    // 서버에서 로그 id 배치 발급 (forEach 진입 전, 실패 시 throw)
+    let _logIds=[];
+    const _items=(order.drawerItems||order.items||[]);
+    if(_items.length>0) _logIds=await _serverGetLogIds(_items.length);
+    _items.forEach(oi=>{
       const iIdx=dbItems.findIndex(i=>i.id===oi.itemId);
       if(iIdx===-1)return;
       if(dbItems[iIdx].category!=='서랍장')return;
@@ -90,7 +98,7 @@ function changeOrderStatus(orderId, newStatus){
       }
       dbItems[iIdx].currentStock=(dbItems[iIdx].stockSiheung||0)+(dbItems[iIdx].stockPyeongtaek||0);
       const logs=DB.get('logs',[]);
-      logs.push({id:DB.nextId('logs'),itemId:oi.itemId,type:'취소롤백',qty:oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} ${newStatus}`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:now});
+      logs.push({id:_logIds.shift(),itemId:oi.itemId,type:'취소롤백',qty:oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} ${newStatus}`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:now});
       DB.set('logs',logs);
     });
     DB.set('items',dbItems);
@@ -325,7 +333,7 @@ async function _createEcountSaleFromOrder(order){
 
 
 // 발주 취소: 차감된 재고 롤백
-function cancelOrder(orderId, cancelReason){
+async function cancelOrder(orderId, cancelReason){
   const orders=DB.get('orders',[]);
   const idx=orders.findIndex(o=>o.id===orderId);
   if(idx===-1){toast('발주서를 찾을 수 없습니다.','error');return false;}
@@ -337,7 +345,11 @@ function cancelOrder(orderId, cancelReason){
     const items=DB.get('items',[]);
     const rollbackNow=new Date().toISOString();
     const orderWh=order.warehouse||'시흥';
-    (order.drawerItems||order.items||[]).forEach(oi=>{
+    // 서버에서 로그 id 배치 발급 (forEach 진입 전, 실패 시 throw)
+    let _logIds=[];
+    const _items=(order.drawerItems||order.items||[]);
+    if(_items.length>0) _logIds=await _serverGetLogIds(_items.length);
+    _items.forEach(oi=>{
       const iIdx=items.findIndex(i=>i.id===oi.itemId);
       if(iIdx===-1)return;
       if(items[iIdx].category==='서랍장'){
@@ -361,7 +373,7 @@ function cancelOrder(orderId, cancelReason){
         }
         items[iIdx].currentStock=(items[iIdx].stockSiheung||0)+(items[iIdx].stockPyeongtaek||0);
         const logs3=DB.get('logs',[]);
-        logs3.push({id:DB.nextId('logs'),itemId:oi.itemId,type:'취소롤백',qty:oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 취소`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:rollbackNow});
+        logs3.push({id:_logIds.shift(),itemId:oi.itemId,type:'취소롤백',qty:oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 취소`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:rollbackNow});
         DB.set('logs',logs3);
       }
     });
@@ -391,7 +403,7 @@ function cancelOrder(orderId, cancelReason){
 // 권한: 관리자 OR 발주자 본인
 // 재고 마이너스 허용 (차단하지 않음, 결과만 toast로 안내)
 // ══════════════════════════════════════════════════
-function uncancelOrder(orderId){
+async function uncancelOrder(orderId){
   const orders=DB.get('orders',[]);
   const idx=orders.findIndex(o=>o.id===orderId);
   if(idx===-1){toast('발주서를 찾을 수 없습니다.','error');return false;}
@@ -417,7 +429,11 @@ function uncancelOrder(orderId){
     const items=DB.get('items',[]);
     const restoreNow=new Date().toISOString();
     const orderWh=order.warehouse||'시흥';
-    (order.drawerItems||order.items||[]).forEach(oi=>{
+    // 서버에서 로그 id 배치 발급 (forEach 진입 전, 실패 시 throw)
+    let _logIds=[];
+    const _items=(order.drawerItems||order.items||[]);
+    if(_items.length>0) _logIds=await _serverGetLogIds(_items.length);
+    _items.forEach(oi=>{
       const iIdx=items.findIndex(i=>i.id===oi.itemId);
       if(iIdx===-1)return;
       if(items[iIdx].category==='서랍장'){
@@ -444,7 +460,7 @@ function uncancelOrder(orderId){
           shortages.push({name:items[iIdx].name||('#'+oi.itemId),color:oiColor||'-',deficit:-afterVal});
         }
         const logs3=DB.get('logs',[]);
-        logs3.push({id:DB.nextId('logs'),itemId:oi.itemId,type:'취소되돌림',qty:oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 취소 되돌림`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:restoreNow});
+        logs3.push({id:_logIds.shift(),itemId:oi.itemId,type:'취소되돌림',qty:oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 취소 되돌림`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:restoreNow});
         DB.set('logs',logs3);
       }
     });
@@ -485,15 +501,17 @@ function openOrderCancelModal(orderId){
   if(err)err.style.display='none';
   const confirmBtn=document.getElementById('order-cancel-confirm-btn');
   if(confirmBtn){
-    confirmBtn.onclick=()=>{
+    confirmBtn.onclick=async ()=>{
       const reason=(input?input.value:'').trim();
       if(!reason){if(err)err.style.display='block';return;}
       if(err)err.style.display='none';
       closeModal('order-cancel-modal');
-      if(cancelOrder(_cancelTargetOrderId,reason)){
-        toast('발주서가 취소되었습니다. 재고가 복구되었습니다.','success');
-        renderOrders();
-      }
+      try{
+        if(await cancelOrder(_cancelTargetOrderId,reason)){
+          toast('발주서가 취소되었습니다. 재고가 복구되었습니다.','success');
+          renderOrders();
+        }
+      }catch(_e){ toast(((_e&&_e.message)||'취소 실패. 다시 시도해주세요.'),'error'); }
     };
   }
   openModal('order-cancel-modal');
@@ -1454,7 +1472,7 @@ function restoreDrawerItemsWhenReady(order, retry){
 
 
 // ── 수정 진입 전용 재고 롤백 (서랍장 차감분만 복구) ──
-function rollbackInventoryForEdit(order){
+async function rollbackInventoryForEdit(order){
   // stockDeducted가 true일 때만 롤백 (이중 롤백 방지)
   if(!order||!order.stockDeducted)return;
   const items=DB.get('items',[]);
@@ -1462,6 +1480,9 @@ function rollbackInventoryForEdit(order){
   const now=new Date().toISOString();
   const drawerRows=order.drawerItems||order.items||[];
   const editWh=order.warehouse||'시흥';
+  // 서버에서 로그 id 배치 발급 (forEach 진입 전, 실패 시 throw)
+  let _logIds=[];
+  if(drawerRows.length>0) _logIds=await _serverGetLogIds(drawerRows.length);
   drawerRows.forEach(oi=>{
     const iIdx=items.findIndex(i=>i.id===oi.itemId);
     if(iIdx===-1||items[iIdx].category!=='서랍장')return;
@@ -1487,7 +1508,7 @@ function rollbackInventoryForEdit(order){
     changed=true;
     const logs=DB.get('logs',[]);
     logs.push({
-      id:DB.nextId('logs'),itemId:oi.itemId,type:'발주수정재반영',
+      id:_logIds.shift(),itemId:oi.itemId,type:'발주수정재반영',
       qty:oi.requiredQty||0,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',
       memo:`발주 #${order.id} 수정 진입 롤백`,orderId:order.id,
       createdBy:currentUser?currentUser.id:'',createdAt:now
@@ -1505,7 +1526,7 @@ function rollbackInventoryForEdit(order){
 }
 
 
-function openEditOrder(orderId){
+async function openEditOrder(orderId){
   const order=getOrders().find(o=>o.id===orderId);
   if(!order){toast('발주서를 찾을 수 없습니다.','error');return;}
   if(order.isLocked){toast('발주 확정된 발주서입니다. 관리자가 확정 해제 후 수정할 수 있습니다.','error');return;}
@@ -1514,7 +1535,8 @@ function openEditOrder(orderId){
   }
 
   // ── 1단계: 재고 롤백 (입력칸과 무관하게 DB만 변경) ──
-  rollbackInventoryForEdit(order);
+  try{ await rollbackInventoryForEdit(order); }
+  catch(_e){ toast(((_e&&_e.message)||'수정 진입 롤백 실패. 다시 시도해주세요.'),'error'); return; }
 
   closeModal('order-detail-modal');
 

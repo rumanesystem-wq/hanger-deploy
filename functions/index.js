@@ -24,7 +24,7 @@ admin.initializeApp();
 const ECOUNT = {
   COM_CODE:     "670811",
   USER_ID:      "AUGUST282003",
-  API_CERT_KEY: "3d2c6d4dd0abc48a694de9620d50cc8708",
+  API_CERT_KEY: "26e9b8701e059420ea6a159d6aa1477610",
   ZONE:         "AA",   // Zone API 로 확인된 값
   LAN_TYPE:     "ko-KR",
 
@@ -56,6 +56,7 @@ async function ecountLogin() {
   });
 
   logger.info("[ECount Login] Status:", res.data.Status);
+  logger.info("[ECount Login] Full Response:", JSON.stringify(res.data));
 
   if (String(res.data.Status) !== "200") {
     const msg = res.data.Error?.Message || JSON.stringify(res.data);
@@ -63,7 +64,7 @@ async function ecountLogin() {
   }
 
   const sessionId = res.data.Data?.Datas?.SESSION_ID;
-  if (!sessionId) throw new Error("SESSION_ID를 받아오지 못했습니다.");
+  if (!sessionId) throw new Error("SESSION_ID를 받아오지 못했습니다. 응답: " + JSON.stringify(res.data));
 
   return sessionId;
 }
