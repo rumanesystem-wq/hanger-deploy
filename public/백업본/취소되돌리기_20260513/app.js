@@ -2,14 +2,12 @@
 
 let _cancelTargetOrderId=null;
 
-async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
+function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
   const items=DB.get('items',[]),logs=DB.get('logs',[]);
   const idx=items.findIndex(i=>i.id===itemId);
   if(idx===-1)throw new Error('품목을 찾을 수 없습니다.');
   const item=items[idx];
   if(!isTrackStock(item))throw new Error('재고 관리 대상 품목만 재고를 처리할 수 있습니다.');
-  // 서버에서 로그 id 1개 발급 — 실패 시 즉시 throw(상태 변경 전)
-  const _logIds=await _serverGetLogIds(1);
   const wh=warehouse||'시흥';
   const whKey=getWhKey(wh);
   const cwKey=getColorWhKey(wh);
@@ -39,7 +37,7 @@ async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
   items[idx].currentStock=(items[idx].stockSiheung||0)+(items[idx].stockPyeongtaek||0);
   DB.set('items',items);
   const logTs=logDate?(logDate+'T00:00:00.000Z'):new Date().toISOString();
-  logs.push({id:_logIds[0],itemId,type,qty:type==='조정'?n-before:n,beforeStock:before,afterStock:after,warehouse:wh,color:color||'',memo:memo||'',createdAt:logTs});
+  logs.push({id:DB.nextId('logs'),itemId,type,qty:type==='조정'?n-before:n,beforeStock:before,afterStock:after,warehouse:wh,color:color||'',memo:memo||'',createdAt:logTs});
   DB.set('logs',logs);
   // 입고 시: 해당 품목의 대기 중인 발주 필요 항목 자동 완료 처리
   if(type==='입고'){
@@ -1925,16 +1923,6 @@ document.getElementById('content').addEventListener('click',e=>{
   if(cancelBtn){
     const oid=parseInt(cancelBtn.dataset.orderId);
     openOrderCancelModal(oid);
-    return;
-  }
-  // 취소 되돌리기 버튼
-  const uncancelBtn=e.target.closest('.order-uncancel-btn');
-  if(uncancelBtn){
-    e.stopPropagation();
-    const oid=parseInt(uncancelBtn.dataset.orderId);
-    if(confirm('이 발주서의 취소를 되돌립니다.\n재고가 다시 차감되고 상태가 취소 전으로 복원됩니다.\n계속할까요?')){
-      if(uncancelOrder(oid)) renderOrders();
-    }
     return;
   }
   // 재발주 버튼

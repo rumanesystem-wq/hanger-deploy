@@ -247,50 +247,26 @@ function renderUpperTable(){
     const isFixed=UPPER_FIXED.includes(name);
     const price=getActivePriceForItem(name);
     const priceHtml=unitPriceHtml(price);
-    const isPostBar=name.startsWith('포스트바');
-    let noteCell;
-    if(isPostBar){
-      // 포스트바: 길이 분할 토글 버튼만 (비고 입력칸 제거)
-      noteCell='<td><button type="button" class="upper-split-btn" data-mat="'+name+'" title="길이 분할" style="padding:5px 10px;font-size:12px;border:1px solid #1e40af;background:#fff;color:#1e40af;border-radius:4px;cursor:pointer;font-weight:600">📏 길이 분할 <i class="fas fa-chevron-down" style="font-size:10px;margin-left:2px"></i></button><div class="upper-split-info" data-mat="'+name+'" style="margin-top:6px"></div></td>';
-    }else if(isFixed){
-      // 선반바 등 고정 품목: 비고 입력칸 유지
-      noteCell='<td><input type="text" class="form-input upper-note" data-mat="'+name+'" placeholder="실제길이" style="padding:4px 6px;font-size:12px;max-width:110px"/></td>';
-    }else{
-      noteCell='<td></td>';
-    }
-    let html='<tr data-price-row="1"'+((!isFixed&&gi===UPPER_FIXED.length)?' class="cat-divider-row"':'')+'>'+
+    const noteCell=isFixed?'<td><input type="text" class="form-input upper-note" data-mat="'+name+'" placeholder="실제길이" style="padding:4px 6px;font-size:12px;max-width:110px"/></td>':'<td></td>';
+    return '<tr data-price-row="1"'+((!isFixed&&gi===UPPER_FIXED.length)?' class="cat-divider-row"':'')+'>'+
       '<td class="td-name" style="font-size:13px">'+name+' <span class="unit-badge">EA</span></td>'+
       '<td>'+priceHtml+'</td>'+
       '<td class="td-center">'+stepperHtml('upper-qty','data-mat="'+name+'"')+'</td>'+
       noteCell+
       '<td class="td-center row-supply-val" data-raw-supply="0">'+supplyAmtHtml(0)+'</td>'+
+      
     '</tr>';
-    // 포스트바: 인라인 확장 행 (펼침/접힘)
-    if(isPostBar){
-      html+='<tr class="upper-split-expand" data-mat="'+name+'" style="display:none"><td colspan="5" style="background:#eff6ff;padding:12px 16px;border-top:1px solid #bfdbfe"><div class="split-form" data-mat="'+name+'"></div></td></tr>';
-    }
-    return html;
   }).join('');
-  // EA 구분행 삽입 (첫 번째 UPPER_EA 행 앞에)
-  const firstEAName=UPPER_EA.find(n=>allItems.includes(n));
-  if(firstEAName){
-    const firstEARow=tbody.querySelector(`.upper-qty[data-mat="${firstEAName}"]`)?.closest('tr');
-    if(firstEARow){
-      const divRow=document.createElement('tr');
-      divRow.innerHTML='<td colspan="5" style="background:#f8fafc;font-size:11px;font-weight:700;color:var(--text-3);padding:4px 8px">EA 수량형</td>';
-      firstEARow.before(divRow);
-    }
+  // EA 구분행 삽입
+  const rows=tbody.querySelectorAll('tr');
+  if(rows[UPPER_FIXED.length]){
+    const divRow=document.createElement('tr');
+    divRow.innerHTML='<td colspan="5" style="background:#f8fafc;font-size:11px;font-weight:700;color:var(--text-3);padding:4px 8px">EA 수량형</td>';
+    rows[UPPER_FIXED.length].before(divRow);
   }
   // 수량 변경 이벤트 연결
   tbody.querySelectorAll('.upper-qty').forEach(inp=>{
     inp.addEventListener('input',()=>updateUpperRowAmount(inp));
-  });
-  // 길이 분할 버튼 이벤트 (인라인 토글)
-  tbody.querySelectorAll('.upper-split-btn').forEach(btn=>{
-    btn.addEventListener('click',()=>{
-      const mat=btn.dataset.mat;
-      toggleLengthSplitInline(mat);
-    });
   });
   // 테이블 렌더 후 현재 선택된 색상으로 코드 체크 적용
   const ucCur=document.getElementById('upper-common-color');
@@ -515,13 +491,23 @@ function _resetOrderModalBtn(){
 // 모달 DOM 렌더링만 담당 (initialData가 있으면 기본값으로 사용)
 function _openOrderModalRender(initialData){
   // 기본 정보 초기화
-  // 납품처: 관리자/일반 사용자 모두 currentUser.deliveryName 강제 + 읽기 전용
-  //         (이카운트 코드 등 다른 필드는 별개)
-  const autoDeliveryName=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
+  // 납품처: 발주자 계정 → 회원가입 시 입력한 deliveryName 자동 주입 + 수정 불가
+  //         관리자 → 자유 입력
+  const isOrderer=(!isAdmin()&&currentUser&&currentUser.deliveryName);
+  const autoDeliveryName=isOrderer?currentUser.deliveryName:'';
   const delivToEl=document.getElementById('o-delivery-to');
   delivToEl.value=autoDeliveryName;
-  delivToEl.readOnly=true;
-  delivToEl.tabIndex=-1;
+  if(isOrderer){
+    delivToEl.readOnly=true;
+    delivToEl.style.background='#f1f5f9';
+    delivToEl.style.color='#64748b';
+    delivToEl.style.cursor='default';
+  } else {
+    delivToEl.readOnly=false;
+    delivToEl.style.background='';
+    delivToEl.style.color='';
+    delivToEl.style.cursor='';
+  }
   document.getElementById('o-address').value=initialData?initialData.address||initialData.customerName||'':'';
   setDateValue('o-date',initialData?initialData.orderDate||todayStr():todayStr());
   setDateValue('o-ship-date',initialData?initialData.shipDate||'':'');
@@ -783,12 +769,13 @@ function _openOrderModalRender(initialData){
 
 // draft 발주서 데이터를 열린 모달에 복원
 function _restoreDraftToModal(order){
-  // 기본정보 — 납품처는 저장된 값 무시하고 현재 본인 deliveryName으로 강제 덮어쓰기 + 읽기 전용
+  // 기본정보 — 발주자 계정이면 deliveryName 고정, 관리자만 복원
   const delivToEl2=document.getElementById('o-delivery-to');
-  const forcedDeliv=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
-  delivToEl2.value=forcedDeliv;
-  delivToEl2.readOnly=true;
-  delivToEl2.tabIndex=-1;
+  if(!isAdmin()&&currentUser&&currentUser.deliveryName){
+    delivToEl2.value=currentUser.deliveryName;
+  } else {
+    delivToEl2.value=order.deliveryTo||order.siteName||'';
+  }
   document.getElementById('o-address').value=order.address||order.customerName||'';
   setDateValue('o-date',order.orderDate||todayStr());
   setDateValue('o-ship-date',order.shipDate||'');
@@ -818,12 +805,6 @@ function _restoreDraftToModal(order){
       let nEl=document.querySelector(`.upper-note[data-mat="${rawName}"]`);
       if(!nEl){const cn=compatUpperName(rawName);if(cn!==rawName)nEl=document.querySelector(`.upper-note[data-mat="${cn}"]`);}
       if(nEl)nEl.value=r.note;
-    }
-    // 길이 분할 복원 (포스트바)
-    if(r.lengthSplits&&Array.isArray(r.lengthSplits)&&r.lengthSplits.length>0){
-      const matKey=inp?.dataset?.mat||rawName;
-      if(inp){inp.dataset.splits=JSON.stringify(r.lengthSplits);}
-      if(typeof setRowLengthSplits==='function')setRowLengthSplits(matKey,r.lengthSplits);
     }
   });
 
@@ -896,12 +877,8 @@ function _restoreDraftToModal(order){
 }
 
 
-async function submitOrder(saveMode='발주확정'){
-  // 콘솔 우회 방어 — 발주 저장 직전 납품처를 현재 본인 deliveryName으로 강제 덮어쓰기
-  const _forceDeliv=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
-  const _delivEl=document.getElementById('o-delivery-to');
-  if(_delivEl) _delivEl.value=_forceDeliv;
-  const deliveryTo=_forceDeliv;
+function submitOrder(saveMode='발주확정'){
+  const deliveryTo=document.getElementById('o-delivery-to').value.trim();
   const address=document.getElementById('o-address').value.trim();
   // 날짜 입력 최종 동기화 (키보드 입력 후 blur 없이 제출한 경우 대비)
   syncDateParts('o-date');
@@ -1030,17 +1007,6 @@ async function submitOrder(saveMode='발주확정'){
       const vatAmt=supply!==null?Math.round(supply*0.1):null;
       const row={name:mat,color:upperCommonColor,qty:val,note,unitPrice,amount:supply,vatAmount:vatAmt,white:0,black:0,silver:0,champagne:0};
       row[colorKey]=val;
-      // 길이 분할 (포스트바만)
-      try{
-        const splitsRaw=inp.dataset.splits;
-        if(splitsRaw){
-          const splits=JSON.parse(splitsRaw);
-          if(Array.isArray(splits)&&splits.length>0){
-            const sum=splits.reduce((a,s)=>a+(s.qty||0),0);
-            if(sum===val)row.lengthSplits=splits;
-          }
-        }
-      }catch{}
       upperMaterials.push(row);
     }
   });
@@ -1115,13 +1081,7 @@ async function submitOrder(saveMode='발주확정'){
   const sharedColorEl=document.getElementById('shared-color-sel');
   const sharedColor=sharedColorEl?sharedColorEl.value:'';
   const warehouse=document.getElementById('o-warehouse')?.value||'시흥';
-  let orderId, shortageCount;
-  try{
-    ({orderId,shortageCount}=await saveOrder({deliveryTo,address,orderDate,shipDate,note,upperMaterials,upperCommonColor,rodItems,rod2400Required,rodTotalLen,rodAmount,rodVat,shelfItems,drawerItems,drawerMemo,etcMemo,sharedColor,totalSupply,totalVat:totalVatAmt,totalAmount,warehouse},saveMode));
-  }catch(_e){
-    toast(((_e&&_e.message)||'발주 저장 실패. 다시 시도해주세요.'),'error');
-    return;
-  }
+  const{orderId,shortageCount}=saveOrder({deliveryTo,address,orderDate,shipDate,note,upperMaterials,upperCommonColor,rodItems,rod2400Required,rodTotalLen,rodAmount,rodVat,shelfItems,drawerItems,drawerMemo,etcMemo,sharedColor,totalSupply,totalVat:totalVatAmt,totalAmount,warehouse},saveMode);
   closeModal('order-modal');
   toast(saveMode==='임시저장'?'발주서가 임시저장되었습니다.':saveMode==='발주대기'?'발주가 접수되었습니다. 관리자 확정을 기다립니다.':(shortageCount>0?`출고확정 완료. 서랍장 부족 품목 ${shortageCount}개가 발주 필요 목록에 추가되었습니다.`:'발주서가 출고확정되었습니다.'),'success');
   if(currentView==='orders')renderOrders();
@@ -1159,184 +1119,5 @@ function renderStatusTimeline(order){
     <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:14px"><i class="fas fa-clock-rotate-left" style="margin-right:6px;color:#94a3b8"></i>상태 변경 이력</div>
     ${items}
   </div>`;
-}
-
-// ── 길이 분할 (포스트바) ─────────────────────────────────────
-const POSTBAR_STD_LENGTH={
-  '포스트바 2050':2050,
-  '포스트바 2250':2250,
-  '포스트바 2400':2400,
-};
-
-function getRowLengthSplits(matName){
-  const inp=document.querySelector(`.upper-qty[data-mat="${matName}"]`);
-  if(!inp)return [];
-  try{return JSON.parse(inp.dataset.splits||'[]');}catch{return [];}
-}
-
-function setRowLengthSplits(matName,splits){
-  const inp=document.querySelector(`.upper-qty[data-mat="${matName}"]`);
-  if(!inp)return;
-  inp.dataset.splits=JSON.stringify(splits||[]);
-  // 셀 표시 갱신
-  const btn=document.querySelector(`.upper-split-btn[data-mat="${matName}"]`);
-  const noteEl=document.querySelector(`.upper-note[data-mat="${matName}"]`);
-  const splitInfoEl=document.querySelector(`.upper-split-info[data-mat="${matName}"]`);
-  const isPostBar=matName.startsWith('포스트바');
-  if(splits&&splits.length>0){
-    // 분할 정보 HTML
-    const std=POSTBAR_STD_LENGTH[matName]||0;
-    const html=splits.map(s=>{
-      const isStd=Number(s.length)===std;
-      return `<div style="font-size:11px;color:#0f172a;line-height:1.5">${s.length}mm × ${s.qty}개${isStd?' (정척)':''}</div>`;
-    }).join('');
-    // 분할 정보 표시 (분할 정보 div를 분할 버튼 앞에 삽입)
-    if(splitInfoEl){
-      splitInfoEl.innerHTML=html;
-      splitInfoEl.style.display='block';
-    }else{
-      const container=isPostBar?btn?.parentNode:noteEl?.parentNode;
-      if(container){
-        const div=document.createElement('div');
-        div.className='upper-split-info';
-        div.dataset.mat=matName;
-        div.style.cssText='margin-bottom:6px';
-        div.innerHTML=html;
-        const anchor=isPostBar?btn:noteEl;
-        if(anchor)container.insertBefore(div,anchor);
-      }
-    }
-    // 비고 입력칸 있으면 숨김 (선반바엔 없음)
-    if(noteEl)noteEl.style.display='none';
-  }else{
-    if(splitInfoEl)splitInfoEl.style.display='none';
-    if(noteEl)noteEl.style.display='';
-  }
-}
-
-function toggleLengthSplitInline(matName){
-  const expandRow=document.querySelector(`.upper-split-expand[data-mat="${matName}"]`);
-  const btn=document.querySelector(`.upper-split-btn[data-mat="${matName}"]`);
-  if(!expandRow)return;
-  const isOpen=expandRow.style.display!=='none';
-  if(isOpen){
-    expandRow.style.display='none';
-    if(btn){
-      btn.style.background='#fff';
-      btn.style.color='#1e40af';
-      const chev=btn.querySelector('i.fa-chevron-up');
-      if(chev){chev.classList.remove('fa-chevron-up');chev.classList.add('fa-chevron-down');}
-    }
-    return;
-  }
-  // 열기 — 폼 렌더
-  const qtyInp=document.querySelector(`.upper-qty[data-mat="${matName}"]`);
-  const totalQty=parseInt(qtyInp?.value)||0;
-  if(totalQty<=0){toast('수량을 먼저 입력해주세요.','error');return;}
-  const stdLen=POSTBAR_STD_LENGTH[matName]||0;
-  const current=getRowLengthSplits(matName);
-  let splits=current.length>0?JSON.parse(JSON.stringify(current)):[{qty:totalQty,length:stdLen}];
-  const formEl=expandRow.querySelector('.split-form');
-  formEl.innerHTML=`
-    <div style="font-size:13px;color:#1e40af;margin-bottom:10px"><strong style="color:#0f172a">${matName}</strong> — 발주 수량 ${totalQty}개 · 정척 ${stdLen}mm</div>
-    <div class="split-rows" style="display:flex;flex-direction:column;gap:6px"></div>
-    <div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">
-      <button type="button" class="btn btn-outline btn-sm split-add-btn"><i class="fas fa-plus"></i> 길이 추가</button>
-      <button type="button" class="btn btn-ghost btn-sm split-reset-btn" style="color:#92400e"><i class="fas fa-rotate-left"></i> 모두 정척으로</button>
-      <div class="split-summary" style="margin-left:auto;font-size:12px;font-weight:600;padding:4px 10px;border-radius:4px"></div>
-    </div>`;
-
-  function autoSave(){
-    const clean=splits.filter(s=>s.qty>0&&s.length>0);
-    const sum=clean.reduce((a,s)=>a+s.qty,0);
-    if(clean.length===0){setRowLengthSplits(matName,[]);return;}
-    if(sum!==totalQty)return;
-    if(clean.length===1&&clean[0].length===stdLen){setRowLengthSplits(matName,[]);return;}
-    setRowLengthSplits(matName,clean);
-  }
-  function renderRows(){
-    const rowsEl=formEl.querySelector('.split-rows');
-    rowsEl.innerHTML=splits.map((s,i)=>{
-      const isStd=Number(s.length)===stdLen;
-      return `<div style="display:flex;gap:8px;align-items:center" data-row-i="${i}">
-        <input type="number" class="form-input split-qty" value="${s.qty}" min="1" placeholder="수량" style="width:80px;padding:6px 8px;font-size:13px"/>
-        <span style="font-size:13px;color:var(--text-2)">개 ·</span>
-        <input type="number" class="form-input split-len" value="${s.length}" min="1" placeholder="길이(mm)" style="width:100px;padding:6px 8px;font-size:13px"/>
-        <span style="font-size:13px;color:var(--text-2)">mm${isStd?' <span style="color:#15803d;font-weight:600">(정척)</span>':''}</span>
-        ${splits.length>1?'<button type="button" class="btn btn-ghost btn-xs split-del-btn" style="color:#dc2626;margin-left:auto" title="삭제"><i class="fas fa-times"></i></button>':''}
-      </div>`;
-    }).join('');
-    rowsEl.querySelectorAll('.split-qty,.split-len').forEach(inp=>{
-      inp.addEventListener('input',()=>{
-        const row=inp.closest('[data-row-i]');
-        const i=parseInt(row.dataset.rowI);
-        if(inp.classList.contains('split-qty'))splits[i].qty=parseInt(inp.value)||0;
-        else{
-          splits[i].length=parseInt(inp.value)||0;
-          // 정척 라벨 갱신 (input 옆 span)
-          const labelSpan=row.querySelector('span:nth-of-type(2)');
-          if(labelSpan){
-            const isStd=Number(splits[i].length)===stdLen;
-            labelSpan.innerHTML=`mm${isStd?' <span style="color:#15803d;font-weight:600">(정척)</span>':''}`;
-          }
-        }
-        updateSummary();
-        autoSave();
-      });
-      // 자동 정척 보충 (blur 시): 1행만 있고 길이 != 정척이면 남은 수량 자동 추가
-      inp.addEventListener('blur',()=>{
-        if(splits.length!==1)return;
-        if(splits[0].length===stdLen)return;
-        if(!splits[0].qty||!splits[0].length)return;
-        const remain=totalQty-splits[0].qty;
-        if(remain<=0)return;
-        splits.push({qty:remain,length:stdLen});
-        renderRows();
-        autoSave();
-      });
-    });
-    rowsEl.querySelectorAll('.split-del-btn').forEach(btn=>{
-      btn.addEventListener('click',()=>{
-        const row=btn.closest('[data-row-i]');
-        const i=parseInt(row.dataset.rowI);
-        splits.splice(i,1);
-        renderRows();
-        updateSummary();
-        autoSave();
-      });
-    });
-    updateSummary();
-  }
-  function updateSummary(){
-    const sum=splits.reduce((a,s)=>a+(s.qty||0),0);
-    const overLen=splits.some(s=>s.length>stdLen);
-    const ok=sum===totalQty&&splits.every(s=>s.qty>0&&s.length>0);
-    const el=formEl.querySelector('.split-summary');
-    el.style.background=ok?'#dcfce7':'#fee2e2';
-    el.style.color=ok?'#15803d':'#dc2626';
-    el.innerHTML=`합계 ${sum}/${totalQty}개 ${ok?'✓':'✗'}${overLen?' · ⚠️ 정척 초과':''}`;
-  }
-  formEl.querySelector('.split-add-btn').addEventListener('click',()=>{
-    const used=splits.reduce((a,s)=>a+(s.qty||0),0);
-    const remain=Math.max(totalQty-used,1);
-    splits.push({qty:remain,length:stdLen});
-    renderRows();
-    autoSave();
-  });
-  formEl.querySelector('.split-reset-btn').addEventListener('click',()=>{
-    splits=[{qty:totalQty,length:stdLen}];
-    renderRows();
-    autoSave();
-  });
-  renderRows();
-
-  // 펼침 표시
-  expandRow.style.display='';
-  if(btn){
-    btn.style.background='#1e40af';
-    btn.style.color='#fff';
-    const chev=btn.querySelector('i.fa-chevron-down');
-    if(chev){chev.classList.remove('fa-chevron-down');chev.classList.add('fa-chevron-up');}
-  }
 }
 

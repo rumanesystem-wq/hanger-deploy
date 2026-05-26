@@ -204,7 +204,7 @@ async function _createEcountSaleFromOrder(order){
   if((order.rodItems||[]).length>0){
     const rodQty=order.rod2400Required||0;
     if(rodQty>0){
-      const rodItem=allItems.find(i=>{const n=normalizeName(i.name);return n==='옷봉2400'||n==='옷봉2400mm';});
+      const rodItem=allItems.find(i=>normalizeName(i.name)==='옷봉2400');
       if(rodItem){
         // 옷봉 색상 = 상부자재 공통색상 → 주문 공통색상 순으로 결정
         const rodColor=order.upperCommonColor||sharedColor||'';
@@ -215,8 +215,8 @@ async function _createEcountSaleFromOrder(order){
         if(prodCd){
           const price=getActivePriceForItem('옷봉 2400')??4500;
           ecountItems.push({prodCd,qty:rodQty,prodNm:'옷봉 2400',sizeNm:rodColorKey,price});
-        }else{console.warn('[이카운트] 옷봉 prodCd 없음 (건너뜀): 색상',rodColor);}
-      }else{console.warn('[이카운트] 옷봉 품목 미매칭 (건너뜀)');}
+        }
+      }
     }
   }
 
@@ -383,97 +383,6 @@ function cancelOrder(orderId, cancelReason){
   prs.forEach(p=>{if(p.orderId===orderId&&p.status==='대기'){p.status='취소';p.updatedAt=new Date().toISOString();}});
   DB.set('purchase_requests',prs);
 
-  return true;
-}
-
-// ══════════════════════════════════════════════════
-// 발주 취소 되돌리기 — cancelOrder()의 역순
-// 권한: 관리자 OR 발주자 본인
-// 재고 마이너스 허용 (차단하지 않음, 결과만 toast로 안내)
-// ══════════════════════════════════════════════════
-function uncancelOrder(orderId){
-  const orders=DB.get('orders',[]);
-  const idx=orders.findIndex(o=>o.id===orderId);
-  if(idx===-1){toast('발주서를 찾을 수 없습니다.','error');return false;}
-  const order=orders[idx];
-  if(order.status!=='취소'){toast('취소된 발주서가 아닙니다.','error');return false;}
-
-  // 권한: 관리자 OR 본인
-  const isOwner=currentUser && order.createdBy===currentUser.id;
-  if(!isAdmin() && !isOwner){toast('권한이 없습니다.','error');return false;}
-
-  // 직전 상태 추적 (statusHistory 역방향 스캔, '취소' 이전 status 찾기)
-  let prevStatus='발주대기';
-  if(Array.isArray(order.statusHistory)){
-    for(let i=order.statusHistory.length-1;i>=0;i--){
-      const s=order.statusHistory[i].status;
-      if(s && s!=='취소'){prevStatus=s;break;}
-    }
-  }
-
-  // 재고 재차감 (stockDeducted가 false인 정상 케이스만)
-  const shortages=[]; // {name, color, deficit}
-  if(!order.stockDeducted){
-    const items=DB.get('items',[]);
-    const restoreNow=new Date().toISOString();
-    const orderWh=order.warehouse||'시흥';
-    (order.drawerItems||order.items||[]).forEach(oi=>{
-      const iIdx=items.findIndex(i=>i.id===oi.itemId);
-      if(iIdx===-1)return;
-      if(items[iIdx].category==='서랍장'){
-        if(items[iIdx].stockSiheung===undefined)items[iIdx].stockSiheung=items[iIdx].currentStock||0;
-        if(items[iIdx].stockPyeongtaek===undefined)items[iIdx].stockPyeongtaek=0;
-        const wh=oi.warehouse||orderWh;
-        const whKey=getWhKey(wh);
-        const cwKey=getColorWhKey(wh);
-        const oiColor=oi.color||order.sharedColor||'';
-        let before, afterVal;
-        if(oiColor){
-          if(!items[iIdx][cwKey])items[iIdx][cwKey]={};
-          before=items[iIdx][cwKey][oiColor]||0;
-          afterVal=before-oi.requiredQty; // 마이너스 허용
-          items[iIdx][cwKey][oiColor]=afterVal;
-          items[iIdx][whKey]=Object.values(items[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
-        } else {
-          before=items[iIdx][whKey]||0;
-          afterVal=before-oi.requiredQty;
-          items[iIdx][whKey]=afterVal;
-        }
-        items[iIdx].currentStock=(items[iIdx].stockSiheung||0)+(items[iIdx].stockPyeongtaek||0);
-        if(afterVal<0){
-          shortages.push({name:items[iIdx].name||('#'+oi.itemId),color:oiColor||'-',deficit:-afterVal});
-        }
-        const logs3=DB.get('logs',[]);
-        logs3.push({id:DB.nextId('logs'),itemId:oi.itemId,type:'취소되돌림',qty:oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 취소 되돌림`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:restoreNow});
-        DB.set('logs',logs3);
-      }
-    });
-    DB.set('items',items);
-  }
-
-  // 발주서 상태 복원
-  const restoreNow2=new Date().toISOString();
-  orders[idx].status=prevStatus;
-  delete orders[idx].cancelReason;
-  delete orders[idx].cancelledAt;
-  orders[idx].stockDeducted=true;
-  orders[idx].updatedAt=restoreNow2;
-  addStatusHistory(idx, orders, prevStatus, '취소 되돌림');
-  DB.set('orders',orders);
-
-  // 관련 발주필요(PR) 복원
-  const prs=DB.get('purchase_requests',[]);
-  prs.forEach(p=>{if(p.orderId===orderId&&p.status==='취소'){p.status='대기';p.updatedAt=new Date().toISOString();}});
-  DB.set('purchase_requests',prs);
-
-  // 결과 toast
-  if(shortages.length>0){
-    const msg=shortages.slice(0,3).map(s=>`${s.name}${s.color!=='-'?'('+s.color+')':''} -${s.deficit}`).join(', ');
-    const more=shortages.length>3?` 외 ${shortages.length-3}건`:'';
-    toast(`복원 완료. 단, 재고 부족: ${msg}${more}`, 'warning');
-  } else {
-    toast('취소가 되돌려졌습니다. 재고가 다시 차감되었습니다.','success');
-  }
   return true;
 }
 
@@ -803,7 +712,7 @@ function renderOrders(){
   if(orders.length===0){
     rows='<div class="empty"><i class="fas fa-file-invoice"></i><p>등록된 발주서가 없습니다.</p>'+(isAdmin()?'':'<button class="btn btn-primary" style="margin-top:12px" id="empty-order-btn">첫 번째 발주서 등록</button>')+'</div>';
   }else{
-    rows=`<div class="table-wrap"><table><thead><tr><th>납품처</th><th>시공주소</th><th>발주번호</th><th>발주일</th><th>출고일</th><th class="td-center">상태</th><th class="td-center">등록일</th>${orderListSubTab==='cancelled'?'<th>취소 사유</th>':''}${(isAdmin()||orderListSubTab==='cancelled')?'<th class="td-center">관리</th>':''}</tr></thead><tbody>
+    rows=`<div class="table-wrap"><table><thead><tr><th>납품처</th><th>시공주소</th><th>발주번호</th><th>발주일</th><th>출고일</th><th class="td-center">상태</th><th class="td-center">등록일</th>${orderListSubTab==='cancelled'?'<th>취소 사유</th>':''}${isAdmin()?'<th class="td-center">관리</th>':''}</tr></thead><tbody>
     ${orders.map(o=>{
       const dTo=o.deliveryTo||o.siteName||'-';
       const addr=o.address||o.customerName||'-';
@@ -812,10 +721,9 @@ function renderOrders(){
         ?'<span class="badge badge-locked" style="margin-left:4px"><i class="fas fa-lock"></i></span>'
         :(o.status==='발주대기'?'<span class="badge" style="margin-left:4px;background:#fefce8;color:#a16207;border:1px solid #fde047"><i class="fas fa-lock-open"></i></span>':'');
       const cancelBtn=isAdmin()&&orderListSubTab==='active'?`<button class="btn btn-ghost btn-xs order-cancel-btn" data-order-id="${o.id}" style="color:var(--danger);white-space:nowrap"><i class="fas fa-ban"></i> 발주 취소</button>`:'';
-      const uncancelBtn=orderListSubTab==='cancelled'&&(isAdmin()||(currentUser&&o.createdBy===currentUser.id))?`<button class="btn btn-ghost btn-xs order-uncancel-btn" data-order-id="${o.id}" style="color:#16a34a;white-space:nowrap"><i class="fas fa-rotate-left"></i> 취소 되돌리기</button>`:'';
       const reorderBtn=`<button class="btn btn-outline btn-xs reorder-btn" data-order-id="${o.id}" title="이 발주서로 재발주" style="border:1.5px solid #0ea5e9;color:#0369a1;font-weight:700;white-space:nowrap"><i class="fas fa-rotate-right"></i> 재발주</button>`;
       const cancelReasonCell=orderListSubTab==='cancelled'?`<td class="td-muted" style="font-size:12px;color:#dc2626;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${o.cancelReason||''}">${o.cancelReason||'-'}</td>`:'';
-      return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer" title="클릭하여 상세 보기"><td class="td-name">${dTo}</td><td class="td-muted" style="font-size:12px">${addr}</td><td style="font-size:12px;font-weight:600;color:#0f172a">${o.orderNum||('#'+o.id)}${lockBadge}</td><td class="td-muted">${fmt(o.orderDate)}</td><td class="td-muted">${o.shipDate?fmt(o.shipDate):'-'}</td><td class="td-center">${statusBadge}</td><td class="td-center td-muted">${fmt(o.createdAt)}</td>${cancelReasonCell}<td class="td-center">${cancelBtn} ${uncancelBtn} ${reorderBtn}</td></tr>`;
+      return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer" title="클릭하여 상세 보기"><td class="td-name">${dTo}</td><td class="td-muted" style="font-size:12px">${addr}</td><td style="font-size:12px;font-weight:600;color:#0f172a">${o.orderNum||('#'+o.id)}${lockBadge}</td><td class="td-muted">${fmt(o.orderDate)}</td><td class="td-muted">${o.shipDate?fmt(o.shipDate):'-'}</td><td class="td-center">${statusBadge}</td><td class="td-center td-muted">${fmt(o.createdAt)}</td>${cancelReasonCell}<td class="td-center">${cancelBtn} ${reorderBtn}</td></tr>`;
     }).join('')}</tbody></table></div>`;
   }
   // 지역 드롭다운: 모든 발주서의 주소에서 첫 단어(시/도) 추출

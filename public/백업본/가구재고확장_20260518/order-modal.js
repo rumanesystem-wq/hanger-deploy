@@ -896,7 +896,7 @@ function _restoreDraftToModal(order){
 }
 
 
-async function submitOrder(saveMode='발주확정'){
+function submitOrder(saveMode='발주확정'){
   // 콘솔 우회 방어 — 발주 저장 직전 납품처를 현재 본인 deliveryName으로 강제 덮어쓰기
   const _forceDeliv=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
   const _delivEl=document.getElementById('o-delivery-to');
@@ -1115,13 +1115,7 @@ async function submitOrder(saveMode='발주확정'){
   const sharedColorEl=document.getElementById('shared-color-sel');
   const sharedColor=sharedColorEl?sharedColorEl.value:'';
   const warehouse=document.getElementById('o-warehouse')?.value||'시흥';
-  let orderId, shortageCount;
-  try{
-    ({orderId,shortageCount}=await saveOrder({deliveryTo,address,orderDate,shipDate,note,upperMaterials,upperCommonColor,rodItems,rod2400Required,rodTotalLen,rodAmount,rodVat,shelfItems,drawerItems,drawerMemo,etcMemo,sharedColor,totalSupply,totalVat:totalVatAmt,totalAmount,warehouse},saveMode));
-  }catch(_e){
-    toast(((_e&&_e.message)||'발주 저장 실패. 다시 시도해주세요.'),'error');
-    return;
-  }
+  const{orderId,shortageCount}=saveOrder({deliveryTo,address,orderDate,shipDate,note,upperMaterials,upperCommonColor,rodItems,rod2400Required,rodTotalLen,rodAmount,rodVat,shelfItems,drawerItems,drawerMemo,etcMemo,sharedColor,totalSupply,totalVat:totalVatAmt,totalAmount,warehouse},saveMode);
   closeModal('order-modal');
   toast(saveMode==='임시저장'?'발주서가 임시저장되었습니다.':saveMode==='발주대기'?'발주가 접수되었습니다. 관리자 확정을 기다립니다.':(shortageCount>0?`출고확정 완료. 서랍장 부족 품목 ${shortageCount}개가 발주 필요 목록에 추가되었습니다.`:'발주서가 출고확정되었습니다.'),'success');
   if(currentView==='orders')renderOrders();

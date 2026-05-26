@@ -515,13 +515,23 @@ function _resetOrderModalBtn(){
 // 모달 DOM 렌더링만 담당 (initialData가 있으면 기본값으로 사용)
 function _openOrderModalRender(initialData){
   // 기본 정보 초기화
-  // 납품처: 관리자/일반 사용자 모두 currentUser.deliveryName 강제 + 읽기 전용
-  //         (이카운트 코드 등 다른 필드는 별개)
-  const autoDeliveryName=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
+  // 납품처: 발주자 계정 → 회원가입 시 입력한 deliveryName 자동 주입 + 수정 불가
+  //         관리자 → 자유 입력
+  const isOrderer=(!isAdmin()&&currentUser&&currentUser.deliveryName);
+  const autoDeliveryName=isOrderer?currentUser.deliveryName:'';
   const delivToEl=document.getElementById('o-delivery-to');
   delivToEl.value=autoDeliveryName;
-  delivToEl.readOnly=true;
-  delivToEl.tabIndex=-1;
+  if(isOrderer){
+    delivToEl.readOnly=true;
+    delivToEl.style.background='#f1f5f9';
+    delivToEl.style.color='#64748b';
+    delivToEl.style.cursor='default';
+  } else {
+    delivToEl.readOnly=false;
+    delivToEl.style.background='';
+    delivToEl.style.color='';
+    delivToEl.style.cursor='';
+  }
   document.getElementById('o-address').value=initialData?initialData.address||initialData.customerName||'':'';
   setDateValue('o-date',initialData?initialData.orderDate||todayStr():todayStr());
   setDateValue('o-ship-date',initialData?initialData.shipDate||'':'');
@@ -783,12 +793,13 @@ function _openOrderModalRender(initialData){
 
 // draft 발주서 데이터를 열린 모달에 복원
 function _restoreDraftToModal(order){
-  // 기본정보 — 납품처는 저장된 값 무시하고 현재 본인 deliveryName으로 강제 덮어쓰기 + 읽기 전용
+  // 기본정보 — 발주자 계정이면 deliveryName 고정, 관리자만 복원
   const delivToEl2=document.getElementById('o-delivery-to');
-  const forcedDeliv=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
-  delivToEl2.value=forcedDeliv;
-  delivToEl2.readOnly=true;
-  delivToEl2.tabIndex=-1;
+  if(!isAdmin()&&currentUser&&currentUser.deliveryName){
+    delivToEl2.value=currentUser.deliveryName;
+  } else {
+    delivToEl2.value=order.deliveryTo||order.siteName||'';
+  }
   document.getElementById('o-address').value=order.address||order.customerName||'';
   setDateValue('o-date',order.orderDate||todayStr());
   setDateValue('o-ship-date',order.shipDate||'');
@@ -896,12 +907,8 @@ function _restoreDraftToModal(order){
 }
 
 
-async function submitOrder(saveMode='발주확정'){
-  // 콘솔 우회 방어 — 발주 저장 직전 납품처를 현재 본인 deliveryName으로 강제 덮어쓰기
-  const _forceDeliv=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
-  const _delivEl=document.getElementById('o-delivery-to');
-  if(_delivEl) _delivEl.value=_forceDeliv;
-  const deliveryTo=_forceDeliv;
+function submitOrder(saveMode='발주확정'){
+  const deliveryTo=document.getElementById('o-delivery-to').value.trim();
   const address=document.getElementById('o-address').value.trim();
   // 날짜 입력 최종 동기화 (키보드 입력 후 blur 없이 제출한 경우 대비)
   syncDateParts('o-date');
@@ -1115,13 +1122,7 @@ async function submitOrder(saveMode='발주확정'){
   const sharedColorEl=document.getElementById('shared-color-sel');
   const sharedColor=sharedColorEl?sharedColorEl.value:'';
   const warehouse=document.getElementById('o-warehouse')?.value||'시흥';
-  let orderId, shortageCount;
-  try{
-    ({orderId,shortageCount}=await saveOrder({deliveryTo,address,orderDate,shipDate,note,upperMaterials,upperCommonColor,rodItems,rod2400Required,rodTotalLen,rodAmount,rodVat,shelfItems,drawerItems,drawerMemo,etcMemo,sharedColor,totalSupply,totalVat:totalVatAmt,totalAmount,warehouse},saveMode));
-  }catch(_e){
-    toast(((_e&&_e.message)||'발주 저장 실패. 다시 시도해주세요.'),'error');
-    return;
-  }
+  const{orderId,shortageCount}=saveOrder({deliveryTo,address,orderDate,shipDate,note,upperMaterials,upperCommonColor,rodItems,rod2400Required,rodTotalLen,rodAmount,rodVat,shelfItems,drawerItems,drawerMemo,etcMemo,sharedColor,totalSupply,totalVat:totalVatAmt,totalAmount,warehouse},saveMode);
   closeModal('order-modal');
   toast(saveMode==='임시저장'?'발주서가 임시저장되었습니다.':saveMode==='발주대기'?'발주가 접수되었습니다. 관리자 확정을 기다립니다.':(shortageCount>0?`출고확정 완료. 서랍장 부족 품목 ${shortageCount}개가 발주 필요 목록에 추가되었습니다.`:'발주서가 출고확정되었습니다.'),'success');
   if(currentView==='orders')renderOrders();

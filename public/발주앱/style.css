@@ -778,3 +778,16 @@ tbody tr:last-child td{border-bottom:none}
     background:#eff6ff!important;
   }
 }
+
+/* ── 모바일 현재고 표 — 시흥/평택/합계 라벨 자동 표시 ── */
+@media(max-width:640px){
+  #inv-stock-table td:nth-child(3)::before{
+    content:"시흥 ";font-size:10px;font-weight:700;color:#1e40af;margin-right:2px;
+  }
+  #inv-stock-table td:nth-child(4)::before{
+    content:"평택 ";font-size:10px;font-weight:700;color:#065f46;margin-right:2px;
+  }
+  #inv-stock-table td:nth-child(5)::before{
+    content:"합계 ";font-size:10px;font-weight:700;color:#374151;margin-right:2px;
+  }
+}

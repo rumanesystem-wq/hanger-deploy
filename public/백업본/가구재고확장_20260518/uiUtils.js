@@ -10,7 +10,7 @@ function getItems(){
   const items=DB.get('items',[]);
   // 창고별 재고 필드가 있는 서랍장 품목은 currentStock을 합계로 동기화
   items.forEach(item=>{
-    if(isTrackStock(item)&&item.stockSiheung!==undefined){
+    if(item.category==='서랍장'&&item.stockSiheung!==undefined){
       item.currentStock=(item.stockSiheung||0)+(item.stockPyeongtaek||0);
     }
     // isActive 필드가 명시적으로 false인 경우에만 비활성 처리 (undefined는 활성으로 간주)
@@ -37,11 +37,9 @@ function getColorWhKey(wh){
   if(wh==='평택')return 'colorStockPyeongtaek';
   return 'colorStockSiheung';
 }
-// 재고 추적 대상 판별 (기존 서랍장 + 가격표 가구 trackStock)
-function isTrackStock(item){return !!item&&(item.category==='서랍장'||item.trackStock===true);}
 // 창고별 재고 반환 헬퍼 (color 지정 시 색상별 재고, 미지정 시 창고 합계)
 function getWarehouseStock(item,warehouse,color){
-  if(!item||!isTrackStock(item))return 0;
+  if(!item||item.category!=='서랍장')return 0;
   const cwKey=getColorWhKey(warehouse||'시흥');
   if(color){
     const cMap=item[cwKey]||{};

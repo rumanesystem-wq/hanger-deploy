@@ -103,7 +103,7 @@ function bulkComplete(){
 // ── 발주자 전용 재고 현황 페이지 ──
 // ── 발주자 전용: 재고 부족 페이지 ──
 function renderShortageView(){
-  const items=getItems().filter(i=>i.isActive&&i.category==='서랍장');
+  const items=getItems().filter(i=>i.isActive&&isTrackStock(i));
   const logs=getLogs();
   const lastLog={};
   logs.forEach(l=>{if(!lastLog[l.itemId]||l.createdAt>lastLog[l.itemId])lastLog[l.itemId]=l.createdAt;});
@@ -160,7 +160,7 @@ function renderShortageView(){
 let _stockViewSearch='';
 function renderStockView(){
   // +손잡이 제외
-  let items=getItems().filter(i=>i.isActive&&i.category==='서랍장'&&i.drawerType!=='handle');
+  let items=getItems().filter(i=>i.isActive&&isTrackStock(i)&&i.drawerType!=='handle');
   if(_stockViewSearch)items=items.filter(i=>i.name.includes(_stockViewSearch));
   const siheungTotal=items.reduce((s,i)=>s+(i.stockSiheung!==undefined?i.stockSiheung:i.currentStock),0);
   const pyeongtaekTotal=items.reduce((s,i)=>s+(i.stockPyeongtaek||0),0);
@@ -273,7 +273,7 @@ function renderStockLogs(){
   const last7=new Date();last7.setDate(last7.getDate()-7);
   const recent7=selLogs.filter(l=>new Date(l.createdAt)>=last7).length;
   const lastLog=selLogs[0];
-  const itemOpts=items.filter(i=>i.isActive&&i.category==='서랍장'&&i.drawerType!=='handle').map(i=>`<option value="${i.id}"${stockLogItem===String(i.id)?' selected':''}>${i.name}</option>`).join('');
+  const itemOpts=items.filter(i=>i.isActive&&isTrackStock(i)&&i.drawerType!=='handle').map(i=>`<option value="${i.id}"${stockLogItem===String(i.id)?' selected':''}>${i.name}</option>`).join('');
   const typeOpts=['입고','출고','조정','발주차감','발주수정재반영','취소롤백'].map(t=>`<option value="${t}"${stockLogType===t?' selected':''}>${t}</option>`).join('');
   const PER=20;
   const totalFiltered=filtered.length;
@@ -363,7 +363,7 @@ function renderStockLogs(){
 let invModalState={itemId:null,type:'입고'};
 function renderInventory(filterItemId){
   if(!requireAdmin())return;
-  const allItems=getItems().filter(i=>i.isActive&&i.category==='서랍장'&&i.drawerType!=='handle');
+  const allItems=getItems().filter(i=>i.isActive&&isTrackStock(i)&&i.drawerType!=='handle');
   // 현재고 표 필터 적용
   let items=allItems;
   if(invItemSearch)items=items.filter(i=>i.name.includes(invItemSearch));
@@ -518,7 +518,7 @@ function renderInventory(filterItemId){
           <span style="font-size:12px;color:var(--text-3)">${items.length}/${allItems.length}</span>
         </div>
       </div>
-      <div class="table-wrap"><table id="inv-stock-table">
+      <div class="table-wrap"><table>
         <thead><tr><th>품목명</th><th class="td-center">구분</th><th class="td-center" style="color:#1e40af">시흥</th><th class="td-center" style="color:#065f46">평택</th><th class="td-center">합계</th><th class="td-center" style="min-width:200px">처리</th></tr></thead>
         <tbody>${tableRows}</tbody>
       </table></div>
@@ -598,12 +598,44 @@ function openItemLog(itemId, itemName){
   openModal('item-log-modal');
 }
 
+// 7색 일괄 입력 행 생성 (창고별 현재 색상재고 기준)
+function renderInvColorRows(item,type,wh){
+  const cont=document.getElementById('inv-color-rows');
+  if(!cont)return;
+  const cwKey=getColorWhKey(wh);
+  const cmap=item[cwKey]||{};
+  cont.innerHTML=SHELF_COLORS.map(c=>{
+    const cur=cmap[c]||0;
+    const ph=type==='조정'?'조정 후':(type==='입고'?'입고 수량':'출고 수량');
+    const preVal=type==='조정'?cur:'';
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="width:80px;font-size:12px">${c}</span>
+      <span style="width:54px;font-size:12px;color:var(--text-3)">현재 ${cur}</span>
+      <input type="number" min="0" class="form-input inv-color-qty" data-color="${c}" data-cur="${cur}" value="${preVal}" placeholder="${ph}" style="flex:1;min-width:60px" oninput="updateInvPreview()"/>
+      <span class="inv-color-after" data-color="${c}" style="width:64px;font-size:12px;text-align:right;color:var(--text-3)"></span>
+    </div>`;
+  }).join('');
+  // Enter = 다음 색상 칸으로 이동 (제출 아님)
+  const inputs=[...cont.querySelectorAll('.inv-color-qty')];
+  inputs.forEach((el,i)=>{
+    el.addEventListener('keydown',e=>{
+      if(e.key==='Enter'){e.preventDefault();const nx=inputs[i+1];if(nx)nx.focus();}
+    });
+  });
+}
 function invSelectWarehouse(wh){
   document.getElementById('inv-warehouse').value=wh;
   const sBtn=document.getElementById('inv-wh-siheung');
   const pBtn=document.getElementById('inv-wh-pyeongtaek');
   if(sBtn){sBtn.style.background=wh==='시흥'?'var(--primary)':'';sBtn.style.color=wh==='시흥'?'#fff':'';sBtn.style.borderColor=wh==='시흥'?'var(--primary)':'';}
   if(pBtn){pBtn.style.background=wh==='평택'?'var(--primary)':'';pBtn.style.color=wh==='평택'?'#fff':'';pBtn.style.borderColor=wh==='평택'?'var(--primary)':'';}
+  // 창고 선택 시 해당 창고 기준 7색 입력 행 (재)렌더
+  const grp=document.getElementById('inv-color-rows-group');
+  if(wh){
+    const item=getItem(invModalState.itemId);
+    if(item)renderInvColorRows(item,invModalState.type,wh);
+    if(grp)grp.style.display='';
+  }else if(grp){grp.style.display='none';}
   updateInvPreview();
 }
 
@@ -625,64 +657,120 @@ function openInvModal(itemId,type){
     `<strong>${item.name}</strong><br>`+
     `<span style="font-size:12px;color:#1e40af">시흥 계: ${sStock}개</span> &nbsp;/&nbsp; <span style="font-size:12px;color:#065f46">평택 계: ${pStock}개</span>`+
     (colorSummary?`<br><span style="font-size:11px;color:var(--text-3)">${colorSummary}</span>`:'');
-  document.getElementById('inv-qty-label').innerHTML=type==='조정'?'조정 후 재고 수량 <span class="req">*</span>':`${type} 수량 <span class="req">*</span>`;
+  document.getElementById('inv-qty-label').innerHTML=type==='조정'?'색상별 조정 후 재고 <span class="req">*</span>':`색상별 ${type} 수량 <span class="req">*</span>`;
   document.getElementById('inv-qty').value='';
-  document.getElementById('inv-qty').placeholder=type==='조정'?'조정 후 수량 (0 이상)':'수량 입력';
   document.getElementById('inv-date').value=new Date().toISOString().slice(0,10);
   document.getElementById('inv-memo').value='';
   document.getElementById('inv-preview').innerHTML='';
-  // 색상 선택 (서랍장 품목: 색상 필수)
+  // 단일 색상 select는 7색 일괄 모드에서 미사용 (숨김 유지)
   const colorGroup=document.getElementById('inv-color-group');
-  const colorSel=document.getElementById('inv-color');
-  colorGroup.style.display='';
-  colorSel.innerHTML='<option value="">색상 선택 (필수)</option>'+SHELF_COLORS.map(c=>`<option value="${c}">${c}</option>`).join('');
-  colorSel.value='';
-  // 창고 선택 초기화 (시흥 기본)
-  invSelectWarehouse('시흥');
+  if(colorGroup)colorGroup.style.display='none';
+  // 창고 미선택 초기 상태 (시흥 기본 제거 — 평택 입력 실수 방지)
+  document.getElementById('inv-warehouse').value='';
+  const sBtn=document.getElementById('inv-wh-siheung');
+  const pBtn=document.getElementById('inv-wh-pyeongtaek');
+  [sBtn,pBtn].forEach(b=>{if(b){b.style.background='';b.style.color='';b.style.borderColor='';}});
+  // 7색 행 영역: 창고 선택 전 숨김 + 안내
+  const rowsGrp=document.getElementById('inv-color-rows-group');
+  if(rowsGrp)rowsGrp.style.display='none';
+  const rowsCont=document.getElementById('inv-color-rows');
+  if(rowsCont)rowsCont.innerHTML='';
   const btn=document.getElementById('inv-submit-btn');
   btn.className='btn '+(type==='입고'?'btn-primary':type==='출고'?'btn-danger':'btn-outline');
   btn.textContent=type+' 처리';
   openModal('inv-modal');
-  setTimeout(()=>colorSel.focus(),100);
+  setTimeout(()=>{if(sBtn)sBtn.focus();},100);
 }
 
 function updateInvPreview(){
   const item=getItem(invModalState.itemId);if(!item)return;
-  const qtyStr=document.getElementById('inv-qty').value;
   const preview=document.getElementById('inv-preview');
-  if(!qtyStr){preview.innerHTML='';return;}
-  const qty=parseInt(qtyStr);if(isNaN(qty)){preview.innerHTML='';return;}
   const{type}=invModalState;
-  const wh=document.getElementById('inv-warehouse')?.value||'시흥';
-  const color=document.getElementById('inv-color')?.value||'';
-  const whStock=getWarehouseStock(item,wh,color)||0;
-  let after;
-  if(type==='입고')after=whStock+qty;
-  else if(type==='출고')after=Math.max(whStock-qty,0);
-  else after=qty;
-  const diff=after-whStock;
-  const colorLabel=color?`[${color}] `:'';
-  preview.innerHTML=`<div class="preview-box">${colorLabel}[${wh}] 변경 결과: ${whStock}개 → <strong style="color:${after<whStock?'#dc2626':'#16a34a'}">${after}개</strong> <span style="color:var(--text-3)">(${diff>0?'+':''}${diff})</span></div>`;
+  const wh=document.getElementById('inv-warehouse')?.value||'';
+  if(!wh){preview.innerHTML='<div class="preview-box" style="color:var(--text-3)">창고를 먼저 선택하세요.</div>';return;}
+  const cwKey=getColorWhKey(wh);
+  const cmap=item[cwKey]||{};
+  const rows=[...document.querySelectorAll('#inv-color-rows .inv-color-qty')];
+  let whBefore=0,whAfter=0;const lines=[];
+  SHELF_COLORS.forEach(c=>{whBefore+=cmap[c]||0;});
+  rows.forEach(el=>{
+    const c=el.getAttribute('data-color');
+    const cur=parseInt(el.getAttribute('data-cur'))||0;
+    const raw=el.value.trim();
+    let after=cur;
+    if(raw!==''){
+      const v=parseInt(raw);
+      if(!isNaN(v)){
+        if(type==='입고')after=cur+v;
+        else if(type==='출고')after=Math.max(cur-v,0);
+        else after=v;
+      }
+    }
+    whAfter+=after;
+    const aft=document.querySelector(`#inv-color-rows .inv-color-after[data-color="${c}"]`);
+    const d=after-cur;
+    if(aft)aft.innerHTML=d!==0?`→ <strong style="color:${d<0?'#dc2626':'#16a34a'}">${after}</strong>`:`${after}`;
+    if(d!==0)lines.push(`${c}: ${cur}→${after} (${d>0?'+':''}${d})`);
+  });
+  const whDiff=whAfter-whBefore;
+  preview.innerHTML=`<div class="preview-box">[${wh}] 합계: ${whBefore} → <strong style="color:${whDiff<0?'#dc2626':'#16a34a'}">${whAfter}</strong> <span style="color:var(--text-3)">(${whDiff>0?'+':''}${whDiff})</span>`+
+    (lines.length?`<br><span style="font-size:11px;color:var(--text-3)">${lines.join(', ')}</span>`:'<br><span style="font-size:11px;color:var(--text-3)">변경할 값을 입력하세요.</span>')+`</div>`;
 }
 
-async function submitInventory(){
+function submitInventory(){
   const{itemId,type}=invModalState;
-  const qtyStr=document.getElementById('inv-qty').value;
   const memo=document.getElementById('inv-memo').value.trim();
-  const warehouse=document.getElementById('inv-warehouse')?.value||'시흥';
+  const warehouse=document.getElementById('inv-warehouse')?.value||'';
   const logDate=document.getElementById('inv-date')?.value||'';
-  const color=document.getElementById('inv-color')?.value||'';
   if(!logDate){toast('날짜를 입력해주세요.','error');return;}
-  if(!color){toast('색상을 선택해주세요.','error');return;}
-  if(!qtyStr){toast('수량을 입력해주세요.','error');return;}
-  const qty=parseInt(qtyStr);
-  if(isNaN(qty)){toast('올바른 수량을 입력해주세요.','error');return;}
-  if((type==='입고'||type==='출고')&&qty<1){toast('입고/출고 수량은 1 이상이어야 합니다.','error');return;}
-  if(type==='조정'&&qty<0){toast('조정 후 재고는 0 이상이어야 합니다.','error');return;}
+  if(!warehouse){toast('창고를 먼저 선택해주세요.','error');return;}
+  const item=getItem(itemId);
+  if(!item){toast('품목을 찾을 수 없습니다.','error');return;}
+  const cwKey=getColorWhKey(warehouse);
+  const cmap=item[cwKey]||{};
+  const rows=[...document.querySelectorAll('#inv-color-rows .inv-color-qty')];
+  // 1) 처리 대상 색상 수집 (변화 있는 색상만)
+  const targets=[];
+  for(const el of rows){
+    const color=el.getAttribute('data-color');
+    const cur=parseInt(el.getAttribute('data-cur'))||0;
+    const raw=el.value.trim();
+    if(raw===''){continue;}
+    const v=parseInt(raw);
+    if(isNaN(v)){toast(`[${color}] 올바른 수량을 입력해주세요.`,'error');return;}
+    if(type==='조정'){
+      if(v<0){toast(`[${color}] 조정 후 재고는 0 이상이어야 합니다.`,'error');return;}
+      if(v===cur){continue;}
+      targets.push({color,qty:v});
+    }else{
+      if(v===0){continue;}
+      if(v<1){toast(`[${color}] ${type} 수량은 1 이상이어야 합니다.`,'error');return;}
+      targets.push({color,qty:v});
+    }
+  }
+  if(targets.length===0){toast('변경할 값을 입력해주세요.','error');return;}
+  // 2) 사전 검증 (출고 초과를 처리 전에 전부 확인 — 부분반영 방지)
+  if(type==='출고'){
+    for(const t of targets){
+      const cur=cmap[t.color]||0;
+      if(t.qty>cur){toast(`[${t.color}] 출고 수량(${t.qty})이 ${warehouse} 재고(${cur})를 초과합니다.`,'error');return;}
+    }
+  }
+  // 3) 검증 통과한 색상만 순차 처리 (processInventory 코어 미변경, 색상별 호출)
+  let okCount=0;let firstBefore=null,lastAfter=null;
   try{
-    const{before,after,warehouse:wh}=await processInventory({itemId,type,qty,memo,warehouse,logDate,color});
-    const colorLabel=color?`[${color}] `:'';
-    closeModal('inv-modal');toast(`${colorLabel}[${wh}] ${type} 처리 완료: ${before} → ${after}`,'success');renderInventory(stockLogItem?parseInt(stockLogItem):undefined);
-  }catch(e){toast(e.message,'error');}
+    for(const t of targets){
+      const{before,after}=processInventory({itemId,type,qty:t.qty,memo,warehouse,logDate,color:t.color});
+      if(firstBefore===null)firstBefore=before;
+      lastAfter=after;okCount++;
+    }
+  }catch(e){
+    renderInventory(stockLogItem?parseInt(stockLogItem):undefined);
+    toast(`일부만 처리됨 (${okCount}/${targets.length}): ${e.message}`,'error');
+    return;
+  }
+  closeModal('inv-modal');
+  toast(`[${warehouse}] ${type} 처리 완료: ${okCount}개 색상`,'success');
+  renderInventory(stockLogItem?parseInt(stockLogItem):undefined);
 }
 document.getElementById('inv-qty').addEventListener('keydown',e=>{if(e.key==='Enter')submitInventory();});

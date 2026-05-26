@@ -44,31 +44,15 @@
     window.addEventListener('focus',_swCheckUpdate);
   }
 
-  // version.txt 폴링 — 새 버전 감지 시 강제 새로고침 (캐시·SW 전부 비우고 리로드)
+  // version.txt 폴링 — 새 버전 감지 시 자동 새로고침
   (function(){
-    async function _hardReload(){
-      try{
-        // 1) Cache Storage 전부 삭제
-        if(window.caches){
-          const keys=await caches.keys();
-          await Promise.all(keys.map(k=>caches.delete(k)));
-        }
-        // 2) Service Worker 등록 해제
-        if(navigator.serviceWorker){
-          const regs=await navigator.serviceWorker.getRegistrations();
-          await Promise.all(regs.map(r=>r.unregister()));
-        }
-      }catch(e){console.warn('[PWA] 캐시·SW 정리 실패',e);}
-      // 3) 캐시 우회 리로드
-      location.replace(location.pathname+'?_v='+Date.now());
-    }
     function _checkVer(){
       fetch('./version.txt?_='+Date.now(),{cache:'no-store'})
         .then(r=>r.text()).then(v=>{
           v=v.trim();
           var stored=localStorage.getItem('_appVer');
           localStorage.setItem('_appVer',v);
-          if(stored&&stored!==v){console.log('[PWA] 새 버전 감지:',v,'→ 강제 새로고침');_hardReload();}
+          if(stored&&stored!==v){console.log('[PWA] 새 버전 감지:',v,'→ 새로고침');location.reload();}
         }).catch(()=>{});
     }
     window.addEventListener('load',()=>{_checkVer();setInterval(_checkVer,30000);});
@@ -137,7 +121,6 @@
     try {
       const app = firebase.initializeApp(firebaseConfig, 'hanger');
       const db  = app.firestore();
-      db.enablePersistence({synchronizeTabs:true}).catch(e=>console.warn('[Firestore persistence 실패]',e&&e.code));
 
       // Firebase Functions 초기화 (이카운트 ERP 연동)
       const fnApp = app.functions('asia-northeast3');
@@ -145,9 +128,7 @@
         updateEcountPrice:      fnApp.httpsCallable('updateEcountPrice'),
         createSaleOrder:        fnApp.httpsCallable('createEcountSaleOrder'),
         testConnection:         fnApp.httpsCallable('testEcountConnection'),
-        getProducts:            fnApp.httpsCallable('getEcountProducts'),
-        getEmailById:           fnApp.httpsCallable('getEmailById'),
-        getNextIds:             fnApp.httpsCallable('getNextIds')
+        getProducts:            fnApp.httpsCallable('getEcountProducts')
       };
 
       window._FS = {
@@ -178,10 +159,10 @@
                 if(!snap.exists) return;
                 const val = snap.data().value;
                 if(!Array.isArray(val)) return;
-                const local = (window._mem&&window._mem['price_settings']!==undefined)?JSON.stringify(window._mem['price_settings']):null;
+                const local = localStorage.getItem('sh_price_settings');
                 const localStr = JSON.stringify(val);
                 if(local === localStr) return; // 내가 방금 저장한 것이면 무시
-                window._mem['price_settings']=val;
+                localStorage.setItem('sh_price_settings', localStr);
                 if(typeof onChange === 'function') onChange(val);
               }, e => console.warn('[Firestore watch 실패]', e.message));
           } catch(e) { console.warn('[Firestore watch 초기화 실패]', e.message); }
@@ -195,9 +176,9 @@
                 const val = snap.data().value;
                 if(val == null) return;
                 const localStr = JSON.stringify(val);
-                const existing = (window._mem&&window._mem[key]!==undefined)?JSON.stringify(window._mem[key]):null;
+                const existing = localStorage.getItem('sh_' + key);
                 if(existing === localStr) return; // 내가 방금 저장한 것이면 무시
-                window._mem[key]=val;
+                localStorage.setItem('sh_' + key, localStr);
                 if(typeof onChange === 'function') onChange(val);
               }, e => console.warn('[Firestore watch 실패]', key, e.message));
           } catch(e) { console.warn('[Firestore watch 초기화 실패]', key, e.message); }
@@ -216,13 +197,6 @@
 <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
-<div id="boot-splash" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#fff;display:flex;align-items:center;justify-content:center;z-index:10000;font-size:1rem;color:#1e3a5f;">
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#1e3a5f" stroke-width="2"><circle cx="12" cy="12" r="10"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></circle></svg>
-  &nbsp;앱을 시작하는 중...
-</div>
-<div id="offline-banner" style="display:none;position:fixed;top:0;left:0;width:100%;background:#e74c3c;color:#fff;padding:8px 16px;text-align:center;z-index:9998;font-size:0.9rem;">
-  오프라인 상태입니다. 인터넷 연결을 확인해 주세요.
-</div>
 <div id="toast"></div>
 <div id="print-area"></div>
 
@@ -541,7 +515,7 @@
           <button type="button" id="inv-wh-siheung" class="btn btn-outline" style="flex:1;font-weight:700" onclick="invSelectWarehouse('시흥')">시흥</button>
           <button type="button" id="inv-wh-pyeongtaek" class="btn btn-outline" style="flex:1;font-weight:700" onclick="invSelectWarehouse('평택')">평택</button>
         </div>
-        <input type="hidden" id="inv-warehouse" value=""/>
+        <input type="hidden" id="inv-warehouse" value="시흥"/>
       </div>
       <div class="form-group" id="inv-color-group" style="display:none">
         <label>색상 <span class="req">*</span></label>
@@ -553,11 +527,10 @@
         <label>날짜 <span class="req">*</span></label>
         <input type="date" class="form-input" id="inv-date" style="font-size:15px;font-weight:600"/>
       </div>
-      <div class="form-group" id="inv-color-rows-group" style="display:none">
-        <label id="inv-qty-label">색상별 수량 <span class="req">*</span></label>
-        <div id="inv-color-rows"></div>
+      <div class="form-group">
+        <label id="inv-qty-label">수량 <span class="req">*</span></label>
+        <input type="number" min="0" class="form-input" id="inv-qty" placeholder="수량 입력" oninput="updateInvPreview()"/>
       </div>
-      <input type="hidden" id="inv-qty" value=""/>
       <div id="inv-preview"></div>
       <div class="form-group" style="margin-bottom:0">
         <label>메모</label>
@@ -583,7 +556,7 @@
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px" class="order-info-grid">
         <div class="form-group" style="margin-bottom:0">
           <label>납품처 <span class="req">*</span></label>
-          <input type="text" class="form-input input-locked" id="o-delivery-to" placeholder="자동 입력됨" readonly tabindex="-1"/>
+          <input type="text" class="form-input" id="o-delivery-to" placeholder="납품처 입력"/>
         </div>
         <div class="form-group" style="margin-bottom:0">
           <label>발주일 <span class="req">*</span></label>
@@ -800,7 +773,7 @@
 
 <!-- 발주확정 최종 확인 모달 -->
 <div class="modal-overlay" id="order-confirm-modal">
-  <div class="modal" style="max-width:820px">
+  <div class="modal" style="max-width:500px">
     <div class="modal-header">
       <span class="modal-title"><i class="fas fa-circle-check" style="color:var(--primary-light);margin-right:8px"></i><span id="order-confirm-modal-title">발주 넣기 최종 확인</span></span>
       <button class="modal-close" onclick="closeModal('order-confirm-modal')"><i class="fas fa-times"></i></button>
@@ -960,29 +933,4 @@
 <script src="js/order-modal.js"></script>
     <script src="js/excel-print.js"></script>
 <script src="app.js"></script>
-<script>
-// ── 오프라인 감지 ──
-function _syncOffline(){
-  const banner=document.getElementById('offline-banner');
-  if(!banner) return;
-  banner.style.display=navigator.onLine?'none':'flex';
-}
-window.addEventListener('online',_syncOffline);
-window.addEventListener('offline',_syncOffline);
-_syncOffline();
-// ── boot-splash 해제 (window._booted 될 때까지 폴링) ──
-(function _waitBoot(){
-  const splash=document.getElementById('boot-splash');
-  if(!splash) return;
-  if(window._booted){ splash.remove(); return; }
-  let elapsed=0;
-  const t=setInterval(()=>{
-    elapsed+=200;
-    if(window._booted||elapsed>=15000){
-      clearInterval(t);
-      splash.remove();
-    }
-  },200);
-})();
-</script>
 </html>

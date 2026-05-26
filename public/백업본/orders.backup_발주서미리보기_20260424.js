@@ -204,7 +204,7 @@ async function _createEcountSaleFromOrder(order){
   if((order.rodItems||[]).length>0){
     const rodQty=order.rod2400Required||0;
     if(rodQty>0){
-      const rodItem=allItems.find(i=>{const n=normalizeName(i.name);return n==='옷봉2400'||n==='옷봉2400mm';});
+      const rodItem=allItems.find(i=>normalizeName(i.name)==='옷봉2400');
       if(rodItem){
         // 옷봉 색상 = 상부자재 공통색상 → 주문 공통색상 순으로 결정
         const rodColor=order.upperCommonColor||sharedColor||'';
@@ -215,8 +215,8 @@ async function _createEcountSaleFromOrder(order){
         if(prodCd){
           const price=getActivePriceForItem('옷봉 2400')??4500;
           ecountItems.push({prodCd,qty:rodQty,prodNm:'옷봉 2400',sizeNm:rodColorKey,price});
-        }else{console.warn('[이카운트] 옷봉 prodCd 없음 (건너뜀): 색상',rodColor);}
-      }else{console.warn('[이카운트] 옷봉 품목 미매칭 (건너뜀)');}
+        }
+      }
     }
   }
 
@@ -386,97 +386,6 @@ function cancelOrder(orderId, cancelReason){
   return true;
 }
 
-// ══════════════════════════════════════════════════
-// 발주 취소 되돌리기 — cancelOrder()의 역순
-// 권한: 관리자 OR 발주자 본인
-// 재고 마이너스 허용 (차단하지 않음, 결과만 toast로 안내)
-// ══════════════════════════════════════════════════
-function uncancelOrder(orderId){
-  const orders=DB.get('orders',[]);
-  const idx=orders.findIndex(o=>o.id===orderId);
-  if(idx===-1){toast('발주서를 찾을 수 없습니다.','error');return false;}
-  const order=orders[idx];
-  if(order.status!=='취소'){toast('취소된 발주서가 아닙니다.','error');return false;}
-
-  // 권한: 관리자 OR 본인
-  const isOwner=currentUser && order.createdBy===currentUser.id;
-  if(!isAdmin() && !isOwner){toast('권한이 없습니다.','error');return false;}
-
-  // 직전 상태 추적 (statusHistory 역방향 스캔, '취소' 이전 status 찾기)
-  let prevStatus='발주대기';
-  if(Array.isArray(order.statusHistory)){
-    for(let i=order.statusHistory.length-1;i>=0;i--){
-      const s=order.statusHistory[i].status;
-      if(s && s!=='취소'){prevStatus=s;break;}
-    }
-  }
-
-  // 재고 재차감 (stockDeducted가 false인 정상 케이스만)
-  const shortages=[]; // {name, color, deficit}
-  if(!order.stockDeducted){
-    const items=DB.get('items',[]);
-    const restoreNow=new Date().toISOString();
-    const orderWh=order.warehouse||'시흥';
-    (order.drawerItems||order.items||[]).forEach(oi=>{
-      const iIdx=items.findIndex(i=>i.id===oi.itemId);
-      if(iIdx===-1)return;
-      if(items[iIdx].category==='서랍장'){
-        if(items[iIdx].stockSiheung===undefined)items[iIdx].stockSiheung=items[iIdx].currentStock||0;
-        if(items[iIdx].stockPyeongtaek===undefined)items[iIdx].stockPyeongtaek=0;
-        const wh=oi.warehouse||orderWh;
-        const whKey=getWhKey(wh);
-        const cwKey=getColorWhKey(wh);
-        const oiColor=oi.color||order.sharedColor||'';
-        let before, afterVal;
-        if(oiColor){
-          if(!items[iIdx][cwKey])items[iIdx][cwKey]={};
-          before=items[iIdx][cwKey][oiColor]||0;
-          afterVal=before-oi.requiredQty; // 마이너스 허용
-          items[iIdx][cwKey][oiColor]=afterVal;
-          items[iIdx][whKey]=Object.values(items[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
-        } else {
-          before=items[iIdx][whKey]||0;
-          afterVal=before-oi.requiredQty;
-          items[iIdx][whKey]=afterVal;
-        }
-        items[iIdx].currentStock=(items[iIdx].stockSiheung||0)+(items[iIdx].stockPyeongtaek||0);
-        if(afterVal<0){
-          shortages.push({name:items[iIdx].name||('#'+oi.itemId),color:oiColor||'-',deficit:-afterVal});
-        }
-        const logs3=DB.get('logs',[]);
-        logs3.push({id:DB.nextId('logs'),itemId:oi.itemId,type:'취소되돌림',qty:oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 취소 되돌림`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:restoreNow});
-        DB.set('logs',logs3);
-      }
-    });
-    DB.set('items',items);
-  }
-
-  // 발주서 상태 복원
-  const restoreNow2=new Date().toISOString();
-  orders[idx].status=prevStatus;
-  delete orders[idx].cancelReason;
-  delete orders[idx].cancelledAt;
-  orders[idx].stockDeducted=true;
-  orders[idx].updatedAt=restoreNow2;
-  addStatusHistory(idx, orders, prevStatus, '취소 되돌림');
-  DB.set('orders',orders);
-
-  // 관련 발주필요(PR) 복원
-  const prs=DB.get('purchase_requests',[]);
-  prs.forEach(p=>{if(p.orderId===orderId&&p.status==='취소'){p.status='대기';p.updatedAt=new Date().toISOString();}});
-  DB.set('purchase_requests',prs);
-
-  // 결과 toast
-  if(shortages.length>0){
-    const msg=shortages.slice(0,3).map(s=>`${s.name}${s.color!=='-'?'('+s.color+')':''} -${s.deficit}`).join(', ');
-    const more=shortages.length>3?` 외 ${shortages.length-3}건`:'';
-    toast(`복원 완료. 단, 재고 부족: ${msg}${more}`, 'warning');
-  } else {
-    toast('취소가 되돌려졌습니다. 재고가 다시 차감되었습니다.','success');
-  }
-  return true;
-}
-
 function openOrderCancelModal(orderId){
   _cancelTargetOrderId=orderId;
   const input=document.getElementById('cancel-reason-input');
@@ -500,7 +409,7 @@ function openOrderCancelModal(orderId){
 }
 
 // ══════════════════════════════════════════════════
-// [기능1] 발주확정 최종 확인 — 실제 발주서 미리보기
+// [기능1] 발주확정 최종 확인 팝업
 // ══════════════════════════════════════════════════
 function openOrderConfirmModal(){
   // 역할별 버튼 텍스트 분기
@@ -508,13 +417,8 @@ function openOrderConfirmModal(){
   const _sl=document.getElementById('order-submit-label');if(_sl)_sl.textContent=_lbl;
   const _tl=document.getElementById('order-confirm-modal-title');if(_tl)_tl.textContent=_lbl+' 최종 확인';
   const _ol=document.getElementById('order-confirm-ok-label');if(_ol)_ol.textContent=_lbl;
-
-  // 1) 기존 검증 로직 (저장은 아직 안 함)
-  // 콘솔 우회 방어 — 납품처는 항상 현재 본인 deliveryName으로 강제
-  const _forceDeliv1=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
-  const _delivEl1=document.getElementById('o-delivery-to');
-  if(_delivEl1) _delivEl1.value=_forceDeliv1;
-  const deliveryTo=_forceDeliv1;
+  // 1) 기존 submitOrder 검증 로직만 먼저 실행 (저장은 하지 않음)
+  const deliveryTo=document.getElementById('o-delivery-to').value.trim();
   const address=document.getElementById('o-address').value.trim();
   syncDateParts('o-date'); syncDateParts('o-ship-date');
   const orderDate=document.getElementById('o-date').value;
@@ -540,11 +444,19 @@ function openOrderConfirmModal(){
   });
   if(colorMissingItems.length>0){toast(colorMissingItems.map(n=>n+' 색상을 선택해주세요').join(' / '),'error');return;}
 
-  // 2) 부족 품목 집계 (경고 표시용)
+  // 2) 수량 집계
+  let upperTotal=0;
+  document.querySelectorAll('.upper-qty').forEach(inp=>{upperTotal+=parseInt(inp.value)||0;});
+  const rod2400Count=rodEntries.length>0?calcRod2400(rodEntries):0;
+  let shelfTotal=0;
+  shelfRowEntries.forEach(e=>shelfTotal+=e.qty);
+  cornerEntries.forEach(e=>shelfTotal+=e.qty);
+  let drawerTotal=0;
   const shortageList=[];
   document.querySelectorAll('.drawer-qty').forEach(inp=>{
     const qty=parseInt(inp.value)||0;
     if(qty<1)return;
+    drawerTotal+=qty;
     const stock=parseInt(inp.dataset.stock)||0;
     const isDrawer=inp.dataset.isDrawer==='true';
     if(isDrawer){
@@ -552,137 +464,67 @@ function openOrderConfirmModal(){
       if(s>0)shortageList.push({name:inp.dataset.itemName||'?',shortage:s});
     }
   });
+  const supplyEl=document.getElementById('order-supply-amount');
+  const vatEl2=document.getElementById('order-vat-amount');
+  const totalAmtEl=document.getElementById('order-total-amount');
+  const supplyAmt=supplyEl?supplyEl.textContent:'0원';
+  const vatAmt=vatEl2?vatEl2.textContent:'0원';
+  const totalAmt=totalAmtEl?totalAmtEl.textContent:'0원';
 
-  // 3) 폼에서 임시 발주서 객체 빌드 (저장 X, 미리보기 전용)
-  const previewOrder=_buildPreviewOrderFromForm();
-  if(!previewOrder){toast('한 개 이상의 품목을 입력해주세요.','error');return;}
-
-  // 4) renderOrderDocument로 실제 발주서 HTML 생성 + 부족/안내 박스 부착
-  const docHtml=(typeof renderOrderDocument==='function')?renderOrderDocument(previewOrder):'<p>미리보기를 생성할 수 없습니다.</p>';
+  // 3) 팝업 본문 렌더
   const shortageHtml=shortageList.length>0
-    ?`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:var(--r-sm);padding:10px 14px;margin-top:12px">
+    ?`<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:var(--r-sm);padding:10px 14px;margin-top:8px">
         <p style="font-size:12px;font-weight:700;color:#dc2626;margin-bottom:6px"><i class="fas fa-triangle-exclamation"></i> 재고 부족 품목</p>
         ${shortageList.map(s=>`<p style="font-size:13px;font-weight:700;color:#991b1b;margin-bottom:2px">• ${s.name} — 부족 ${s.shortage}개</p>`).join('')}
       </div>`
-    :`<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:var(--r-sm);padding:8px 14px;margin-top:12px"><p style="font-size:12px;font-weight:700;color:#15803d"><i class="fas fa-circle-check"></i> 부족 품목 없음</p></div>`;
-  const noticeHtml=`<div style="margin-top:8px;padding:8px 12px;background:${isAdmin()?'#fffbeb':'#f0fdf4'};border:1px solid ${isAdmin()?'#fde68a':'#bbf7d0'};border-radius:var(--r-sm);font-size:12px;color:${isAdmin()?'#92400e':'#15803d'}">
+    :`<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:var(--r-sm);padding:8px 14px;margin-top:8px"><p style="font-size:12px;font-weight:700;color:#15803d"><i class="fas fa-circle-check"></i> 부족 품목 없음</p></div>`;
+
+  document.getElementById('order-confirm-body').innerHTML=`
+    <div style="background:#f8fafc;border-radius:var(--r-sm);padding:12px 16px;margin-bottom:12px">
+      <div style="display:grid;grid-template-columns:90px 1fr;gap:6px 8px;font-size:13px">
+        <span style="color:var(--text-3);font-weight:600">납품처</span><span style="font-weight:700">${deliveryTo}</span>
+        <span style="color:var(--text-3);font-weight:600">발주일</span><span>${orderDate}</span>
+        <span style="color:var(--text-3);font-weight:600">출고일</span><span>${shipDate==='0000-00-00'?'미정':shipDate}</span>
+        <span style="color:var(--text-3);font-weight:600">출고 창고</span><span style="font-weight:700">${document.getElementById('o-warehouse')?.value||'시흥'}</span>
+        ${address?`<span style="color:var(--text-3);font-weight:600">시공주소</span><span>${address}</span>`:''}
+      </div>
+    </div>
+    <div style="background:#eff6ff;border-radius:var(--r-sm);padding:12px 16px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+        <span style="font-size:12px;font-weight:600;color:#1e40af">총 공급가액</span>
+        <span style="font-size:14px;font-weight:700;color:#334155">${supplyAmt}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:12px;font-weight:600;color:#1e40af">부가세 (10%)</span>
+        <span style="font-size:14px;font-weight:700;color:#475569">${vatAmt}</span>
+      </div>
+      <div style="display:flex;justify-content:space-between;border-top:1.5px solid #bfdbfe;padding-top:6px">
+        <span style="font-size:13px;font-weight:700;color:#1e40af">합계금액</span>
+        <span style="font-size:22px;font-weight:900;color:#0f172a">${totalAmt}</span>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 12px;text-align:center">
+        <p style="font-size:10px;color:var(--text-3);font-weight:700">상부자재</p><p style="font-size:18px;font-weight:800">${upperTotal}개</p>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 12px;text-align:center">
+        <p style="font-size:10px;color:var(--text-3);font-weight:700">옷봉 2400</p><p style="font-size:18px;font-weight:800">${rod2400Count}개</p>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 12px;text-align:center">
+        <p style="font-size:10px;color:var(--text-3);font-weight:700">선반/코너선반</p><p style="font-size:18px;font-weight:800">${shelfTotal}개</p>
+      </div>
+      <div style="background:#fff;border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 12px;text-align:center">
+        <p style="font-size:10px;color:var(--text-3);font-weight:700">서랍/옵션</p><p style="font-size:18px;font-weight:800">${drawerTotal}개</p>
+      </div>
+    </div>
+    ${shortageHtml}
+    <div style="margin-top:10px;padding:8px 12px;background:${isAdmin()?'#fffbeb':'#f0fdf4'};border:1px solid ${isAdmin()?'#fde68a':'#bbf7d0'};border-radius:var(--r-sm);font-size:12px;color:${isAdmin()?'#92400e':'#15803d'}">
       <i class="fas fa-info-circle"></i> 발주 넣기 시 서랍장 현재고가 즉시 차감됩니다.
     </div>`;
-  const body=document.getElementById('order-confirm-body');
-  body.innerHTML=`<div style="max-height:65vh;overflow-y:auto;padding:4px">${docHtml}${shortageHtml}${noticeHtml}</div>`;
 
   const okBtn=document.getElementById('order-confirm-ok-btn');
   if(okBtn){okBtn.onclick=()=>{closeModal('order-confirm-modal');submitOrder(isAdmin()?'발주확정':'발주대기');};}
   openModal('order-confirm-modal');
-}
-
-// ── 폼 입력값 → 미리보기용 발주서 객체 빌드 (저장 X) ──
-// renderOrderDocument 가 기대하는 필드 구성만 담는다.
-function _buildPreviewOrderFromForm(){
-  // 상부 자재
-  const ucColorEl=document.getElementById('upper-common-color');
-  const upperCommonColor=ucColorEl?ucColorEl.value:'화이트';
-  const upperMaterials=[];
-  document.querySelectorAll('.upper-qty').forEach(inp=>{
-    const mat=inp.dataset.mat, val=parseInt(inp.value)||0;
-    if(val>0){
-      const isFixed=(typeof UPPER_FIXED!=='undefined'&&UPPER_FIXED.includes)?UPPER_FIXED.includes(mat):false;
-      const noteEl=isFixed?document.querySelector('.upper-note[data-mat="'+mat+'"]'):null;
-      const note=noteEl?noteEl.value.trim():'';
-      const colorKey={'화이트':'white','블랙':'black','실버':'silver','샴페인골드':'champagne'}[upperCommonColor]||'white';
-      const unitPrice=(typeof getActivePriceForItem==='function')?getActivePriceForItem(mat):null;
-      const supply=(unitPrice!==null&&unitPrice!==undefined)?unitPrice*val:null;
-      const vatAmt=supply!==null?Math.round(supply*0.1):null;
-      const row={name:mat,color:upperCommonColor,qty:val,note,unitPrice,amount:supply,vatAmount:vatAmt,white:0,black:0,silver:0,champagne:0};
-      row[colorKey]=val;
-      try{
-        const splitsRaw=inp.dataset.splits;
-        if(splitsRaw){
-          const splits=JSON.parse(splitsRaw);
-          if(Array.isArray(splits)&&splits.length>0){
-            const sum=splits.reduce((a,s)=>a+(s.qty||0),0);
-            if(sum===val)row.lengthSplits=splits;
-          }
-        }
-      }catch{/* lengthSplits JSON 파싱 실패 시 분할 없이 그대로 진행 (의도된 동작) */}
-      upperMaterials.push(row);
-    }
-  });
-
-  // 옷봉
-  const rod2400Required=(typeof rodEntries!=='undefined'&&rodEntries.length>0)?calcRod2400(rodEntries):0;
-  const rodItems=(typeof rodEntries!=='undefined'&&rodEntries.length>0)?[...rodEntries]:[];
-  const rodTotalLen=(typeof rodEntries!=='undefined')?rodEntries.reduce((s,e)=>s+parseInt(e.size)*e.qty,0):0;
-
-  // 선반/코너선반
-  const scEl=document.getElementById('shared-color-sel');
-  const sharedColorVal=scEl?scEl.value:'';
-  const shelfItems=[];
-  const shelfWithColor=(typeof shelfRowEntries!=='undefined'?shelfRowEntries:[]).map(e=>{
-    const price=(typeof getShelfPrice==='function')?getShelfPrice(e.size):0;
-    const supply=price*e.qty;
-    const color=e.color||sharedColorVal;
-    return {...e,color,unitPrice:price,amount:supply,vatAmount:Math.round(supply*0.1)};
-  });
-  const cornerWithColor=(typeof cornerEntries!=='undefined'?cornerEntries:[]).map(e=>{
-    const price=(typeof getCornerShelfPrice==='function')?getCornerShelfPrice(e.width,e.height):0;
-    const supply=price*e.qty;
-    const color=e.color||sharedColorVal;
-    return {...e,color,unitPrice:price,amount:supply,vatAmount:Math.round(supply*0.1)};
-  });
-  if(shelfWithColor.length>0)shelfItems.push({name:'선반',entries:shelfWithColor});
-  if(cornerWithColor.length>0)shelfItems.push({name:'코너선반',entries:cornerWithColor});
-
-  // 서랍/옵션
-  const drawerItems=[];
-  document.querySelectorAll('.drawer-qty').forEach(inp=>{
-    if(inp.disabled)return;
-    const qty=parseInt(inp.value)||0;
-    if(qty>0){
-      const itemId=parseInt(inp.dataset.itemId);
-      const itemColorEl=document.querySelector(`.item-color-select[data-item-id="${itemId}"]`);
-      const sharedColorEl=document.getElementById('shared-color-sel');
-      const color=itemColorEl?itemColorEl.value:(sharedColorEl?sharedColorEl.value:'');
-      const dbItem=(typeof getItems==='function'?getItems():DB.get('items',[])).find(i=>i.id===itemId);
-      const itemName=dbItem?dbItem.name:(inp.dataset.itemName||'');
-      const tr=inp.closest('tr');
-      const hSel=tr?tr.querySelector('.drawer-handle-select'):null;
-      const handleOpt=hSel?hSel.value:'basic';
-      const noteInp=tr?tr.querySelector('.item-note-input'):null;
-      const itemNote=noteInp?noteInp.value.trim():'';
-      const basePrice=(typeof getActivePriceForItem==='function')?getActivePriceForItem(itemName):null;
-      const unitPrice=(basePrice!==null&&basePrice!==undefined)?basePrice:null;
-      const supply=(unitPrice!==null)?unitPrice*qty:null;
-      const vatAmt=supply!==null?Math.round(supply*0.1):null;
-      drawerItems.push({itemId,itemName,requiredQty:qty,color,handleOption:handleOpt,displayName:itemName,note:itemNote,unitPrice,amount:supply,vatAmount:vatAmt});
-    }
-  });
-
-  const drawerMemo=(document.getElementById('o-drawer-memo')?.value||'').trim();
-  const etcMemo=(document.getElementById('o-etc-memo')?.value||'').trim();
-  if(!upperMaterials.length&&!rodItems.length&&!shelfItems.length&&!drawerItems.length&&!drawerMemo&&!etcMemo){
-    return null;
-  }
-
-  // 콘솔 우회 방어 — 납품처는 항상 현재 본인 deliveryName으로 강제
-  const _forceDeliv2=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
-  const _delivEl2=document.getElementById('o-delivery-to');
-  if(_delivEl2) _delivEl2.value=_forceDeliv2;
-  const deliveryTo=_forceDeliv2;
-  const address=document.getElementById('o-address').value.trim();
-  const orderDate=document.getElementById('o-date').value;
-  const shipDate=document.getElementById('o-ship-date').value;
-  const note=(document.getElementById('o-note')?.value||'').trim();
-  const warehouse=document.getElementById('o-warehouse')?.value||'시흥';
-  return {
-    id:'preview',
-    orderNum:'(미리보기)',
-    deliveryTo,address,orderDate,shipDate,note,warehouse,
-    upperMaterials,upperCommonColor,
-    rodItems,rod2400Required,rodTotalLen,
-    shelfItems,drawerItems,drawerMemo,etcMemo,
-    sharedColor:sharedColorVal
-  };
 }
 
 // ══════════════════════════════════════════════════
@@ -803,7 +645,7 @@ function renderOrders(){
   if(orders.length===0){
     rows='<div class="empty"><i class="fas fa-file-invoice"></i><p>등록된 발주서가 없습니다.</p>'+(isAdmin()?'':'<button class="btn btn-primary" style="margin-top:12px" id="empty-order-btn">첫 번째 발주서 등록</button>')+'</div>';
   }else{
-    rows=`<div class="table-wrap"><table><thead><tr><th>납품처</th><th>시공주소</th><th>발주번호</th><th>발주일</th><th>출고일</th><th class="td-center">상태</th><th class="td-center">등록일</th>${orderListSubTab==='cancelled'?'<th>취소 사유</th>':''}${(isAdmin()||orderListSubTab==='cancelled')?'<th class="td-center">관리</th>':''}</tr></thead><tbody>
+    rows=`<div class="table-wrap"><table><thead><tr><th>납품처</th><th>시공주소</th><th>발주번호</th><th>발주일</th><th>출고일</th><th class="td-center">상태</th><th class="td-center">등록일</th>${orderListSubTab==='cancelled'?'<th>취소 사유</th>':''}${isAdmin()?'<th class="td-center">관리</th>':''}</tr></thead><tbody>
     ${orders.map(o=>{
       const dTo=o.deliveryTo||o.siteName||'-';
       const addr=o.address||o.customerName||'-';
@@ -812,10 +654,9 @@ function renderOrders(){
         ?'<span class="badge badge-locked" style="margin-left:4px"><i class="fas fa-lock"></i></span>'
         :(o.status==='발주대기'?'<span class="badge" style="margin-left:4px;background:#fefce8;color:#a16207;border:1px solid #fde047"><i class="fas fa-lock-open"></i></span>':'');
       const cancelBtn=isAdmin()&&orderListSubTab==='active'?`<button class="btn btn-ghost btn-xs order-cancel-btn" data-order-id="${o.id}" style="color:var(--danger);white-space:nowrap"><i class="fas fa-ban"></i> 발주 취소</button>`:'';
-      const uncancelBtn=orderListSubTab==='cancelled'&&(isAdmin()||(currentUser&&o.createdBy===currentUser.id))?`<button class="btn btn-ghost btn-xs order-uncancel-btn" data-order-id="${o.id}" style="color:#16a34a;white-space:nowrap"><i class="fas fa-rotate-left"></i> 취소 되돌리기</button>`:'';
       const reorderBtn=`<button class="btn btn-outline btn-xs reorder-btn" data-order-id="${o.id}" title="이 발주서로 재발주" style="border:1.5px solid #0ea5e9;color:#0369a1;font-weight:700;white-space:nowrap"><i class="fas fa-rotate-right"></i> 재발주</button>`;
       const cancelReasonCell=orderListSubTab==='cancelled'?`<td class="td-muted" style="font-size:12px;color:#dc2626;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${o.cancelReason||''}">${o.cancelReason||'-'}</td>`:'';
-      return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer" title="클릭하여 상세 보기"><td class="td-name">${dTo}</td><td class="td-muted" style="font-size:12px">${addr}</td><td style="font-size:12px;font-weight:600;color:#0f172a">${o.orderNum||('#'+o.id)}${lockBadge}</td><td class="td-muted">${fmt(o.orderDate)}</td><td class="td-muted">${o.shipDate?fmt(o.shipDate):'-'}</td><td class="td-center">${statusBadge}</td><td class="td-center td-muted">${fmt(o.createdAt)}</td>${cancelReasonCell}<td class="td-center">${cancelBtn} ${uncancelBtn} ${reorderBtn}</td></tr>`;
+      return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer" title="클릭하여 상세 보기"><td class="td-name">${dTo}</td><td class="td-muted" style="font-size:12px">${addr}</td><td style="font-size:12px;font-weight:600;color:#0f172a">${o.orderNum||('#'+o.id)}${lockBadge}</td><td class="td-muted">${fmt(o.orderDate)}</td><td class="td-muted">${o.shipDate?fmt(o.shipDate):'-'}</td><td class="td-center">${statusBadge}</td><td class="td-center td-muted">${fmt(o.createdAt)}</td>${cancelReasonCell}<td class="td-center">${cancelBtn} ${reorderBtn}</td></tr>`;
     }).join('')}</tbody></table></div>`;
   }
   // 지역 드롭다운: 모든 발주서의 주소에서 첫 단어(시/도) 추출
@@ -1523,12 +1364,13 @@ function openEditOrder(orderId){
 
   // ── 3단계: 기존 발주값 복원 (재고 롤백과 독립적으로 order 원본 참조) ──
   setTimeout(()=>{
-    // 기본 정보 — 납품처는 저장된 값 무시하고 현재 본인 deliveryName으로 강제 덮어쓰기 + 읽기 전용
+    // 기본 정보 — 발주자 계정이면 납품처 고정 (수정 시에도 동일)
     const editDelivEl=document.getElementById('o-delivery-to');
-    const editForced=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
-    editDelivEl.value=editForced;
-    editDelivEl.readOnly=true;
-    editDelivEl.tabIndex=-1;
+    if(!isAdmin()&&currentUser&&currentUser.deliveryName){
+      editDelivEl.value=currentUser.deliveryName;
+    } else {
+      editDelivEl.value=order.deliveryTo||order.siteName||'';
+    }
     document.getElementById('o-address').value=order.address||order.customerName||'';
     setDateValue('o-date',order.orderDate||todayStr());
     setDateValue('o-ship-date',order.shipDate||'');
@@ -1627,12 +1469,13 @@ function copyOrder(orderId){
   // openOrderModal() 대신 직접 빈 모달 렌더 — 임시저장 자동불러오기 confirm 방지
   _openOrderModalRender(null);
   setTimeout(()=>{
-    // 기본 정보 — 납품처는 원본 무시하고 현재 본인 deliveryName으로 강제 덮어쓰기 + 읽기 전용
+    // 기본 정보 — 발주자 계정이면 납품처 고정, 관리자만 원본 복원
     const copyDelivEl=document.getElementById('o-delivery-to');
-    const copyForced=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
-    copyDelivEl.value=copyForced;
-    copyDelivEl.readOnly=true;
-    copyDelivEl.tabIndex=-1;
+    if(!isAdmin()&&currentUser&&currentUser.deliveryName){
+      copyDelivEl.value=currentUser.deliveryName;
+    } else {
+      copyDelivEl.value=order.deliveryTo||order.siteName||'';
+    }
     document.getElementById('o-address').value=order.address||order.customerName||'';
     setDateValue('o-date',todayStr());
     setDateValue('o-ship-date','');

@@ -2,14 +2,12 @@
 
 let _cancelTargetOrderId=null;
 
-async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
+function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
   const items=DB.get('items',[]),logs=DB.get('logs',[]);
   const idx=items.findIndex(i=>i.id===itemId);
   if(idx===-1)throw new Error('품목을 찾을 수 없습니다.');
   const item=items[idx];
-  if(!isTrackStock(item))throw new Error('재고 관리 대상 품목만 재고를 처리할 수 있습니다.');
-  // 서버에서 로그 id 1개 발급 — 실패 시 즉시 throw(상태 변경 전)
-  const _logIds=await _serverGetLogIds(1);
+  if(item.category!=='서랍장')throw new Error('서랍장 품목만 재고를 처리할 수 있습니다.');
   const wh=warehouse||'시흥';
   const whKey=getWhKey(wh);
   const cwKey=getColorWhKey(wh);
@@ -39,7 +37,7 @@ async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
   items[idx].currentStock=(items[idx].stockSiheung||0)+(items[idx].stockPyeongtaek||0);
   DB.set('items',items);
   const logTs=logDate?(logDate+'T00:00:00.000Z'):new Date().toISOString();
-  logs.push({id:_logIds[0],itemId,type,qty:type==='조정'?n-before:n,beforeStock:before,afterStock:after,warehouse:wh,color:color||'',memo:memo||'',createdAt:logTs});
+  logs.push({id:DB.nextId('logs'),itemId,type,qty:type==='조정'?n-before:n,beforeStock:before,afterStock:after,warehouse:wh,color:color||'',memo:memo||'',createdAt:logTs});
   DB.set('logs',logs);
   // 입고 시: 해당 품목의 대기 중인 발주 필요 항목 자동 완료 처리
   if(type==='입고'){
@@ -84,7 +82,7 @@ function navigate(view, {addHistory=true}={}){
   }
   updateBackBtn();
   currentView=view;renderNav();
-  if(typeof setUserPref==='function') setUserPref('lastView',view);
+  sessionStorage.setItem('sh_last_view',view);
   // History API 연동 — 모바일 뒤로가기 버튼 지원
   if(addHistory){
     history.pushState({view},'',(location.pathname||'')+'#'+view);
@@ -257,10 +255,11 @@ async function submitProfileEdit(){
   currentUser.name=name;
   if(!isAdmin())currentUser.deliveryName=deliveryNameVal;
   DB.set('session',currentUser);
+  sessionStorage.setItem('sh_tab_session',JSON.stringify(currentUser));
   // 화면 갱신
   document.getElementById('profile-name').textContent=name;
   document.getElementById('dd-name').textContent=name;
-  {const _ui=document.getElementById('sb-user-info');_ui.textContent='';const _s=document.createElement('strong');_s.textContent=name;_ui.appendChild(_s);_ui.appendChild(document.createTextNode(isAdmin()?'관리자':'발주자'));}
+  document.getElementById('sb-user-info').innerHTML='<strong>'+name+'</strong>'+(isAdmin()?'관리자':'발주자');
   const avatarEl=document.getElementById('profile-avatar');
   if(avatarEl)avatarEl.textContent=name.charAt(0);
   closeModal('profile-modal');
@@ -1927,16 +1926,6 @@ document.getElementById('content').addEventListener('click',e=>{
     openOrderCancelModal(oid);
     return;
   }
-  // 취소 되돌리기 버튼
-  const uncancelBtn=e.target.closest('.order-uncancel-btn');
-  if(uncancelBtn){
-    e.stopPropagation();
-    const oid=parseInt(uncancelBtn.dataset.orderId);
-    if(confirm('이 발주서의 취소를 되돌립니다.\n재고가 다시 차감되고 상태가 취소 전으로 복원됩니다.\n계속할까요?')){
-      if(uncancelOrder(oid)) renderOrders();
-    }
-    return;
-  }
   // 재발주 버튼
   const reorderBtn=e.target.closest('.reorder-btn');
   if(reorderBtn){
@@ -2041,77 +2030,76 @@ document.addEventListener('keydown',e=>{
 // (shelf-qty-input은 더 이상 사용되지 않음)
 
 // 초기화 및 세션 복원
+// 기존 localStorage 데이터 전체 초기화 (구버전 샘플 데이터 제거, accounts는 보존)
+(function(){
+  const resetKey='sh_reset_v2';
+  if(!localStorage.getItem(resetKey)){
+    Object.keys(localStorage)
+      .filter(k=>k.startsWith('sh_')&&k!=='sh_accounts'&&k!=='sh_session')
+      .forEach(k=>localStorage.removeItem(k));
+    localStorage.setItem(resetKey,'1');
+  }
+})();
 
-// ── 앱 시작 (인증 게이트 → Firestore 동기화 → 초기화 → 인증세션 복원) ─────────
-let _booted=false; let _authRestored=false;
-function attachWatchers(){
+// ── 앱 시작 (Firestore 동기화 → 초기화 → 로그인 복원) ─────────
+(async function startApp(){
+  // Firestore에서 최신 데이터 가져오기
+  const loadingMsg=document.createElement('div');
+  loadingMsg.id='server-loading-msg';
+  loadingMsg.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(255,255,255,0.92);display:flex;align-items:center;justify-content:center;z-index:9999;font-size:1rem;color:#1e3a5f;gap:10px;';
+  loadingMsg.innerHTML='<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#1e3a5f" stroke-width="2"><circle cx="12" cy="12" r="10" stroke-dasharray="31.4" stroke-dashoffset="10" style="animation:spin 1s linear infinite;transform-origin:center"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="0.8s" repeatCount="indefinite"/></circle></svg> 데이터를 불러오는 중...';
+  document.body.appendChild(loadingMsg);
+  // 1) IndexedDB 긴급 복원 (localStorage가 비어있을 때 최우선 복구)
+  await DB.restoreFromIDB();
+  // 2) Firestore 안전 동기화 (병합 방식 — 데이터 줄어들지 않음)
+  await syncFromServer();
+  loadingMsg.remove();
+  {
+
+  initData();
+  _seedDemoStock();
+  setLoginTab('orderer');
+  ['login-pw','reg-pw','reg-pw2','setup-pw','setup-pw2'].forEach(wrapPwToggle);
+  initLoginPrefs_();
+  } // end Firestore sync block
+
+  // 단가 실시간 동기화 구독
   if(window._FS && typeof window._FS.watchPriceSettings === 'function'){
     window._FS.watchPriceSettings(()=>{
       if(currentView==='price-settings') renderPriceSettings();
       else if(currentView==='items') renderItems();
     });
   }
+
+  // 발주서 / 재고 실시간 동기화 구독 (다른 기기 변경 즉시 반영)
   if(window._FS && typeof window._FS.watchData === 'function'){
-    window._FS.watchData('orders',()=>{ if(currentView==='orders') renderOrders(); else if(currentView==='dashboard') renderDashboard(); });
-    window._FS.watchData('inventory',()=>{ if(currentView==='inventory') renderInventory(); else if(currentView==='stock-view') renderStockView(); else if(currentView==='shortage-view') renderShortageView(); });
-    window._FS.watchData('logs',()=>{ if(currentView==='dashboard') renderDashboard(); });
-    window._FS.watchData('accounts',()=>{ if(currentView==='accounts') renderAccounts(); });
-    window._FS.watchData('items',()=>{ if(currentView==='items') renderItems(); else if(currentView==='dashboard') renderDashboard(); else if(currentView==='purchase-requests') renderPurchaseRequests(); });
-    window._FS.watchData('purchase_requests',()=>{ if(currentView==='purchase-requests') renderPurchaseRequests(); else if(currentView==='dashboard') renderDashboard(); });
-  }
-}
-async function _bootSequence(){
-  if(_booted) return;
-  _booted=true;
-  try{
-    await syncFromServer();
-    await loadMigrationsCache();
-    await migrateLegacyLocalOnce();
-    if(window._fbAuth&&window._fbAuth.currentUser){ await loadUserPrefs(); }
-    initData();
-    _seedDemoStock();
-    setLoginTab('orderer');
-    ['login-pw','reg-pw','reg-pw2','setup-pw','setup-pw2'].forEach(wrapPwToggle);
-    initLoginPrefs_();
-  }finally{
-    window._booted=true;
-  }
-  attachWatchers();
-}
-(function startApp(){
-  if(window._fbAuth&&typeof window._fbAuth.onAuthStateChanged==='function'){
-    window._fbAuth.onAuthStateChanged(async (fbUser)=>{
-      const _first=!_booted;
-      await _bootSequence();
-      if(!_first) return;
-      if(currentUser) return;
-      if(_authRestored) return; _authRestored=true;
-      if(fbUser){
-        try{
-          const accs=DB.get('accounts',[]);
-          let acc=fbUser.email?accs.find(a=>a.email===fbUser.email):null;
-          if(acc){
-            currentUser={id:acc.id,name:acc.name,deliveryName:acc.deliveryName||'',role:acc.role};
-            setLoginTab(acc.role==='admin'?'admin':'orderer');
-            showApp();
-            return;
-          }
-          const aOn=localStorage.getItem('sh_auto_login'),aUid=localStorage.getItem('sh_auto_login_user_id');
-          if(aOn&&aUid){
-            const a2=accs.find(x=>x.id===aUid);
-            if(a2){
-              currentUser={id:a2.id,name:a2.name,deliveryName:a2.deliveryName||'',role:a2.role};
-              setLoginTab(a2.role==='admin'?'admin':'orderer');
-              showApp();
-              return;
-            }
-          }
-        }catch(e){ console.warn('[인증 복원 실패]',e&&e.message); }
-      }
+    window._FS.watchData('orders',()=>{
+      if(currentView==='orders') renderOrders();
+      else if(currentView==='dashboard') renderDashboard();
     });
-    setTimeout(()=>{ if(!_booted) _bootSequence(); },15000);
-  }else{
-    _bootSequence();
+    window._FS.watchData('inventory',()=>{
+      if(currentView==='inventory') renderInventory();
+      else if(currentView==='stock-view') renderStockView();
+      else if(currentView==='shortage-view') renderShortageView();
+    });
+    window._FS.watchData('logs',()=>{
+      if(currentView==='dashboard') renderDashboard();
+    });
+    // 계정 실시간 동기화: 다른 기기에서 새 계정 추가/수정 시 즉시 반영
+    window._FS.watchData('accounts',()=>{
+      if(currentView==='accounts') renderAccounts();
+    });
+    // 품목 마스터 실시간 동기화: 다른 기기에서 품목 추가/수정/삭제 시 즉시 반영
+    window._FS.watchData('items',()=>{
+      if(currentView==='items') renderItems();
+      else if(currentView==='dashboard') renderDashboard();
+      else if(currentView==='purchase-requests') renderPurchaseRequests();
+    });
+    // 발주 필요 목록 실시간 동기화: 다른 기기에서 발주요청 발생/처리 시 즉시 반영
+    window._FS.watchData('purchase_requests',()=>{
+      if(currentView==='purchase-requests') renderPurchaseRequests();
+      else if(currentView==='dashboard') renderDashboard();
+    });
   }
 })();
 
@@ -2119,6 +2107,23 @@ function initLoginPrefs_(){
 // ── 아이디 저장 / 자동로그인 복원 ──
 (function initLoginPrefs(){
   try{
+    // ── 1순위: 이 탭의 sessionStorage 세션 (탭마다 독립, 새로고침 시 본인 계정 유지) ──
+    const tabSessionRaw=sessionStorage.getItem('sh_tab_session');
+    if(tabSessionRaw){
+      const tabSession=JSON.parse(tabSessionRaw);
+      if(tabSession&&tabSession.id){
+        const found=DB.get('accounts',[]).find(a=>a.id===tabSession.id);
+        if(found){
+          currentUser={id:found.id,name:found.name,deliveryName:found.deliveryName||'',role:found.role};
+          setLoginTab(found.role==='admin'?'admin':'orderer');
+          showApp();
+          return;
+        }
+        // 계정이 삭제된 경우 탭 세션 정리
+        sessionStorage.removeItem('sh_tab_session');
+      }
+    }
+
     const savedId   =localStorage.getItem('sh_saved_login_id');
     const rememberOn=localStorage.getItem('sh_remember_id');
     const autoOn    =localStorage.getItem('sh_auto_login');
@@ -2134,13 +2139,13 @@ function initLoginPrefs_(){
     const idEl=document.getElementById('login-id');
     if(idEl&&savedId&&rememberOn) idEl.value=savedId;
 
-    // ── localStorage 자동로그인 복원 ──
-    // 주의: 신규 기기 최초 오프라인(서버 미수신·로컬 sh_accounts 없음) 시 accounts 비어 자동로그인 조용히 실패 — 온라인 1회 필요
+    // ── 2순위: localStorage 자동로그인 (탭 세션 없을 때만) ──
     if(autoOn&&autoUserId){
       const found=DB.get('accounts',[]).find(a=>a.id===autoUserId);
       if(found){
         currentUser={id:found.id,name:found.name,deliveryName:found.deliveryName||'',role:found.role};
         setLoginTab(found.role==='admin'?'admin':'orderer');
+        sessionStorage.setItem('sh_tab_session',JSON.stringify(currentUser));
         showApp();
         return;
       }

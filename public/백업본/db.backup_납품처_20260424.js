@@ -2,10 +2,39 @@
 // 재고, 발주서, 로그 관리 관련 데이터베이스 함수
 
 // ── IndexedDB 3중 백업 (orders 전용) ──────────────────────────
-// ── 메모리 미러 (window._mem) — 진실 소스는 Firestore, 로컬은 세션 캐시·폴백만 ──
-if(!window._mem) window._mem={};
-// _IDB: 더 이상 사용 안 함 (기존 IndexedDB 데이터 삭제·마이그레이션 코드 미포함 — 영향 회피). 호출부 보존용 no-op.
-const _IDB={ save(){}, loadAll(){return Promise.resolve([]);} };
+const _IDB={
+  DB_NAME:'sh_safe',DB_VER:1,STORE:'orders',
+  _db:null,
+  _open(){
+    if(this._db) return Promise.resolve(this._db);
+    return new Promise((res,rej)=>{
+      const req=indexedDB.open(this.DB_NAME,this.DB_VER);
+      req.onupgradeneeded=e=>{e.target.result.createObjectStore(this.STORE,{keyPath:'id'});};
+      req.onsuccess=e=>{this._db=e.target.result;res(this._db);};
+      req.onerror=()=>rej(req.error);
+    });
+  },
+  async save(orders){
+    try{
+      const db=await this._open();
+      const tx=db.transaction(this.STORE,'readwrite');
+      const st=tx.objectStore(this.STORE);
+      (orders||[]).forEach(o=>{if(o&&o.id!=null)st.put(o);});
+      await new Promise((res,rej)=>{tx.oncomplete=res;tx.onerror=()=>rej(tx.error);});
+    }catch(e){console.warn('[IDB 백업 실패]',e.message);}
+  },
+  async loadAll(){
+    try{
+      const db=await this._open();
+      return await new Promise((res,rej)=>{
+        const tx=db.transaction(this.STORE,'readonly');
+        const req=tx.objectStore(this.STORE).getAll();
+        req.onsuccess=()=>res(req.result||[]);
+        req.onerror=()=>rej(req.error);
+      });
+    }catch(e){console.warn('[IDB 복원 실패]',e.message);return [];}
+  }
+};
 
 // ── DB: localStorage + sessionStorage + IndexedDB + Firestore 4중 보호 ──
 // 보호 키(orders 등 배열): get 시 빈 경우 백업에서 복원,
@@ -16,8 +45,21 @@ const DB={
 
   get(k,d=[]){
     try{
-      const val=(window._mem&&Object.prototype.hasOwnProperty.call(window._mem,k))?window._mem[k]:null;
-      return val!==null&&val!==undefined?val:d;
+      const raw=localStorage.getItem('sh_'+k);
+      const val=raw?JSON.parse(raw):null;
+      // 보호 키이고 localStorage가 비어 있으면 sessionStorage 복원 시도
+      if(this._GUARD.has(k)&&Array.isArray(d)&&(!val||(Array.isArray(val)&&val.length===0))){
+        const ss=sessionStorage.getItem('sh_ss_'+k);
+        if(ss){
+          const ssVal=JSON.parse(ss);
+          if(Array.isArray(ssVal)&&ssVal.length>0){
+            console.warn(`[DB 복원] localStorage 비어있음 → sessionStorage 복원: ${k} (${ssVal.length}건)`);
+            localStorage.setItem('sh_'+k,ss);
+            return ssVal;
+          }
+        }
+      }
+      return val!==null?val:d;
     }catch{return d;}
   },
 
@@ -27,7 +69,7 @@ const DB={
     // ── 보호 키: 항상 병합 (절대 줄어들지 않음) ──
     if(this._GUARD.has(k)&&Array.isArray(v)){
       try{
-        const existing=(window._mem&&Array.isArray(window._mem[k]))?window._mem[k]:[];
+        const existing=JSON.parse(localStorage.getItem('sh_'+k)||'[]');
         if(Array.isArray(existing)&&existing.length>0){
           toStore=_mergeById(existing,v);
           if(toStore.length<existing.length){
@@ -37,12 +79,18 @@ const DB={
           }
         }
       }catch(e){console.warn('[DB 병합 오류]',e.message);}
+
+      // sessionStorage 백업 (2중)
+      try{ sessionStorage.setItem('sh_ss_'+k,JSON.stringify(toStore)); }catch(e){}
+
+      // IndexedDB 백업 (3중, orders만)
+      if(k==='orders'){ _IDB.save(toStore); }
     }
 
-    // 메모리 미러에 저장 (세션 캐시)
-    window._mem[k]=toStore;
+    // localStorage에 저장 (1중)
+    localStorage.setItem('sh_'+k,JSON.stringify(toStore));
 
-    // Firestore에 저장 — items는 initData 마이그레이션 중 잠금 (race condition 방지)
+    // Firestore에 저장 (4중) — items는 initData 마이그레이션 중 잠금 (race condition 방지)
     if(window._FS && !(k==='items' && window._itemsInitLock)){
       window._FS.set(k,toStore).catch(e=>console.warn('[Firestore sync 실패]',k,e.message));
     }
@@ -50,35 +98,21 @@ const DB={
 
   nextId(k){const n=(this.get('_seq_'+k,0))+1;this.set('_seq_'+k,n);return n;},
 
-  // ── Firestore migrations 문서 (1회성 마이그 플래그 — 기기 무관 전역 1회) ──
-  getMig(flag){
+  // 앱 시작 시 IndexedDB → localStorage 긴급 복원 (orders만)
+  async restoreFromIDB(){
     try{
-      const m=(window._mem&&window._mem['_migrations'])||{};
-      if(m[flag]) return true;
-      // 서버 migrations에 없으면: 기존 localStorage sh_<flag> 1회 승계 (원본 삭제 안 함 — 읽기만)
-      try{
-        if(localStorage.getItem('sh_'+flag)){
-          if(!window._mem['_migrations']||typeof window._mem['_migrations']!=='object') window._mem['_migrations']={};
-          window._mem['_migrations'][flag]=true;
-          if(window._FS) window._FS.set('_migrations',window._mem['_migrations']).catch(e=>console.warn('[migrations 승계 write 실패]',flag,e&&e.message));
-          return true;
-        }
-      }catch(_e){}
-      return false;
-    }catch{return false;}
-  },
-  setMig(flag){
-    try{
-      if(!window._mem) window._mem={};
-      const m=(window._mem['_migrations']&&typeof window._mem['_migrations']==='object')?window._mem['_migrations']:{};
-      m[flag]=true;
-      window._mem['_migrations']=m;
-      if(window._FS) window._FS.set('_migrations',m).catch(e=>console.warn('[migrations write 실패]',flag,e&&e.message));
-    }catch(e){console.warn('[setMig 오류]',e&&e.message);}
-  },
-
-  // (구) IndexedDB 긴급 복원 — window._mem+Firestore 체계로 불필요. 호출부 보존용 no-op
-  async restoreFromIDB(){ return; }
+      const existing=JSON.parse(localStorage.getItem('sh_orders')||'[]');
+      if(Array.isArray(existing)&&existing.length>0) return; // 이미 데이터 있음
+      const idbOrders=await _IDB.loadAll();
+      if(idbOrders.length>0){
+        console.warn(`[IDB 복원] localStorage에 발주서 없음 → IndexedDB에서 ${idbOrders.length}건 복원`);
+        // DB.set 우회해서 직접 localStorage에 쓰기 (무한루프 방지)
+        localStorage.setItem('sh_orders',JSON.stringify(idbOrders));
+        sessionStorage.setItem('sh_ss_orders',JSON.stringify(idbOrders));
+        if(window._FS) window._FS.set('orders',idbOrders).catch(()=>{});
+      }
+    }catch(e){console.warn('[IDB 복원 실패]',e.message);}
+  }
 };
 
 // ── 배열 ID 기준 병합 (로컬 + Firestore 유니언, 같은 ID면 Firestore 우선) ──
@@ -106,123 +140,108 @@ function _mergeById(local, remote){
   return [...result.values()].sort((a,b)=>(a.id||0)-(b.id||0));
 }
 
-// ── Firestore → 메모리(window._mem) 서버우선 동기화 (앱 시작 1회) ──
-// 서버=진실. getAll 성공 시 서버값 채택. 서버 미수신 시에만 로컬 폴백(읽기).
-// 로컬→서버 역업로드 전면 폐지(다중PC 섞임 차단). 로컬 sh_* 삭제 0(안전망).
-// (B) _GUARD 키 한정: 서버가 빈값/기존의 절반 미만이면 그 키만 로컬 유지(+경고). 역업로드 여전히 0.
+// ── Firestore ↔ 로컬 안전 동기화 (앱 시작 시 1회 실행) ──
+// 규칙:
+//   배열 키(orders/accounts/logs/purchase_requests/items): ID 기준 병합 → 절대 줄어들지 않음
+//   시퀀스 키(_seq_*): 로컬·Firestore 중 큰 값 사용
+//   그 외: Firestore 우선
+//   로컬에만 있는 데이터 → Firestore에 역업로드
 async function syncFromServer(){
-  if(!window._FS){
-    console.warn('[Firestore] 미초기화 → 로컬 폴백으로 계속합니다.');
-    _loadLocalFallback();
-    return;
-  }
+  if(!window._FS){ console.warn('[Firestore] 미초기화, 로컬 데이터로 계속합니다.'); return; }
   try{
     const data=await window._FS.getAll();
-    const _GUARD_KEYS=['orders','purchase_requests','accounts','logs'];
-    const _SHRINK_RATIO=0.5;  // 서버가 기존의 50% 미만이면 사고로 간주 (개발자 조정 가능 상수)
+    const MERGE_KEYS=['orders','accounts','logs','purchase_requests','items'];
+    const SEQ_KEYS=['orders','logs','purchase_requests','order_items'];
+    const toUpload={};  // Firestore에 역업로드할 항목
+
+    // 1) Firestore에 있는 키 처리
     for(const [k,v] of Object.entries(data)){
-      if(k==='items' && Array.isArray(v)){
-        // items: 서버값 자체의 동명 중복만 정리 (입력=서버값, 로컬 병합 아님)
-        const byName=new Map();
-        v.forEach(i=>{
-          if(!byName.has(i.name)){byName.set(i.name,i);return;}
-          const prev=byName.get(i.name);
-          const ps=Object.keys(prev.colorProdCdMap||{}).length+(prev.prodCd?10:0);
-          const cs=Object.keys(i.colorProdCdMap||{}).length+(i.prodCd?10:0);
-          if(cs>ps){
-            const winner={...i};
-            if(prev.colorProdCdMap)winner.colorProdCdMap=Object.assign({},prev.colorProdCdMap,winner.colorProdCdMap||{});
-            const pt=prev.isActiveUpdatedAt||'';
-            const ct=winner.isActiveUpdatedAt||'';
-            if(pt>ct){winner.isActive=prev.isActive;winner.isActiveUpdatedAt=pt;}
-            else if(!pt&&!ct&&prev.isActive===false){winner.isActive=false;}
-            byName.set(i.name,winner);
-          } else {
-            if(i.colorProdCdMap)prev.colorProdCdMap=Object.assign({},i.colorProdCdMap,prev.colorProdCdMap||{});
-            const pt=prev.isActiveUpdatedAt||'';
-            const ct=i.isActiveUpdatedAt||'';
-            if(ct>pt){prev.isActive=i.isActive;prev.isActiveUpdatedAt=ct;}
-          }
-        });
-        window._mem[k]=[...byName.values()].sort((a,b)=>(a.id||0)-(b.id||0));
-      } else {
-        // (B 빈값가드) _GUARD 키 + 서버 빈값/현저감소 → 그 키만 로컬 유지. _FS.set 호출 0(섞임0).
-        if(_GUARD_KEYS.includes(k)){
-          const _prevArr=Array.isArray(window._mem[k])?window._mem[k]:null;
-          const _vEmpty=!Array.isArray(v)||v.length===0;
-          const _vShrunk=Array.isArray(v)&&_prevArr&&_prevArr.length>0&&v.length<_prevArr.length*_SHRINK_RATIO;
-          if(_prevArr&&_prevArr.length>0&&(_vEmpty||_vShrunk)){
-            console.warn(`[안전망] 서버 ${k} 비정상(${_vEmpty?'빈값':'현저감소 '+v.length+'<'+_prevArr.length}) → 로컬 유지(역업로드 안 함)`);
-            continue;
-          }
+      const localRaw=localStorage.getItem('sh_'+k);
+      const localVal=localRaw?JSON.parse(localRaw):null;
+
+      if(MERGE_KEYS.includes(k)&&Array.isArray(v)){
+        // 배열: ID 기준 병합
+        let merged=_mergeById(Array.isArray(localVal)?localVal:[], v);
+        // items 병합 후 이름 기준 즉시 dedup (중복 방지)
+        if(k==='items'){
+          const byName=new Map();
+          merged.forEach(i=>{
+            if(!byName.has(i.name)){byName.set(i.name,i);return;}
+            const prev=byName.get(i.name);
+            const ps=Object.keys(prev.colorProdCdMap||{}).length+(prev.prodCd?10:0);
+            const cs=Object.keys(i.colorProdCdMap||{}).length+(i.prodCd?10:0);
+            if(cs>ps){
+              // 현재가 더 많은 데이터 → ERP 코드 병합 후 교체
+              const winner={...i};
+              if(prev.colorProdCdMap)winner.colorProdCdMap=Object.assign({},prev.colorProdCdMap,winner.colorProdCdMap||{});
+              // isActive는 더 최근에 바꾼 쪽 우선, 둘 다 타임스탬프 없으면 로컬 false 보존
+              const pt=prev.isActiveUpdatedAt||'';
+              const ct=winner.isActiveUpdatedAt||'';
+              if(pt>ct){winner.isActive=prev.isActive;winner.isActiveUpdatedAt=pt;}
+              else if(!pt&&!ct&&prev.isActive===false){winner.isActive=false;}
+              byName.set(i.name,winner);
+            } else {
+              // 기존이 더 많은 데이터 → ERP 코드만 보완
+              if(i.colorProdCdMap)prev.colorProdCdMap=Object.assign({},i.colorProdCdMap,prev.colorProdCdMap||{});
+              // isActive는 더 최근에 바꾼 쪽 우선
+              const pt=prev.isActiveUpdatedAt||'';
+              const ct=i.isActiveUpdatedAt||'';
+              if(ct>pt){prev.isActive=i.isActive;prev.isActiveUpdatedAt=ct;}
+            }
+          });
+          merged=[...byName.values()].sort((a,b)=>(a.id||0)-(b.id||0));
         }
-        // 정상: 서버값 그대로 채택 (서버 우선, 역업로드 없음)
-        window._mem[k]=v;
+        localStorage.setItem('sh_'+k, JSON.stringify(merged));
+        // items는 initData 마이그레이션 이후에 Firestore 동기화 (race condition 방지)
+        // 그 외 배열은 즉시 역업로드
+        if(k!=='items' && merged.length>v.length) toUpload[k]=merged;
+      } else if(k.startsWith('_seq_')){
+        // 시퀀스: 더 큰 값 유지
+        const fsSeq=parseInt(v)||0;
+        const localSeq=parseInt(localVal)||0;
+        const maxSeq=Math.max(fsSeq,localSeq);
+        localStorage.setItem('sh_'+k, JSON.stringify(maxSeq));
+        if(maxSeq>fsSeq) toUpload[k]=maxSeq;
+      } else {
+        // 그 외: Firestore 우선
+        localStorage.setItem('sh_'+k, JSON.stringify(v));
       }
     }
-    console.log(`[서버우선 동기화 완료] ${Object.keys(data).length}개 키 서버값 채택 (역업로드 0)`);
+
+    // 2) 로컬에만 있는 데이터 → Firestore에 역업로드
+    for(const k of MERGE_KEYS){
+      if(!(k in data)){
+        const localRaw=localStorage.getItem('sh_'+k);
+        if(localRaw){
+          const localVal=JSON.parse(localRaw);
+          if(Array.isArray(localVal)&&localVal.length>0){
+            toUpload[k]=localVal;
+            console.log(`[동기화] 로컬 전용 키 발견, Firestore 업로드: ${k} (${localVal.length}건)`);
+          }
+        }
+      }
+    }
+    // 시퀀스 키도 로컬에만 있으면 업로드
+    for(const k of SEQ_KEYS){
+      const seqKey='_seq_'+k;
+      if(!(seqKey in data)){
+        const localSeq=parseInt(localStorage.getItem('sh_'+seqKey)||'0');
+        if(localSeq>0) toUpload[seqKey]=localSeq;
+      }
+    }
+
+    // 3) 역업로드 실행 (비동기, 실패해도 앱 계속)
+    for(const [k,v] of Object.entries(toUpload)){
+      window._FS.set(k,v).catch(e=>console.warn('[Firestore 역업로드 실패]',k,e.message));
+    }
+
+    const mergedCount=Object.keys(data).length;
+    const uploadCount=Object.keys(toUpload).length;
+    console.log(`[Firestore 동기화 완료] ${mergedCount}개 키 로드, 역업로드 ${uploadCount}개`);
   }catch(e){
-    console.warn('[Firestore 수신 실패] 로컬 폴백으로 계속합니다.',e&&e.message);
-    _loadLocalFallback();
+    console.warn('[Firestore 동기화 실패] 로컬 데이터로 계속합니다.',e.message);
   }
 }
-
-// ── 로컬 폴백: 서버 미수신 시에만 localStorage sh_* → window._mem (읽기 단방향, _FS.set 0, 삭제 0) ──
-function _loadLocalFallback(){
-  try{
-    for(const lk of Object.keys(localStorage)){
-      if(lk.indexOf('sh_')!==0) continue;
-      const k=lk.slice(3);
-      try{ const raw=localStorage.getItem(lk); if(raw!=null) window._mem[k]=JSON.parse(raw); }catch(_e){}
-    }
-    console.warn('[로컬 폴백] localStorage sh_* → 메모리 적재 (서버 복구 시 서버값이 덮어씀)');
-  }catch(e){ console.warn('[로컬 폴백 실패]',e&&e.message); }
-}
-
-// ── 마이그레이션 캐시 로드 (Firestore _migrations → window._mem) ──
-async function loadMigrationsCache(){
-  try{
-    if(!window._FS) return;
-    const m=await window._FS.get('_migrations');
-    if(m&&typeof m==='object'){ window._mem['_migrations']=m; }
-    else if(!window._mem['_migrations']){ window._mem['_migrations']={}; }
-  }catch(e){ console.warn('[migrations 로드 실패]',e&&e.message); if(!window._mem['_migrations'])window._mem['_migrations']={}; }
-}
-
-// ── 사용자 환경설정 로드 (인증 사용자별 Firestore user_prefs_<uid>) ──
-async function loadUserPrefs(){
-  try{
-    if(!window._FS||!window._fbAuth||!window._fbAuth.currentUser) return;
-    const uid=window._fbAuth.currentUser.uid;
-    const p=await window._FS.get('user_prefs_'+uid);
-    window._mem['_userPrefs']=(p&&typeof p==='object')?p:{};
-  }catch(e){ console.warn('[userPrefs 로드 실패]',e&&e.message); if(!window._mem['_userPrefs'])window._mem['_userPrefs']={}; }
-}
-
-function getUserPref(key,def){
-  try{
-    const p=window._mem&&window._mem['_userPrefs'];
-    return (p&&p[key]!==undefined)?p[key]:def;
-  }catch{return def;}
-}
-
-function setUserPref(key,val){
-  try{
-    if(!window._mem) window._mem={};
-    const p=(window._mem['_userPrefs']&&typeof window._mem['_userPrefs']==='object')?window._mem['_userPrefs']:{};
-    p[key]=val;
-    window._mem['_userPrefs']=p;
-    if(window._FS&&window._fbAuth&&window._fbAuth.currentUser){
-      const uid=window._fbAuth.currentUser.uid;
-      window._FS.set('user_prefs_'+uid,p).catch(e=>console.warn('[userPref write 실패]',key,e&&e.message));
-    }
-  }catch(e){console.warn('[setUserPref 오류]',e&&e.message);}
-}
-
-// ── (7단계) 레거시 localStorage 미정리 — 안전망으로 sh_* 원본 그대로 보존.
-//    이번 작업은 "읽기 출처를 로컬→서버로 전환"이며 데이터 삭제가 아님.
-//    절대 localStorage/sessionStorage 삭제·clear 금지. 호출부 보존용 no-op.
-async function migrateLegacyLocalOnce(){ return; }
 
 const DEFAULT_ACCOUNTS=[];
 let currentUser=null;
@@ -264,24 +283,9 @@ async function doLogin(){
   const err=document.getElementById('login-error');
   err.style.display='none';
 
-  let accounts=DB.get('accounts',[]);
+  const accounts=DB.get('accounts',[]);
   const isEmail=id.includes('@');
   let found=isEmail ? accounts.find(a=>a.email===id) : accounts.find(a=>a.id===id);
-  // 아이디로 로그인인데 로컬에 없으면 Firestore에서 최신 accounts 받아 재시도 (다른 기기에서 만든 새 계정 대응)
-  // 아이디 로그인인데 로컬에 없으면 Cloud Function 으로 이메일만 조회 (Firestore 직접 read 안 함)
-  if(!found&&!isEmail&&window._FN?.getEmailById){
-    try{
-      const res=await window._FN.getEmailById({ id });
-      if(res&&res.data&&res.data.email){
-        found={email:res.data.email};
-      }
-    }catch(e){
-      if(e&&e.code==='functions/not-found'){
-        err.style.display='block';err.textContent='아이디 또는 비밀번호가 올바르지 않습니다.';return;
-      }
-      console.warn('[getEmailById 실패]',e.message);
-    }
-  }
   if(!found&&!isEmail){err.style.display='block';err.textContent='아이디 또는 비밀번호가 올바르지 않습니다.';return;}
   if(!window._fbAuth){err.style.display='block';err.textContent='서버 연결 중입니다. 잠시 후 다시 시도해주세요.';return;}
 
@@ -303,35 +307,12 @@ async function doLogin(){
     return;
   }
 
-  // ── Auth 성공 후: 이메일만 가진 임시 found 면 실제 계정(id/role/name) 재조회 ──
-  if(found&&!found.id&&found.email){
-    let acc=DB.get('accounts',[]);
-    let real=acc.find(a=>a.email===found.email);
-    if(!real&&window._FS){
-      try{
-        const remote=await window._FS.get('accounts');
-        if(Array.isArray(remote)&&remote.length>0){
-          const merged=_mergeById(acc,remote);
-          window._mem['accounts']=merged;
-          acc=merged;
-          real=acc.find(a=>a.email===found.email);
-        }
-      }catch(e){console.warn('[로그인 후 accounts 재조회 실패]',e.message);}
-    }
-    if(real) found=real;
-  }
-  // ── 안전장치1 ──
-  if(found&&!found.id&&!(isEmail)){
-    err.style.display='block';err.textContent='계정 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.';return;
-  }
-
   // 이메일 로그인인데 발주앱 계정 없으면 자동 생성 (일반 권한)
   if(isEmail&&!found){
     if(loginTab==='admin'){err.style.display='block';err.textContent='관리자 계정만 이 화면에서 로그인할 수 있습니다.';return;}
     const base=id.split('@')[0];
     const newId=accounts.find(a=>a.id===base)?`${base}_${Date.now()}`:base;
-    // 납품처(deliveryName)는 비워두고 사용자가 직접 설정하게 함 (개인정보 수정에서 변경 가능)
-    found={id:newId,name:base,deliveryName:'',email:id,role:'orderer',empCd:'',bizCd:''};
+    found={id:newId,name:base,deliveryName:base,email:id,role:'orderer',empCd:'',bizCd:''};
     accounts.push(found);
     DB.set('accounts',accounts);
   }
@@ -366,6 +347,7 @@ async function doLogin(){
 
   currentUser={id:found.id,name:found.name,deliveryName:found.deliveryName||'',role:found.role};
   DB.set('session',currentUser);
+  sessionStorage.setItem('sh_tab_session',JSON.stringify(currentUser));
   showApp();
 }
 
@@ -431,7 +413,7 @@ function showApp(){
   const roleEl=document.getElementById('topbar-role');
   roleEl.textContent=isAdmin()?'관리자':'발주자';
   roleEl.className='topbar-role '+(isAdmin()?'role-admin':'role-orderer');
-  {const _ui=document.getElementById('sb-user-info');_ui.textContent='';const _s=document.createElement('strong');_s.textContent=currentUser.name;_ui.appendChild(_s);_ui.appendChild(document.createTextNode(isAdmin()?'관리자':'발주자'));}
+  document.getElementById('sb-user-info').innerHTML='<strong>'+currentUser.name+'</strong>'+(isAdmin()?'관리자':'발주자');
   document.getElementById('topbar-date').textContent=new Date().toLocaleDateString('ko-KR',{year:'numeric',month:'long',day:'numeric',weekday:'short'});
   // 프로필 초기화
   const initial=currentUser.name.charAt(0);
@@ -447,7 +429,7 @@ function showApp(){
   if(ddId)ddId.textContent='아이디: '+currentUser.id;
   initDateInputs();
   renderNav();
-  const _savedView=(typeof getUserPref==='function')?getUserPref('lastView',''):'';
+  const _savedView=sessionStorage.getItem('sh_last_view');
   const _hashView=location.hash.slice(1);
   const _ADMIN_VIEWS=new Set(['items','inventory','price-settings','accounts','purchase-requests','logs','shortage-view']);
   const _raw=_hashView||_savedView||'dashboard';
@@ -508,6 +490,7 @@ async function doAdminSetup(){
   // 생성 후 자동 로그인
   currentUser={id,name,role:'admin'};
   DB.set('session',currentUser);
+  sessionStorage.setItem('sh_tab_session',JSON.stringify(currentUser));
   document.getElementById('admin-setup-screen').classList.remove('active');
   showApp();
   toast(name+'님, 관리자 계정이 생성되었습니다.','success');
@@ -574,6 +557,7 @@ async function doRegister(){
   }
   currentUser={id,name:deliveryName,deliveryName,role:'orderer'};
   DB.set('session',currentUser);
+  sessionStorage.setItem('sh_tab_session',JSON.stringify(currentUser));
   document.getElementById('register-screen').classList.remove('active');
   showApp();
   toast(deliveryName+'님, 가입을 환영합니다!','success');
@@ -700,57 +684,25 @@ function initData(){
       let _items=DB.get('items',[]);
       let _changed=false;
       _items.forEach(item=>{
-        if(isTrackStock(item)){
+        if(item.category==='서랍장'){
           if(item.stockSiheung===undefined){item.stockSiheung=item.currentStock||0;_changed=true;}
           if(item.stockPyeongtaek===undefined){item.stockPyeongtaek=0;_changed=true;}
         }
       });
       if(_changed)DB.set('items',_items);
     }
-    // 마이그레이션: 가격표 가구 전체 재고 추적 확장 (멱등 — 기존 값 절대 미덮어쓰기)
-    try{
-    {
-      const _EXCLUDE=['선반재단비','포스트조립비','인출식 바지걸이'];
-      // 재고칸 제거 대상 (재고표 미사용 품목 — trackStock 부여 안 함 + 기존 true는 정리)
-      const _NOTRACK=['거울장 목대','거울장 거울문','이불장','이불 반장','이불 긴장','이불장손잡이(1구)','디바이더 속서랍','2단서랍 비규격','3단서랍 비규격','4단서랍 비규격'];
-      // 실재고 존재 여부 (둘 다 빈/0이면 정리 안전)
-      const _hasStock=it=>{
-        const a=it.colorStockSiheung||{},b=it.colorStockPyeongtaek||{};
-        const sum=k=>Object.values(k).reduce((s,v)=>s+(Number(v)||0),0);
-        return sum(a)>0||sum(b)>0||(Number(it.stockSiheung)||0)>0||(Number(it.stockPyeongtaek)||0)>0;
-      };
-      let _items2=DB.get('items',[]);
-      let _chg2=false;
-      _items2.forEach(item=>{
-        // 제거 대상: 실재고 없을 때만 trackStock=false 정리 (재부여 차단), 실재고 있으면 미접촉
-        if(_NOTRACK.includes(item.name)){
-          if(item.category==='서랍장')return;
-          if(item.trackStock===true&&!_hasStock(item)){item.trackStock=false;_chg2=true;}
-          return;
-        }
-        if(item.category==='서랍장')return;
-        if(_EXCLUDE.includes(item.name))return;
-        if(!DRAWER_OPTION_PRICES.hasOwnProperty(item.name))return;
-        if(item.trackStock!==true){item.trackStock=true;_chg2=true;}
-        if(item.stockSiheung===undefined){item.stockSiheung=0;_chg2=true;}
-        if(item.stockPyeongtaek===undefined){item.stockPyeongtaek=0;_chg2=true;}
-        if(item.colorStockSiheung===undefined){item.colorStockSiheung={};_chg2=true;}
-        if(item.colorStockPyeongtaek===undefined){item.colorStockPyeongtaek={};_chg2=true;}
-      });
-      if(_chg2)DB.set('items',_items2);
-    }
-    }catch(_e){console.warn('[가구재고확장 마이그레이션 실패 — 안전 스킵]',_e&&_e.message);}
-    // 재고 구조 전면 개편 v2: 겉서랍/속서랍 체계 (idempotent — 플래그 불필요)
+    // 재고 구조 전면 개편 v2: 겉서랍/속서랍 체계 + 색상별 시흥50/평택50 (1회만 실행)
+    localStorage.setItem('sh_stock_init_v2','1');
     // 단가 설정 v2 초기화: 겉서랍/속서랍 단가 자동 세팅 (1회만 실행)
-    if(!DB.getMig('price_init_v2')){
+    if(!localStorage.getItem('sh_price_init_v2')){
       const dp=getDefaultPrices();
       if(dp&&dp.length>0){
         DB.set('price_settings',dp);
-        DB.setMig('price_init_v2');
+        localStorage.setItem('sh_price_init_v2','1');
       }
     }
     // 단가 설정 v3: 인출식 바지걸이·선반재단비·포스트조립비 항목 추가 (없으면 추가)
-    {
+    if(!localStorage.getItem('sh_price_init_v3')){
       const ps=DB.get('price_settings',[]);
       const newItems=[
         {name:'인출식 바지걸이',category:'서랍/옵션',price:39000},
@@ -765,6 +717,7 @@ function initData(){
         }
       });
       if(changed)DB.set('price_settings',ps);
+      localStorage.setItem('sh_price_init_v3','1');
     }
     // 마이그레이션: 공간박스 항목 추가 (없으면 추가)
     {
@@ -934,7 +887,7 @@ function initData(){
       if(_changed)DB.set('items',_items);
     }
     // 마이그레이션: 중복 품목 제거 (같은 이름 2개↑ → 데이터 많은 쪽 유지, 발주서 itemId 자동 교체)
-    if(!DB.getMig('dedup_items_v1')){
+    if(!localStorage.getItem('sh_dedup_items_v1')){
       let _items=DB.get('items',[]);
       const nameMap=new Map();
       _items.forEach(item=>{
@@ -962,10 +915,10 @@ function initData(){
         _items=_items.filter(i=>keepIds.has(i.id));
         DB.set('items',_items);
       }
-      DB.setMig('dedup_items_v1');
+      localStorage.setItem('sh_dedup_items_v1','1');
     }
     // 중복 품목 제거 v2 — ERP 코드 합친 후 하나만 남김
-    if(!DB.getMig('dedup_items_v2')){
+    if(!localStorage.getItem('sh_dedup_items_v2')){
       let _items=DB.get('items',[]);
       const byName=new Map();
       _items.forEach(i=>{ if(!byName.has(i.name)) byName.set(i.name,[]); byName.get(i.name).push(i); });
@@ -997,10 +950,10 @@ function initData(){
         });
         DB.set('items',_items.filter(i=>keepIds.has(i.id)));
       }
-      DB.setMig('dedup_items_v2');
+      localStorage.setItem('sh_dedup_items_v2','1');
     }
     // 마이그레이션: 상부자재·선반·코너선반·옷봉 품목을 items DB에 통합
-    if(!DB.getMig('upper_items_v2')){
+    if(!localStorage.getItem('sh_upper_items_v2')){
       let _items=DB.get('items',[]);
       let _changed=false;
       const now=new Date().toISOString();
@@ -1062,30 +1015,30 @@ function initData(){
         }
       });
       if(_changed)DB.set('items',_items);
-      DB.setMig('upper_items_v2');
+      localStorage.setItem('sh_upper_items_v2','1');
     }
     // 조절발 연장캡 15mm → 조절발 연장캡 이름 변경 (1회성 — 이름 변경은 구조 변경)
-    if(!DB.getMig('rename_ext_cap_v1')){
+    if(!localStorage.getItem('sh_rename_ext_cap_v1')){
       let _items=DB.get('items',[]);
       const old=_items.find(i=>i.name==='조절발 연장캡 15mm');
       if(old){old.name='조절발 연장캡';DB.set('items',_items);}
-      DB.setMig('rename_ext_cap_v1');
+      localStorage.setItem('sh_rename_ext_cap_v1','1');
     }
     // 잘못된 선반 품목 제거 v1 (1회성)
-    if(!DB.getMig('clean_shelf_items_v1')){
+    if(!localStorage.getItem('sh_clean_shelf_items_v1')){
       let _items=DB.get('items',[]);
       const removeNames=['비규격 선반','비규격 코너선반','코너선반'];
       const filtered=_items.filter(i=>!removeNames.includes(i.name));
       if(filtered.length<_items.length)DB.set('items',filtered);
-      DB.setMig('clean_shelf_items_v1');
+      localStorage.setItem('sh_clean_shelf_items_v1','1');
     }
     // 잘못된 선반 품목 제거 v2 — Firestore에서 재유입된 구버전 중복 이름 재정리
-    if(!DB.getMig('clean_shelf_items_v2')){
+    if(!localStorage.getItem('sh_clean_shelf_items_v2')){
       let _items=DB.get('items',[]);
       const removeNames=['비규격 선반','비규격 코너선반','코너선반'];
       const filtered=_items.filter(i=>!removeNames.includes(i.name));
-      if(filtered.length<_items.length){DB.set('items',filtered);console.log('[cleanup v2] 구버전 선반 중복 제거');}
-      DB.setMig('clean_shelf_items_v2');
+      if(filtered.length<_items.length){localStorage.setItem('sh_items',JSON.stringify(filtered));console.log('[cleanup v2] 구버전 선반 중복 제거');}
+      localStorage.setItem('sh_clean_shelf_items_v2','1');
     }
     // ── 필드 보정 (매번 실행 — Firestore 덮어써도 자동 복구) ──
     {
@@ -1228,16 +1181,8 @@ function initData(){
     {
       const _finalItems=DB.get('items',[]);
       if(window._FS&&_finalItems.length>0){
-        // 안전 가드: 서버 품목이 로컬보다 많으면 덮어쓰기 금지 (옛 PC가 좋은 데이터 지우는 버그 차단)
-        window._FS.get('items').then(remote=>{
-          const remoteLen=Array.isArray(remote)?remote.length:0;
-          if(_finalItems.length>=remoteLen){
-            window._FS.set('items',_finalItems).catch(e=>console.warn('[items 최종 동기화 실패]',e.message));
-            console.log(`[items 최종 동기화] ${_finalItems.length}개 → Firestore`);
-          }else{
-            console.warn(`[items 동기화 차단] 로컬 ${_finalItems.length} < 서버 ${remoteLen} — 서버 데이터 보호`);
-          }
-        }).catch(e=>console.warn('[items 동기화 조회 실패]',e.message));
+        window._FS.set('items',_finalItems).catch(e=>console.warn('[items 최종 동기화 실패]',e.message));
+        console.log(`[items 최종 동기화] ${_finalItems.length}개 → Firestore`);
       }
     }
   }
@@ -1295,21 +1240,7 @@ function generateOrderNum(dateStr){
   return `${d}-${seq}`;
 }
 
-// ── 공용: 서버에서 logs id 배치 발급 (saveOrder 외 5개 함수 공통) ──
-async function _serverGetLogIds(count){
-  if(!count||count<1) return [];
-  if(!window._FN||typeof window._FN.getNextIds!=='function'){
-    throw new Error('서버 함수가 준비되지 않았습니다. 새로고침 후 다시 시도해주세요.');
-  }
-  let _r;
-  try{ _r=await window._FN.getNextIds({counts:{logs:count}}); }
-  catch(_e){ throw new Error('서버에서 로그 번호를 받지 못했습니다. 다시 시도해주세요. ('+((_e&&_e.message)||'')+')'); }
-  const arr=_r&&_r.data&&_r.data.ids&&_r.data.ids.logs;
-  if(!Array.isArray(arr)||arr.length<count){ throw new Error('서버 로그 번호 응답 부족 — 다시 시도해주세요.'); }
-  return arr;
-}
-
-async function saveOrder(payload, saveMode='발주확정'){
+function saveOrder(payload, saveMode='발주확정'){
   // payload: {deliveryTo, address, orderDate, shipDate, note, warehouse,
   //           upperMaterials:[{name,white,black,silver,note}],
   //           shelfItems:[{name,white,maple,walnut,gray}],
@@ -1319,30 +1250,7 @@ async function saveOrder(payload, saveMode='발주확정'){
   // 수정 모드: _editOverride로 원래 id/orderNum/status/등록자/등록일 유지
   const _eo=window._editOverride||null;
   if(_eo)window._editOverride=null;
-
-  // ── 서버 단일 ID 발급 (PC간 번호 충돌 방지) ──
-  const _drawerCount=Array.isArray(payload.drawerItems)?payload.drawerItems.length:0;
-  const _idCounts={};
-  if(!_eo) _idCounts.orders=1;
-  if(_drawerCount>0){ _idCounts.order_items=_drawerCount; _idCounts.purchase_requests=_drawerCount; _idCounts.logs=_drawerCount; }
-  let _srvIds={};
-  if(Object.keys(_idCounts).length>0){
-    if(!window._FN||typeof window._FN.getNextIds!=='function'){
-      throw new Error('서버 함수가 준비되지 않았습니다. 새로고침 후 다시 시도해주세요.');
-    }
-    let _r;
-    try{ _r=await window._FN.getNextIds({counts:_idCounts}); }
-    catch(_e){ throw new Error('서버에서 발주서 번호를 받지 못했습니다. 다시 시도해주세요. ('+((_e&&_e.message)||'')+')'); }
-    if(!_r||!_r.data||!_r.data.ids){ throw new Error('서버 응답 형식 오류 — 다시 시도해주세요.'); }
-    _srvIds=_r.data.ids;
-  }
-  function _popId(name){
-    const arr=_srvIds[name];
-    const v=Array.isArray(arr)?arr.shift():undefined;
-    if(v===undefined||v===null){ throw new Error('서버 발급 '+name+' 번호가 부족합니다. 다시 시도해주세요.'); }
-    return v;
-  }
-  const orderId=_eo?_eo.id:_popId('orders'),now=new Date().toISOString();
+  const orderId=_eo?_eo.id:DB.nextId('orders'),now=new Date().toISOString();
   const orderNum=_eo?_eo.orderNum:generateOrderNum(payload.orderDate||todayStr());
   const effectiveSaveMode=_eo?(_eo.status||saveMode):saveMode;
   const savedDrawerItems=[];let shortageCount=0;
@@ -1359,14 +1267,14 @@ async function saveOrder(payload, saveMode='발주확정'){
     if(item.stockPyeongtaek===undefined)item.stockPyeongtaek=0;
     const orderColor=drawerItem.color||payload.sharedColor||'';
     const whStock=getWarehouseStock(item,warehouse,orderColor);
-    const shortage=isTrackStock(item)?calcShortage(requiredQty,whStock):0;
-    savedDrawerItems.push({id:_popId('order_items'),orderId,itemId,requiredQty,color:orderColor,currentStockSnapshot:whStock,shortageQty:shortage,warehouse,createdAt:now,handleOption:drawerItem.handleOption||'basic',displayName:drawerItem.displayName||'',note:drawerItem.note||'',subTypeChecked:drawerItem.subTypeChecked||[]});
+    const shortage=item.category==='서랍장'?calcShortage(requiredQty,whStock):0;
+    savedDrawerItems.push({id:DB.nextId('order_items'),orderId,itemId,requiredQty,color:orderColor,currentStockSnapshot:whStock,shortageQty:shortage,warehouse,createdAt:now,handleOption:drawerItem.handleOption||'basic',displayName:drawerItem.displayName||'',note:drawerItem.note||'',subTypeChecked:drawerItem.subTypeChecked||[]});
     if(shortage>0){
-      prs.push({id:_popId('purchase_requests'),orderId,itemId,requiredQty,currentStockSnapshot:whStock,shortageQty:shortage,warehouse,status:'대기',createdAt:now,updatedAt:now});
+      prs.push({id:DB.nextId('purchase_requests'),orderId,itemId,requiredQty,currentStockSnapshot:whStock,shortageQty:shortage,warehouse,status:'대기',createdAt:now,updatedAt:now});
       shortageCount++;
     }
     // 서랍장 실재고 차감 — 발주대기·발주확정 모두 발주 넣는 시점에 즉시 차감 (임시저장은 미차감)
-    if(isTrackStock(item)&&(effectiveSaveMode==='발주대기'||effectiveSaveMode==='발주확정')){
+    if(item.category==='서랍장'&&(effectiveSaveMode==='발주대기'||effectiveSaveMode==='발주확정')){
       const whKey=getWhKey(warehouse);
       const cwKey=getColorWhKey(warehouse);
       let before, afterVal;
@@ -1383,7 +1291,7 @@ async function saveOrder(payload, saveMode='발주확정'){
       }
       item.currentStock=(item.stockSiheung||0)+(item.stockPyeongtaek||0);
       const logs2=DB.get('logs',[]);
-      logs2.push({id:_popId('logs'),itemId:item.id,type:'발주차감',qty:-requiredQty,beforeStock:before,afterStock:afterVal,warehouse,color:orderColor||'',memo:`발주 #${orderId}`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:now});
+      logs2.push({id:DB.nextId('logs'),itemId:item.id,type:'발주차감',qty:-requiredQty,beforeStock:before,afterStock:afterVal,warehouse,color:orderColor||'',memo:`발주 #${orderId}`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:now});
       DB.set('logs',logs2);
     }
   });

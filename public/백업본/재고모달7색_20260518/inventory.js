@@ -103,7 +103,7 @@ function bulkComplete(){
 // ── 발주자 전용 재고 현황 페이지 ──
 // ── 발주자 전용: 재고 부족 페이지 ──
 function renderShortageView(){
-  const items=getItems().filter(i=>i.isActive&&i.category==='서랍장');
+  const items=getItems().filter(i=>i.isActive&&isTrackStock(i));
   const logs=getLogs();
   const lastLog={};
   logs.forEach(l=>{if(!lastLog[l.itemId]||l.createdAt>lastLog[l.itemId])lastLog[l.itemId]=l.createdAt;});
@@ -160,7 +160,7 @@ function renderShortageView(){
 let _stockViewSearch='';
 function renderStockView(){
   // +손잡이 제외
-  let items=getItems().filter(i=>i.isActive&&i.category==='서랍장'&&i.drawerType!=='handle');
+  let items=getItems().filter(i=>i.isActive&&isTrackStock(i)&&i.drawerType!=='handle');
   if(_stockViewSearch)items=items.filter(i=>i.name.includes(_stockViewSearch));
   const siheungTotal=items.reduce((s,i)=>s+(i.stockSiheung!==undefined?i.stockSiheung:i.currentStock),0);
   const pyeongtaekTotal=items.reduce((s,i)=>s+(i.stockPyeongtaek||0),0);
@@ -273,7 +273,7 @@ function renderStockLogs(){
   const last7=new Date();last7.setDate(last7.getDate()-7);
   const recent7=selLogs.filter(l=>new Date(l.createdAt)>=last7).length;
   const lastLog=selLogs[0];
-  const itemOpts=items.filter(i=>i.isActive&&i.category==='서랍장'&&i.drawerType!=='handle').map(i=>`<option value="${i.id}"${stockLogItem===String(i.id)?' selected':''}>${i.name}</option>`).join('');
+  const itemOpts=items.filter(i=>i.isActive&&isTrackStock(i)&&i.drawerType!=='handle').map(i=>`<option value="${i.id}"${stockLogItem===String(i.id)?' selected':''}>${i.name}</option>`).join('');
   const typeOpts=['입고','출고','조정','발주차감','발주수정재반영','취소롤백'].map(t=>`<option value="${t}"${stockLogType===t?' selected':''}>${t}</option>`).join('');
   const PER=20;
   const totalFiltered=filtered.length;
@@ -363,7 +363,7 @@ function renderStockLogs(){
 let invModalState={itemId:null,type:'입고'};
 function renderInventory(filterItemId){
   if(!requireAdmin())return;
-  const allItems=getItems().filter(i=>i.isActive&&i.category==='서랍장'&&i.drawerType!=='handle');
+  const allItems=getItems().filter(i=>i.isActive&&isTrackStock(i)&&i.drawerType!=='handle');
   // 현재고 표 필터 적용
   let items=allItems;
   if(invItemSearch)items=items.filter(i=>i.name.includes(invItemSearch));
@@ -518,7 +518,7 @@ function renderInventory(filterItemId){
           <span style="font-size:12px;color:var(--text-3)">${items.length}/${allItems.length}</span>
         </div>
       </div>
-      <div class="table-wrap"><table id="inv-stock-table">
+      <div class="table-wrap"><table>
         <thead><tr><th>품목명</th><th class="td-center">구분</th><th class="td-center" style="color:#1e40af">시흥</th><th class="td-center" style="color:#065f46">평택</th><th class="td-center">합계</th><th class="td-center" style="min-width:200px">처리</th></tr></thead>
         <tbody>${tableRows}</tbody>
       </table></div>
@@ -665,7 +665,7 @@ function updateInvPreview(){
   preview.innerHTML=`<div class="preview-box">${colorLabel}[${wh}] 변경 결과: ${whStock}개 → <strong style="color:${after<whStock?'#dc2626':'#16a34a'}">${after}개</strong> <span style="color:var(--text-3)">(${diff>0?'+':''}${diff})</span></div>`;
 }
 
-async function submitInventory(){
+function submitInventory(){
   const{itemId,type}=invModalState;
   const qtyStr=document.getElementById('inv-qty').value;
   const memo=document.getElementById('inv-memo').value.trim();
@@ -680,7 +680,7 @@ async function submitInventory(){
   if((type==='입고'||type==='출고')&&qty<1){toast('입고/출고 수량은 1 이상이어야 합니다.','error');return;}
   if(type==='조정'&&qty<0){toast('조정 후 재고는 0 이상이어야 합니다.','error');return;}
   try{
-    const{before,after,warehouse:wh}=await processInventory({itemId,type,qty,memo,warehouse,logDate,color});
+    const{before,after,warehouse:wh}=processInventory({itemId,type,qty,memo,warehouse,logDate,color});
     const colorLabel=color?`[${color}] `:'';
     closeModal('inv-modal');toast(`${colorLabel}[${wh}] ${type} 처리 완료: ${before} → ${after}`,'success');renderInventory(stockLogItem?parseInt(stockLogItem):undefined);
   }catch(e){toast(e.message,'error');}
