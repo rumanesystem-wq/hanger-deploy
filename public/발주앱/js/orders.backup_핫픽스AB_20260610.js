@@ -34,17 +34,7 @@ function addStatusHistory(orderIdx, orders, newStatus, note){
 
 async function changeOrderStatus(orderId, newStatus){
   return _withOrderLock(orderId, 'status', async () => {
-  // (핫픽스 B' 20260610) stale 캐시 사용 금지 — 서버 최신본 강제 재조회
-  // 6/8 사고 진범: DB.get('orders')로 받은 stale 배열을 DB.set로 통째 덮어써 발주서 손실.
-  if(typeof window._fetchOrdersFromServer!=='function'){
-    toast('출고 모듈 미초기화. 새로고침 후 다시 시도하세요.','error');return false;
-  }
-  let orders;
-  try{ orders=await window._fetchOrdersFromServer(); }
-  catch(e){
-    console.error("[핫픽스B'] changeOrderStatus 서버 재조회 실패:", e&&e.message);
-    toast('서버 연결 확인 필요. 재시도 하세요.','error');return false;
-  }
+  const orders=DB.get('orders',[]);
   const idx=orders.findIndex(o=>o.id===orderId);
   if(idx===-1){toast('발주서를 찾을 수 없습니다.','error');return false;}
   const order=orders[idx];
@@ -142,8 +132,7 @@ async function changeOrderStatus(orderId, newStatus){
   orders[idx].updatedAt=now;
   addStatusHistory(idx, orders, newStatus, '');
   DB.set('orders',orders);
-  // (핫픽스 B' 20260610) 방금 저장한 로컬 orders 기준 (재조회 불필요)
-  const chgOrder=orders.find(o=>o.id===orderId);
+  const chgOrder=DB.get('orders',[]).find(o=>o.id===orderId);
   toast(`발주 ${chgOrder?(chgOrder.orderNum||('#'+orderId)):('#'+orderId)} 상태가 '${newStatus}'로 변경되었습니다.`,'success');
 
   // (이카운트 연동은 toggleOrderLock에서 출고확정 버튼 누를 때 처리)

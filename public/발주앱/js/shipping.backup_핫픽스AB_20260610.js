@@ -68,10 +68,6 @@
     return Array.isArray(orders) ? orders : [];
   }
 
-  // (핫픽스 B' 20260610) 다른 모듈(orders.js)에서 서버 최신본 발주 조회 재사용
-  // 6/8 발주서 손실 사고 대응: changeOrderStatus가 stale 캐시 대신 서버 최신본을 받도록 노출
-  window._fetchOrdersFromServer = _fetchOrdersFromServer;
-
   function _filterOrders(orders){
     let list=orders.filter(function(o){
       return o && TARGET_STATUS.indexOf(o.status)!==-1 && (o.warehouse||'시흥')===shipWarehouse;

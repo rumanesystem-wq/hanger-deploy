@@ -22,32 +22,6 @@ const DB={
   },
 
   set(k,v){
-    // ── (핫픽스 A 20260610) orders 한정: 서버 최신본 강제 재조회 + 병합 게이트 ──
-    // 6/8 사고: stale 캐시(DB.get) → DB.set 시 서버 통째 덮어쓰기로 발주서 손실.
-    // orders 만 서버 재조회(3초 타임아웃) + _mergeById 후 set 진행. 실패 시 저장 차단 + 토스트.
-    // 호출처가 await 안 해도 토스트로 알림, 메모리 미러 미반영 → 새로고침 시 서버값으로 자가 복구.
-    if(k==='orders' && Array.isArray(v) && window._FS){
-      const self=this;
-      return (async()=>{
-        try{
-          const server=await Promise.race([
-            window._FS.get('orders'),
-            new Promise((_,rj)=>setTimeout(()=>rj(new Error('TIMEOUT')),3000))
-          ]);
-          const serverArr=Array.isArray(server)?server:[];
-          const merged=_mergeById(serverArr, v);
-          return self._setInternal(k, merged);
-        }catch(e){
-          console.error('[핫픽스A] orders 저장 차단 — 서버 재조회 실패:', e&&e.message);
-          if(typeof toast==='function') toast('서버 연결 확인 필요. 재시도 하세요.','error');
-          throw e;
-        }
-      })();
-    }
-    return this._setInternal(k,v);
-  },
-
-  _setInternal(k,v){
     let toStore=v;
 
     // ── 보호 키: 항상 병합 (절대 줄어들지 않음) ──
