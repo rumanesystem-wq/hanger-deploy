@@ -578,7 +578,7 @@ async function notifySlackIpChanged(prevIp, newIp, ts) {
 }
 
 exports.monitorOutboundIp = onSchedule(
-  { schedule: "every 30 minutes", timeZone: "Asia/Seoul", region: "asia-northeast3" },
+  { schedule: "every 10 minutes", timeZone: "Asia/Seoul", region: "asia-northeast3" },
   async () => {
     try {
       const res = await axios.get("https://api.ipify.org?format=json", { timeout: 10000 });
