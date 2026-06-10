@@ -762,6 +762,28 @@ function downloadStatsExcel(){
   xlsxDownload(wb,`사용량통계_${xlsxDate()}.xlsx`);
 }
 
+// ── 이카운트 IP 자동 폴링 (10분마다, 변경 감지 시 토스트) ──
+let _ipPollTimer=null;
+function startIpAutoPoll(){
+  if(_ipPollTimer)return;
+  const check=async()=>{
+    if(!window._FS)return;
+    try{
+      const data=await window._FS.get('ecount_ip_monitor');
+      if(!data||!data.currentIp)return;
+      const seen=localStorage.getItem('_lastSeenEcountIp')||'';
+      if(seen&&seen!==data.currentIp){
+        toast(`이카운트 IP 변경: ${data.currentIp} (이전: ${seen}) — 등록 추가 필요`,'warning');
+      }
+      localStorage.setItem('_lastSeenEcountIp',data.currentIp);
+      // 대시보드 화면이면 위젯 갱신
+      if(currentView==='dashboard'&&document.getElementById('dash-ip-monitor')){loadDashIpMonitor();}
+    }catch(e){console.warn('[IP 폴링]',e.message);}
+  };
+  check();
+  _ipPollTimer=setInterval(check,10*60*1000); // 10분
+}
+
 // ── 이카운트 IP 모니터 — 대시보드 위젯 ──
 async function loadDashIpMonitor(){
   const wrap=document.getElementById('dash-ip-monitor');
