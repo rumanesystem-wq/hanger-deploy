@@ -564,6 +564,19 @@ exports.dailyFirestoreBackup = onSchedule(
 //   - currentIp: 가장 최근 확인된 IP
 //   - history: 최근 50개 IP 변경 이력 [{ip, at}]
 //   IP가 바뀌면 warn 로그가 찍히므로 Functions 로그에서 검색 가능
+// 슬랙 Webhook URL은 functions/.env 의 SLACK_WEBHOOK_URL 환경변수로 관리
+async function notifySlackIpChanged(prevIp, newIp, ts) {
+  const url = process.env.SLACK_WEBHOOK_URL;
+  if (!url) { logger.warn("[Slack] SLACK_WEBHOOK_URL 미설정 — 알림 스킵"); return; }
+  try {
+    const text = `:warning: *이카운트 IP 변경 감지*\n• 이전: \`${prevIp || "(첫 측정)"}\`\n• 새 IP: \`${newIp}\`\n• 시각: ${new Date(ts).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })}\n• 조치: 이카운트 ERP > API인증키 발급 > IP등록에 \`${newIp}\` 추가`;
+    await axios.post(url, { text }, { timeout: 10000 });
+    logger.info("[Slack] IP 변경 알림 발송 완료");
+  } catch (e) {
+    logger.warn("[Slack] 알림 발송 실패:", e.message);
+  }
+}
+
 exports.monitorOutboundIp = onSchedule(
   { schedule: "every 30 minutes", timeZone: "Asia/Seoul", region: "asia-northeast3" },
   async () => {
@@ -584,6 +597,7 @@ exports.monitorOutboundIp = onSchedule(
         logger.warn(`[monitorOutboundIp] ⚠️ IP 변경 감지: ${prev.currentIp || "(첫 측정)"} → ${ip}`);
         const history = [{ ip, at: now }, ...(prev.history || [])].slice(0, 50);
         await docRef.set({ value: { currentIp: ip, lastCheckedAt: now, history }, updatedAt: now });
+        await notifySlackIpChanged(prev.currentIp, ip, now);
       }
     } catch (e) {
       logger.error("[monitorOutboundIp] 오류:", e.message);
