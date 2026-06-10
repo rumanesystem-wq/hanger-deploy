@@ -68,6 +68,7 @@ const NAV_ADMIN=[
   {id:'usage-stats',       label:'사용량 통계',    icon:'fa-chart-bar'},
   {id:'price-settings',    label:'단가 관리',      icon:'fa-tags'},
   {id:'accounts',          label:'계정 관리',      icon:'fa-users-gear'},
+  {id:'ip-monitor',        label:'이카운트 IP',    icon:'fa-network-wired'},
 ];
 const NAV_ORDERER=[
   {id:'dashboard',         label:'대시보드',      icon:'fa-gauge'},
@@ -77,7 +78,7 @@ const NAV_ORDERER=[
 function getNavItems(){return isAdmin()?NAV_ADMIN:NAV_ORDERER;}
 
 function navigate(view, {addHistory=true}={}){
-  const adminOnly=['inventory','items','accounts','usage-stats','price-settings','shipping-view'];
+  const adminOnly=['inventory','items','accounts','usage-stats','price-settings','shipping-view','ip-monitor'];
   if(adminOnly.includes(view)&&!isAdmin()){toast('관리자만 접근할 수 있습니다.','error');view='dashboard';}
   if(currentView&&currentView!==view){
     navHistory.push(currentView);
@@ -106,6 +107,7 @@ function navigate(view, {addHistory=true}={}){
     else if(view==='accounts')renderAccounts();
     else if(view==='usage-stats')renderUsageStats();
     else if(view==='price-settings')renderPriceSettings();
+    else if(view==='ip-monitor')renderIpMonitor();
   },30);
 }
 
@@ -139,7 +141,7 @@ function goBack(){
   updateBackBtn();
 }
 // 메인 네비게이션 페이지 목록 — 이 페이지에서는 뒤로가기 숨김
-const MAIN_VIEWS=['dashboard','orders','shipping-view','purchase-requests','inventory','items','accounts','stock-view','shortage-view','usage-stats','price-settings'];
+const MAIN_VIEWS=['dashboard','orders','shipping-view','purchase-requests','inventory','items','accounts','stock-view','shortage-view','usage-stats','price-settings','ip-monitor'];
 
 function updateBackBtn(){
   const backBtn=document.getElementById('topbar-back');
@@ -756,6 +758,46 @@ function downloadStatsExcel(){
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'사용량통계');
   xlsxDownload(wb,`사용량통계_${xlsxDate()}.xlsx`);
+}
+
+// ── 이카운트 IP 모니터 ──
+async function renderIpMonitor(){
+  document.getElementById('content').innerHTML=`
+    <div style="margin-bottom:14px">
+      <div class="section-title">이카운트 IP 모니터</div>
+      <div class="section-sub">Cloud Function이 이카운트에 접속할 때 사용하는 IP. 30분마다 자동 갱신. 변경되면 이카운트 ERP > API인증키 > IP등록에 추가 등록 필요.</div>
+    </div>
+    <div id="ip-monitor-body" class="card" style="padding:20px"><div class="empty"><i class="fas fa-spinner fa-spin"></i><p>불러오는 중...</p></div></div>`;
+  try{
+    const data=window._FS?await window._FS.get('ecount_ip_monitor'):null;
+    const body=document.getElementById('ip-monitor-body');
+    if(!data){
+      body.innerHTML='<div class="empty"><i class="fas fa-info-circle"></i><p>아직 측정된 IP가 없습니다. 함수 배포 후 최대 30분 기다려주세요.</p></div>';
+      return;
+    }
+    const cur=data.currentIp||'(없음)';
+    const last=data.lastCheckedAt?new Date(data.lastCheckedAt).toLocaleString('ko-KR'):'-';
+    const hist=(data.history||[]).map(h=>{
+      const t=new Date(h.at).toLocaleString('ko-KR');
+      return `<tr><td style="font-family:monospace;font-weight:700;font-size:14px">${h.ip}</td><td class="td-muted">${t}</td></tr>`;
+    }).join('');
+    body.innerHTML=`
+      <div style="display:flex;align-items:center;gap:24px;padding:8px 0 20px;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:12px;color:var(--text-3);font-weight:600;margin-bottom:6px">현재 IP</div>
+          <div style="font-family:monospace;font-size:24px;font-weight:800;color:var(--primary)">${cur}</div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:var(--text-3);font-weight:600;margin-bottom:6px">마지막 확인</div>
+          <div style="font-size:14px;font-weight:600;color:var(--text)">${last}</div>
+        </div>
+        <button class="btn btn-outline btn-sm" onclick="renderIpMonitor()" style="margin-left:auto"><i class="fas fa-rotate"></i> 새로고침</button>
+      </div>
+      <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">변경 이력 (최근 ${(data.history||[]).length}건)</div>
+      ${hist?`<div class="table-wrap"><table><thead><tr><th>IP</th><th>변경 시각</th></tr></thead><tbody>${hist}</tbody></table></div>`:'<div class="empty"><p>이력 없음</p></div>'}`;
+  }catch(e){
+    document.getElementById('ip-monitor-body').innerHTML=`<div class="empty"><i class="fas fa-triangle-exclamation"></i><p>불러오기 실패: ${e.message}</p></div>`;
+  }
 }
 
 let priceSettingsSearch='',priceSettingsOnlyNull=false;
