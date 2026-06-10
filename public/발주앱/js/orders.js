@@ -1,6 +1,24 @@
 // ── 발주 관리 (상태/잠금/목록/상세/수정/복사) ──
 // 의존: js/store/db.js, js/utils/uiUtils.js, js/utils.js, js/price.js, js/inventory.js
 
+// ── 동시 작업 차단 가드 (Phase 1: race condition 1차 방어) ──
+// 같은 발주서 + 같은 작업을 중복 실행하지 못하게 막음.
+// 008 발주서 사라짐 같은 사고의 1차 원인(빠른 더블 클릭/중복 호출) 차단.
+const _inflightOrders = new Set();
+async function _withOrderLock(orderId, action, fn) {
+  const key = `${action}-${orderId}`;
+  if (_inflightOrders.has(key)) {
+    if (typeof toast === 'function') toast('처리 중입니다. 잠시만 기다려주세요.', 'warning');
+    return false;
+  }
+  _inflightOrders.add(key);
+  try {
+    return await fn();
+  } finally {
+    _inflightOrders.delete(key);
+  }
+}
+
 
 function addStatusHistory(orderIdx, orders, newStatus, note){
   if(!orders[orderIdx].statusHistory) orders[orderIdx].statusHistory=[];
@@ -15,6 +33,7 @@ function addStatusHistory(orderIdx, orders, newStatus, note){
 
 
 async function changeOrderStatus(orderId, newStatus){
+  return _withOrderLock(orderId, 'status', async () => {
   const orders=DB.get('orders',[]);
   const idx=orders.findIndex(o=>o.id===orderId);
   if(idx===-1){toast('발주서를 찾을 수 없습니다.','error');return false;}
@@ -119,6 +138,7 @@ async function changeOrderStatus(orderId, newStatus){
   // (이카운트 연동은 toggleOrderLock에서 출고확정 버튼 누를 때 처리)
 
   return true;
+  });
 }
 
 
@@ -334,6 +354,7 @@ async function _createEcountSaleFromOrder(order){
 
 // 발주 취소: 차감된 재고 롤백
 async function cancelOrder(orderId, cancelReason){
+  return _withOrderLock(orderId, 'cancel', async () => {
   const orders=DB.get('orders',[]);
   const idx=orders.findIndex(o=>o.id===orderId);
   if(idx===-1){toast('발주서를 찾을 수 없습니다.','error');return false;}
@@ -396,6 +417,7 @@ async function cancelOrder(orderId, cancelReason){
   DB.set('purchase_requests',prs);
 
   return true;
+  });
 }
 
 // ══════════════════════════════════════════════════
@@ -404,6 +426,7 @@ async function cancelOrder(orderId, cancelReason){
 // 재고 마이너스 허용 (차단하지 않음, 결과만 toast로 안내)
 // ══════════════════════════════════════════════════
 async function uncancelOrder(orderId){
+  return _withOrderLock(orderId, 'uncancel', async () => {
   const orders=DB.get('orders',[]);
   const idx=orders.findIndex(o=>o.id===orderId);
   if(idx===-1){toast('발주서를 찾을 수 없습니다.','error');return false;}
@@ -491,6 +514,7 @@ async function uncancelOrder(orderId){
     toast('취소가 되돌려졌습니다. 재고가 다시 차감되었습니다.','success');
   }
   return true;
+  });
 }
 
 function openOrderCancelModal(orderId){
@@ -706,8 +730,9 @@ function _buildPreviewOrderFromForm(){
 // ══════════════════════════════════════════════════
 // [기능2] 발주서 잠금 기능
 // ══════════════════════════════════════════════════
-function toggleOrderLock(orderId){
+async function toggleOrderLock(orderId){
   if(!isAdmin()){toast('관리자만 확정/해제할 수 있습니다.','error');return;}
+  return _withOrderLock(orderId, 'lock', async () => {
   const orders=DB.get('orders',[]);
   const idx=orders.findIndex(o=>o.id===orderId);
   if(idx===-1){toast('발주서를 찾을 수 없습니다.','error');return;}
@@ -740,6 +765,7 @@ function toggleOrderLock(orderId){
   openOrderDetail(orderId);
   if(currentView==='orders')renderOrders();
   else if(currentView==='dashboard')renderDashboard();
+  });
 }
 
 
