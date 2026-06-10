@@ -1,0 +1,687 @@
+[
+  {
+    "backupId": "2026-06-09",
+    "path": "data.orders.value[212]",
+    "order": {
+      "address": "101동804호 do3",
+      "sharedColor": "화이트 오크",
+      "statusHistory": [
+        {
+          "status": "발주대기",
+          "changedByName": "김근수",
+          "changedBy": "da---on",
+          "changedAt": "2026-06-08T07:03:16.983Z",
+          "note": "발주서 등록"
+        }
+      ],
+      "rod2400Required": 4,
+      "updatedAt": "2026-06-08T07:03:16.983Z",
+      "etcMemo": "",
+      "deliveryTo": "김근수",
+      "upperCommonColor": "화이트",
+      "items": [
+        {
+          "currentStockSnapshot": 1,
+          "displayName": "겉서랍 아일랜드",
+          "orderId": 265,
+          "warehouse": "시흥",
+          "requiredQty": 1,
+          "id": 577,
+          "shortageQty": 0,
+          "note": "",
+          "handleOption": "basic",
+          "itemId": 7,
+          "createdAt": "2026-06-08T07:03:16.983Z",
+          "subTypeChecked": [],
+          "color": "화이트 오크"
+        }
+      ],
+      "siteName": "김근수",
+      "totalVat": 46590,
+      "rodItems": [
+        {
+          "size": "518",
+          "qty": 1
+        },
+        {
+          "qty": 1,
+          "size": "570"
+        },
+        {
+          "size": "740",
+          "qty": 2
+        },
+        {
+          "qty": 7,
+          "size": "770"
+        }
+      ],
+      "drawerMemo": "",
+      "rodTotalLen": 7958,
+      "customerName": "101동804호 do3",
+      "createdAt": "2026-06-08T07:03:16.983Z",
+      "totalAmount": 512490,
+      "orderNum": "20260608-001",
+      "drawerItems": [
+        {
+          "subTypeChecked": [],
+          "color": "화이트 오크",
+          "createdAt": "2026-06-08T07:03:16.983Z",
+          "note": "",
+          "itemId": 7,
+          "handleOption": "basic",
+          "shortageQty": 0,
+          "warehouse": "시흥",
+          "orderId": 265,
+          "requiredQty": 1,
+          "id": 577,
+          "displayName": "겉서랍 아일랜드",
+          "currentStockSnapshot": 1
+        }
+      ],
+      "note": "",
+      "createdBy": "da---on",
+      "stockDeducted": true,
+      "totalSupply": 465900,
+      "shipDate": "2026-06-10",
+      "warehouse": "시흥",
+      "status": "발주대기",
+      "id": 265,
+      "shelfItems": [
+        {
+          "name": "선반",
+          "entries": [
+            {
+              "vatAmount": 1260,
+              "ecountCd": "058",
+              "color": "화이트 오크",
+              "unitPrice": 4200,
+              "qty": 3,
+              "size": "570",
+              "amount": 12600
+            },
+            {
+              "color": "화이트 오크",
+              "vatAmount": 1260,
+              "ecountCd": "212",
+              "qty": 3,
+              "unitPrice": 4200,
+              "size": "510",
+              "amount": 12600
+            },
+            {
+              "vatAmount": 1590,
+              "ecountCd": "064",
+              "color": "화이트 오크",
+              "unitPrice": 5300,
+              "qty": 3,
+              "amount": 15900,
+              "size": "740"
+            },
+            {
+              "qty": 13,
+              "unitPrice": 5300,
+              "amount": 68900,
+              "size": "770",
+              "color": "화이트 오크",
+              "vatAmount": 6890,
+              "ecountCd": "064"
+            }
+          ]
+        }
+      ],
+      "orderDate": "2026-06-08",
+      "upperMaterials": [
+        {
+          "black": 0,
+          "white": 8,
+          "note": "",
+          "name": "포스트바 2250",
+          "champagne": 0,
+          "qty": 8,
+          "unitPrice": 11000,
+          "color": "화이트",
+          "vatAmount": 8800,
+          "lengthSplits": [
+            {
+              "length": 2245,
+              "qty": 8
+            }
+          ],
+          "silver": 0,
+          "amount": 88000
+        },
+        {
+          "color": "화이트",
+          "vatAmount": 2400,
+          "lengthSplits": [
+            {
+              "length": 2315,
+              "qty": 2
+            }
+          ],
+          "silver": 0,
+          "amount": 24000,
+          "black": 0,
+          "white": 2,
+          "note": "",
+          "name": "포스트바 2400",
+          "champagne": 0,
+          "unitPrice": 12000,
+          "qty": 2
+        },
+        {
+          "amount": 46200,
+          "silver": 0,
+          "color": "화이트",
+          "vatAmount": 4620,
+          "champagne": 0,
+          "unitPrice": 2100,
+          "qty": 22,
+          "black": 0,
+          "name": "선반바(ABS) 400",
+          "note": "",
+          "white": 22
+        },
+        {
+          "unitPrice": 1000,
+          "qty": 20,
+          "champagne": 0,
+          "name": "조절발",
+          "note": "",
+          "white": 20,
+          "black": 0,
+          "amount": 20000,
+          "silver": 0,
+          "vatAmount": 2000,
+          "color": "화이트"
+        },
+        {
+          "champagne": 0,
+          "qty": 22,
+          "unitPrice": 350,
+          "black": 0,
+          "name": "옷봉캡",
+          "note": "",
+          "white": 22,
+          "amount": 7700,
+          "silver": 0,
+          "color": "화이트",
+          "vatAmount": 770
+        }
+      ]
+    }
+  },
+  {
+    "backupId": "2026-06-09",
+    "path": "data.orders.value[213]",
+    "order": {
+      "address": "101동804호 do3",
+      "statusHistory": [
+        {
+          "changedAt": "2026-06-08T07:03:43.558Z",
+          "note": "발주서 등록",
+          "changedBy": "da---on",
+          "changedByName": "김근수",
+          "status": "발주대기"
+        }
+      ],
+      "sharedColor": "화이트 오크",
+      "rod2400Required": 4,
+      "updatedAt": "2026-06-08T07:03:43.558Z",
+      "deliveryTo": "김근수",
+      "etcMemo": "",
+      "upperCommonColor": "화이트",
+      "items": [
+        {
+          "shortageQty": 1,
+          "id": 578,
+          "orderId": 266,
+          "warehouse": "시흥",
+          "requiredQty": 1,
+          "displayName": "겉서랍 아일랜드",
+          "currentStockSnapshot": 0,
+          "color": "화이트 오크",
+          "subTypeChecked": [],
+          "createdAt": "2026-06-08T07:03:43.558Z",
+          "itemId": 7,
+          "handleOption": "basic",
+          "note": ""
+        }
+      ],
+      "siteName": "김근수",
+      "rodItems": [
+        {
+          "qty": 1,
+          "size": "518"
+        },
+        {
+          "qty": 1,
+          "size": "570"
+        },
+        {
+          "size": "740",
+          "qty": 2
+        },
+        {
+          "size": "770",
+          "qty": 7
+        }
+      ],
+      "totalVat": 46590,
+      "drawerMemo": "",
+      "createdAt": "2026-06-08T07:03:43.558Z",
+      "customerName": "101동804호 do3",
+      "rodTotalLen": 7958,
+      "note": "",
+      "drawerItems": [
+        {
+          "currentStockSnapshot": 0,
+          "shortageQty": 1,
+          "id": 578,
+          "warehouse": "시흥",
+          "requiredQty": 1,
+          "orderId": 266,
+          "displayName": "겉서랍 아일랜드",
+          "createdAt": "2026-06-08T07:03:43.558Z",
+          "itemId": 7,
+          "handleOption": "basic",
+          "note": "",
+          "color": "화이트 오크",
+          "subTypeChecked": []
+        }
+      ],
+      "orderNum": "20260608-002",
+      "totalAmount": 512490,
+      "createdBy": "da---on",
+      "totalSupply": 465900,
+      "stockDeducted": true,
+      "shipDate": "2026-06-10",
+      "id": 266,
+      "warehouse": "시흥",
+      "status": "발주대기",
+      "orderDate": "2026-06-08",
+      "shelfItems": [
+        {
+          "name": "선반",
+          "entries": [
+            {
+              "unitPrice": 4200,
+              "qty": 3,
+              "size": "570",
+              "amount": 12600,
+              "vatAmount": 1260,
+              "ecountCd": "058",
+              "color": "화이트 오크"
+            },
+            {
+              "color": "화이트 오크",
+              "vatAmount": 1260,
+              "ecountCd": "212",
+              "unitPrice": 4200,
+              "qty": 3,
+              "size": "510",
+              "amount": 12600
+            },
+            {
+              "color": "화이트 오크",
+              "ecountCd": "064",
+              "vatAmount": 1590,
+              "amount": 15900,
+              "size": "740",
+              "unitPrice": 5300,
+              "qty": 3
+            },
+            {
+              "qty": 13,
+              "unitPrice": 5300,
+              "amount": 68900,
+              "size": "770",
+              "color": "화이트 오크",
+              "vatAmount": 6890,
+              "ecountCd": "064"
+            }
+          ]
+        }
+      ],
+      "upperMaterials": [
+        {
+          "color": "화이트",
+          "lengthSplits": [
+            {
+              "qty": 8,
+              "length": 2245
+            }
+          ],
+          "vatAmount": 8800,
+          "amount": 88000,
+          "silver": 0,
+          "black": 0,
+          "name": "포스트바 2250",
+          "white": 8,
+          "note": "",
+          "champagne": 0,
+          "unitPrice": 11000,
+          "qty": 8
+        },
+        {
+          "champagne": 0,
+          "unitPrice": 12000,
+          "qty": 2,
+          "black": 0,
+          "white": 2,
+          "note": "",
+          "name": "포스트바 2400",
+          "silver": 0,
+          "amount": 24000,
+          "color": "화이트",
+          "vatAmount": 2400,
+          "lengthSplits": [
+            {
+              "qty": 2,
+              "length": 2315
+            }
+          ]
+        },
+        {
+          "color": "화이트",
+          "vatAmount": 4620,
+          "silver": 0,
+          "amount": 46200,
+          "black": 0,
+          "note": "",
+          "white": 22,
+          "name": "선반바(ABS) 400",
+          "champagne": 0,
+          "unitPrice": 2100,
+          "qty": 22
+        },
+        {
+          "vatAmount": 2000,
+          "color": "화이트",
+          "amount": 20000,
+          "silver": 0,
+          "name": "조절발",
+          "note": "",
+          "white": 20,
+          "black": 0,
+          "qty": 20,
+          "unitPrice": 1000,
+          "champagne": 0
+        },
+        {
+          "silver": 0,
+          "amount": 7700,
+          "vatAmount": 770,
+          "color": "화이트",
+          "qty": 22,
+          "unitPrice": 350,
+          "champagne": 0,
+          "note": "",
+          "white": 22,
+          "name": "옷봉캡",
+          "black": 0
+        }
+      ]
+    }
+  },
+  {
+    "backupId": "2026-06-09",
+    "path": "data.orders.value[214]",
+    "order": {
+      "id": 267,
+      "deliveryTo": "김근수",
+      "address": "302호 do4",
+      "orderDate": "2026-06-08",
+      "shipDate": "2026-06-15",
+      "warehouse": "시흥",
+      "note": "",
+      "upperMaterials": [
+        {
+          "name": "포스트바 2250",
+          "color": "실버",
+          "qty": 6,
+          "note": "",
+          "unitPrice": 11000,
+          "amount": 66000,
+          "vatAmount": 6600,
+          "white": 0,
+          "black": 0,
+          "silver": 6,
+          "champagne": 0,
+          "lengthSplits": [
+            {
+              "qty": 6,
+              "length": 2165
+            }
+          ]
+        },
+        {
+          "name": "선반바(ABS) 400",
+          "color": "실버",
+          "qty": 11,
+          "note": "",
+          "unitPrice": 2100,
+          "amount": 23100,
+          "vatAmount": 2310,
+          "white": 0,
+          "black": 0,
+          "silver": 11,
+          "champagne": 0
+        },
+        {
+          "name": "코너바 2200",
+          "color": "실버",
+          "qty": 1,
+          "note": "",
+          "unitPrice": 6000,
+          "amount": 6000,
+          "vatAmount": 600,
+          "white": 0,
+          "black": 0,
+          "silver": 1,
+          "champagne": 0
+        },
+        {
+          "name": "코너앵글",
+          "color": "실버",
+          "qty": 3,
+          "note": "",
+          "unitPrice": 500,
+          "amount": 1500,
+          "vatAmount": 150,
+          "white": 0,
+          "black": 0,
+          "silver": 3,
+          "champagne": 0
+        },
+        {
+          "name": "조절발",
+          "color": "실버",
+          "qty": 12,
+          "note": "",
+          "unitPrice": 1000,
+          "amount": 12000,
+          "vatAmount": 1200,
+          "white": 0,
+          "black": 0,
+          "silver": 12,
+          "champagne": 0
+        },
+        {
+          "name": "옷봉캡",
+          "color": "실버",
+          "qty": 12,
+          "note": "",
+          "unitPrice": 350,
+          "amount": 4200,
+          "vatAmount": 420,
+          "white": 0,
+          "black": 0,
+          "silver": 12,
+          "champagne": 0
+        },
+        {
+          "name": "코너 옷봉캡 (단방, 양방)",
+          "color": "실버",
+          "qty": 2,
+          "note": "",
+          "unitPrice": 500,
+          "amount": 1000,
+          "vatAmount": 100,
+          "white": 0,
+          "black": 0,
+          "silver": 2,
+          "champagne": 0
+        }
+      ],
+      "upperCommonColor": "실버",
+      "rodItems": [
+        {
+          "size": "570",
+          "qty": 4
+        },
+        {
+          "size": "770",
+          "qty": 3
+        }
+      ],
+      "rod2400Required": 2,
+      "rodTotalLen": 4590,
+      "shelfItems": [
+        {
+          "name": "코너선반",
+          "entries": [
+            {
+              "width": "780",
+              "height": "585",
+              "qty": 3,
+              "color": "솔리드",
+              "unitPrice": 13000,
+              "amount": 39000,
+              "vatAmount": 3900,
+              "ecountCd": "081"
+            }
+          ]
+        }
+      ],
+      "sharedColor": "솔리드",
+      "drawerItems": [
+        {
+          "id": 579,
+          "orderId": 267,
+          "itemId": 3,
+          "requiredQty": 1,
+          "color": "솔리드",
+          "currentStockSnapshot": 2,
+          "shortageQty": 0,
+          "warehouse": "시흥",
+          "createdAt": "2026-06-08T13:32:27.731Z",
+          "handleOption": "basic",
+          "displayName": "겉서랍 3단",
+          "note": "",
+          "subTypeChecked": []
+        },
+        {
+          "id": 580,
+          "orderId": 267,
+          "itemId": 25,
+          "requiredQty": 1,
+          "color": "솔리드",
+          "currentStockSnapshot": 0,
+          "shortageQty": 0,
+          "warehouse": "시흥",
+          "createdAt": "2026-06-08T13:32:27.731Z",
+          "handleOption": "basic",
+          "displayName": "거울장 목대",
+          "note": "",
+          "subTypeChecked": []
+        },
+        {
+          "id": 581,
+          "orderId": 267,
+          "itemId": 26,
+          "requiredQty": 1,
+          "color": "실버",
+          "currentStockSnapshot": 0,
+          "shortageQty": 0,
+          "warehouse": "시흥",
+          "createdAt": "2026-06-08T13:32:27.731Z",
+          "handleOption": "basic",
+          "displayName": "거울장 거울문",
+          "note": "",
+          "subTypeChecked": []
+        }
+      ],
+      "drawerMemo": "",
+      "etcMemo": "",
+      "totalSupply": 401800,
+      "totalVat": 40180,
+      "totalAmount": 441980,
+      "createdAt": "2026-06-08T13:32:27.731Z",
+      "updatedAt": "2026-06-08T13:32:27.731Z",
+      "orderNum": "20260608-003",
+      "status": "발주대기",
+      "stockDeducted": true,
+      "createdBy": "da---on",
+      "statusHistory": [
+        {
+          "status": "발주대기",
+          "changedBy": "da---on",
+          "changedByName": "김근수",
+          "changedAt": "2026-06-08T13:32:27.731Z",
+          "note": "발주서 등록"
+        }
+      ],
+      "items": [
+        {
+          "id": 579,
+          "orderId": 267,
+          "itemId": 3,
+          "requiredQty": 1,
+          "color": "솔리드",
+          "currentStockSnapshot": 2,
+          "shortageQty": 0,
+          "warehouse": "시흥",
+          "createdAt": "2026-06-08T13:32:27.731Z",
+          "handleOption": "basic",
+          "displayName": "겉서랍 3단",
+          "note": "",
+          "subTypeChecked": []
+        },
+        {
+          "id": 580,
+          "orderId": 267,
+          "itemId": 25,
+          "requiredQty": 1,
+          "color": "솔리드",
+          "currentStockSnapshot": 0,
+          "shortageQty": 0,
+          "warehouse": "시흥",
+          "createdAt": "2026-06-08T13:32:27.731Z",
+          "handleOption": "basic",
+          "displayName": "거울장 목대",
+          "note": "",
+          "subTypeChecked": []
+        },
+        {
+          "id": 581,
+          "orderId": 267,
+          "itemId": 26,
+          "requiredQty": 1,
+          "color": "실버",
+          "currentStockSnapshot": 0,
+          "shortageQty": 0,
+          "warehouse": "시흥",
+          "createdAt": "2026-06-08T13:32:27.731Z",
+          "handleOption": "basic",
+          "displayName": "거울장 거울문",
+          "note": "",
+          "subTypeChecked": []
+        }
+      ],
+      "siteName": "김근수",
+      "customerName": "302호 do4"
+    }
+  }
+]

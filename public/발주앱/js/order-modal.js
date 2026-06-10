@@ -897,6 +897,9 @@ function _restoreDraftToModal(order){
 
 
 async function submitOrder(saveMode='발주확정'){
+  // race condition 1차 방어: 같은 발주서(수정) 또는 새 발주(new) 동시 저장 차단
+  const _lockKey = (window._editOverride&&window._editOverride.id) ? window._editOverride.id : 'new';
+  return _withOrderLock(_lockKey, 'save', async () => {
   // 콘솔 우회 방어 — 발주 저장 직전 납품처를 현재 본인 deliveryName으로 강제 덮어쓰기
   const _forceDeliv=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
   const _delivEl=document.getElementById('o-delivery-to');
@@ -1126,6 +1129,7 @@ async function submitOrder(saveMode='발주확정'){
   toast(saveMode==='임시저장'?'발주서가 임시저장되었습니다.':saveMode==='발주대기'?'발주가 접수되었습니다. 관리자 확정을 기다립니다.':(shortageCount>0?`출고확정 완료. 서랍장 부족 품목 ${shortageCount}개가 발주 필요 목록에 추가되었습니다.`:'발주서가 출고확정되었습니다.'),'success');
   if(currentView==='orders')renderOrders();
   else if(currentView==='dashboard')renderDashboard();
+  });
 }
 
 

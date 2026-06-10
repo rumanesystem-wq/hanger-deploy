@@ -1655,7 +1655,8 @@ async function openEditOrder(orderId){
 }
 
 
-function submitEditOrder(orderId){
+async function submitEditOrder(orderId){
+  return _withOrderLock(orderId, 'edit', async () => {
   const orders=DB.get('orders',[]);
   const idx=orders.findIndex(o=>o.id===orderId);
   if(idx===-1){toast('발주서를 찾을 수 없습니다.','error');return;}
@@ -1684,7 +1685,8 @@ function submitEditOrder(orderId){
   if(titleEl)titleEl.textContent='새 발주서 등록';
   // saveBtn onclick 초기화 (직접 함수 참조 방지)
   _resetOrderModalBtn();
-  submitOrder(targetStatus);
+  await submitOrder(targetStatus);
+  });
 }
 
 
