@@ -1282,17 +1282,48 @@ function _seedDemoStock(){
 function calcShortage(req,cur){return Math.max(req-cur,0);}
 
 // 발주번호 생성: YYYYMMDD-NNN
-function generateOrderNum(dateStr){
-  // dateStr: 'YYYY-MM-DD' 형식
-  const d=(dateStr||todayStr()).replace(/-/g,'');
-  const orders=DB.get('orders',[]);
-  const todayOrders=orders.filter(o=>o.orderNum&&o.orderNum.startsWith(d));
-  const maxSeq=todayOrders.reduce((max,o)=>{
-    const seq=parseInt((o.orderNum||'').split('-')[1]||'0');
-    return seq>max?seq:max;
-  },0);
-  const seq=String(maxSeq+1).padStart(3,'0');
-  return `${d}-${seq}`;
+// 날짜별 순번을 Firestore 트랜잭션으로 "서버에서 원자적으로" 발급한다.
+// → 여러 발주자가 동시에 발주해도 같은 번호가 절대 안 나옴(중복 차단).
+// 🔴 로컬 계산/폴백 금지: 서버에서만 발급, 실패 시 throw로 저장 중단(중복 만드느니 막는다).
+async function generateOrderNum(dateStr){
+  const d=(dateStr||todayStr()).replace(/-/g,''); // YYYYMMDD
+  let fs=null;
+  try{ fs=firebase.app('hanger').firestore(); }catch(_e){ try{ fs=firebase.firestore(); }catch(_e2){ fs=null; } }
+  if(!fs) throw new Error('서버에 연결할 수 없습니다. 새로고침 후 다시 시도해주세요.');
+  const ref=fs.collection('hanger_data').doc('orderseq_'+d);
+
+  // 카운터 문서가 아직 없으면(그날 첫 발주) 기존 발주서의 그날 최대 순번부터 시작
+  // → 전환 시점에 구방식(로컬 계산) 번호와 충돌 방지. 반드시 서버값 기준(캐시 아님).
+  let seedMax=0;
+  let pre;
+  try{ pre=await ref.get({source:'server'}); }
+  catch(_e){ console.warn('[발주번호] 카운터 조회 실패',_e&&_e.message); throw new Error('서버 연결을 확인해주세요. 발주번호를 발급하지 못했습니다.'); }
+  if(!pre.exists){
+    try{
+      const os=await fs.collection('hanger_data').doc('orders').get({source:'server'});
+      const arr=(os.exists&&Array.isArray(os.data().value))?os.data().value:[];
+      seedMax=arr.reduce((mx,o)=>{
+        if(o&&typeof o.orderNum==='string'&&o.orderNum.indexOf(d)===0){
+          const s=parseInt((o.orderNum.split('-')[1]||'0'),10)||0;
+          if(s>mx) mx=s;
+        }
+        return mx;
+      },0);
+    }catch(_e){ console.warn('[발주번호] 시드용 orders 조회 실패',_e&&_e.message); throw new Error('서버 연결을 확인해주세요. 발주번호를 발급하지 못했습니다.'); }
+  }
+
+  // 트랜잭션으로 원자적 증가 — 동시 발주 시 Firestore가 자동 직렬화 → 중복 없음
+  let seqNum;
+  try{
+    await fs.runTransaction(async(tx)=>{
+      const snap=await tx.get(ref);
+      const cur=(snap.exists&&typeof snap.data().value==='number')?snap.data().value:seedMax;
+      seqNum=cur+1;
+      tx.set(ref,{value:seqNum, updatedAt:new Date().toISOString()});
+    });
+  }catch(_e){ console.warn('[발주번호] 트랜잭션 실패',_e&&_e.message); throw new Error('발주번호 발급에 실패했습니다(서버 혼잡). 잠시 후 다시 시도해주세요.'); }
+  if(!seqNum||seqNum<1) throw new Error('발주번호 발급 오류 — 다시 시도해주세요.');
+  return d+'-'+String(seqNum).padStart(3,'0');
 }
 
 // ── 공용: 서버에서 logs id 배치 발급 (saveOrder 외 5개 함수 공통) ──
@@ -1343,7 +1374,7 @@ async function saveOrder(payload, saveMode='발주확정'){
     return v;
   }
   const orderId=_eo?_eo.id:_popId('orders'),now=new Date().toISOString();
-  const orderNum=_eo?_eo.orderNum:generateOrderNum(payload.orderDate||todayStr());
+  const orderNum=_eo?_eo.orderNum:await generateOrderNum(payload.orderDate||todayStr());
   const effectiveSaveMode=_eo?(_eo.status||saveMode):saveMode;
   const savedDrawerItems=[];let shortageCount=0;
   // 임시저장은 창고 미선택 허용, 차감 시에는 시흥 기본값 사용

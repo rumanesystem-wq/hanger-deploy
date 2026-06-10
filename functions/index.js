@@ -559,3 +559,35 @@ exports.dailyFirestoreBackup = onSchedule(
   }
 );
 
+// ─── Cloud Function outbound IP 모니터링 (30분마다) ─────────────
+//   결과는 Firestore의 hanger_data/ecount_ip_monitor 문서에 저장
+//   - currentIp: 가장 최근 확인된 IP
+//   - history: 최근 50개 IP 변경 이력 [{ip, at}]
+//   IP가 바뀌면 warn 로그가 찍히므로 Functions 로그에서 검색 가능
+exports.monitorOutboundIp = onSchedule(
+  { schedule: "every 30 minutes", timeZone: "Asia/Seoul", region: "asia-northeast3" },
+  async () => {
+    try {
+      const res = await axios.get("https://api.ipify.org?format=json", { timeout: 10000 });
+      const ip = res.data?.ip;
+      if (!ip) { logger.warn("[monitorOutboundIp] IP 응답 없음"); return; }
+
+      const docRef = admin.firestore().collection("hanger_data").doc("ecount_ip_monitor");
+      const snap = await docRef.get();
+      const prev = snap.exists ? snap.data().value : { currentIp: "", history: [] };
+      const now = new Date().toISOString();
+
+      if (prev.currentIp === ip) {
+        logger.info(`[monitorOutboundIp] IP 동일: ${ip}`);
+        await docRef.set({ value: { ...prev, lastCheckedAt: now }, updatedAt: now });
+      } else {
+        logger.warn(`[monitorOutboundIp] ⚠️ IP 변경 감지: ${prev.currentIp || "(첫 측정)"} → ${ip}`);
+        const history = [{ ip, at: now }, ...(prev.history || [])].slice(0, 50);
+        await docRef.set({ value: { currentIp: ip, lastCheckedAt: now, history }, updatedAt: now });
+      }
+    } catch (e) {
+      logger.error("[monitorOutboundIp] 오류:", e.message);
+    }
+  }
+);
+

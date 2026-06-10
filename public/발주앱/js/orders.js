@@ -785,6 +785,12 @@ function renderOrders(){
   if(orderTab==='inv-hist'){renderOrdersWithTab();renderInvHistTab();return;}
   if(orderTab==='orderer-stats'){renderOrdersWithTab();renderOrdererStatsTab();return;}
 
+  // 입력 중 포커스 유지: renderOrders가 #content를 통째로 다시 그려 입력칸이 새로 생성되므로,
+  // 현재 포커스된 필터 입력칸 id와 커서 위치를 저장해 두고 렌더 후 복원한다(연속 타이핑 가능).
+  const _focusId=(document.activeElement&&document.activeElement.id)||'';
+  let _focusCaret=null;
+  try{ if(document.activeElement&&typeof document.activeElement.selectionStart==='number') _focusCaret=document.activeElement.selectionStart; }catch(_e){}
+
   const orders=getOrders().filter(o=>{
     if(!isAdmin()&&o.createdBy&&o.createdBy!==currentUser.id)return false;
     // 서브탭 기준 필터
@@ -863,7 +869,7 @@ function renderOrders(){
       <div id="order-filter-header" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;${orderFilterOpen?'margin-bottom:14px':''}" onclick="orderFilterOpen=!orderFilterOpen;renderOrders()">
         <span style="font-size:14px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:6px">
           <i class="fas fa-sliders-h" style="color:var(--primary-light)"></i>검색 필터
-          ${(()=>{const activeCount=[orderFilterSite,orderFilterRegion,orderFilterDateFrom,orderFilterDateTo,orderFilterMinAmount,orderFilterMaxAmount,orderFilterMinSize,orderFilterMaxSize].filter(v=>v).length+(orderFilterShortage?1:0);return activeCount>0?`<span style="background:var(--primary-light);color:#fff;font-size:11px;font-weight:700;border-radius:99px;padding:1px 7px">${activeCount}</span>`:''})()}
+          ${(()=>{const activeCount=[orderFilterNum,orderFilterSite,orderFilterRegion,orderFilterDateFrom,orderFilterDateTo,orderFilterMinAmount,orderFilterMaxAmount,orderFilterMinSize,orderFilterMaxSize].filter(v=>v).length+(orderFilterShortage?1:0);return activeCount>0?`<span style="background:var(--primary-light);color:#fff;font-size:11px;font-weight:700;border-radius:99px;padding:1px 7px">${activeCount}</span>`:''})()}
         </span>
         <div style="display:flex;align-items:center;gap:8px">
           ${orderFilterOpen?`<button id="order-filter-reset-btn" style="display:flex;align-items:center;gap:5px;background:none;border:1px solid var(--border);border-radius:var(--r-sm);padding:5px 12px;font-size:13px;color:var(--text-2);cursor:pointer;transition:background .15s" onclick="event.stopPropagation()" onmouseover="this.style.background='#f1f5f9'" onmouseout="this.style.background='none'"><i class="fas fa-rotate-left"></i> 초기화</button>`:''}
@@ -871,6 +877,10 @@ function renderOrders(){
         </div>
       </div>
       <div style="display:${orderFilterOpen?'grid':'none'};grid-template-columns:1fr 1fr;gap:12px 16px">
+        <div>
+          <label style="${labelStyle}">발주번호</label>
+          <input class="form-input" placeholder="발주번호 검색 (예: 20260601)" id="order-filter-num" value="${orderFilterNum}" style="width:100%"/>
+        </div>
         <div>
           <label style="${labelStyle}">업체명</label>
           <input class="form-input" placeholder="업체명 검색" id="order-search-input" value="${orderFilterSite}" style="width:100%"/>
@@ -919,6 +929,8 @@ function renderOrders(){
 
     <div class="card">${rows}</div>`;
   if(!isAdmin()){const nb2=document.getElementById('new-order-btn');if(nb2)nb2.addEventListener('click',openOrderModal);}
+  const orderNumInput=document.getElementById('order-filter-num');
+  if(orderNumInput)orderNumInput.addEventListener('input',e=>{orderFilterNum=e.target.value;renderOrders();});
   document.getElementById('order-search-input').addEventListener('input',e=>{orderFilterSite=e.target.value;renderOrders();});
   document.getElementById('order-filter-region').addEventListener('change',e=>{orderFilterRegion=e.target.value;renderOrders();});
   document.getElementById('order-filter-from').addEventListener('change',e=>{orderFilterDateFrom=e.target.value;renderOrders();});
@@ -933,7 +945,7 @@ function renderOrders(){
   if(shortageChk)shortageChk.addEventListener('change',e=>{orderFilterShortage=e.target.checked;renderOrders();});
   const resetBtn=document.getElementById('order-filter-reset-btn');
   if(resetBtn)resetBtn.addEventListener('click',()=>{
-    orderFilterSite='';orderFilterRegion='';orderFilterDateFrom='';orderFilterDateTo='';
+    orderFilterNum='';orderFilterSite='';orderFilterRegion='';orderFilterDateFrom='';orderFilterDateTo='';
     orderFilterMinAmount='';orderFilterMaxAmount='';orderFilterMinSize='';orderFilterMaxSize='';
     orderFilterShortage=false;orderShowArchived=false;
     renderOrders();
@@ -948,6 +960,16 @@ function renderOrders(){
   document.querySelectorAll('.order-list-sub-tab').forEach(btn=>{
     btn.addEventListener('click',()=>{orderListSubTab=btn.dataset.subTab;renderOrders();});
   });
+
+  // 렌더 후 포커스·커서 복원 — 필터 입력칸 연속 타이핑 시 한 글자마다 포커스 풀리는 문제 방지
+  // INPUT만 대상(버튼·select 제외), preventScroll로 긴 목록에서 스크롤 점프 방지
+  if(_focusId){
+    const _fel=document.getElementById(_focusId);
+    if(_fel&&_fel.tagName==='INPUT'){
+      try{ _fel.focus({preventScroll:true}); }catch(_e){ _fel.focus(); }
+      try{ if(_focusCaret!=null&&typeof _fel.setSelectionRange==='function') _fel.setSelectionRange(_focusCaret,_focusCaret); }catch(_e){}
+    }
+  }
 }
 
 

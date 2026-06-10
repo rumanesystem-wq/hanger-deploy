@@ -791,3 +791,48 @@ tbody tr:last-child td{border-bottom:none}
     content:"합계 ";font-size:10px;font-weight:700;color:#374151;margin-right:2px;
   }
 }
+
+/* ── 출고 현황 (피킹 전용 UI: 큰 체크박스·큰 글씨·넉넉한 터치영역) ── */
+.ship-filter{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px}
+.ship-tabs{display:inline-flex;gap:0;border:1.5px solid var(--border);border-radius:var(--r-sm);overflow:hidden;background:#fff}
+.ship-tab{padding:10px 18px;border:none;background:#fff;font-size:15px;font-weight:700;color:var(--text-3);min-height:44px}
+.ship-tab+.ship-tab{border-left:1.5px solid var(--border)}
+.ship-tab.active{background:var(--primary-light);color:#fff}
+.ship-body{display:flex;flex-direction:column;gap:14px}
+.ship-section{overflow:visible}
+.ship-sec-count{font-size:12px;font-weight:700;background:var(--primary-bg);color:var(--primary);padding:2px 9px;border-radius:20px;margin-left:6px}
+.ship-rows{padding:4px 0}
+.ship-row{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border)}
+.ship-row:last-child{border-bottom:none}
+.ship-check{flex:0 0 auto;width:40px;height:40px;border-radius:9px;border:2px solid var(--border);background:#fff;color:transparent;font-size:18px;display:flex;align-items:center;justify-content:center;transition:all .12s}
+.ship-row.done .ship-check{background:var(--success);border-color:var(--success);color:#fff}
+.ship-row-main{flex:1;min-width:0}
+.ship-row-label{font-size:17px;font-weight:700;color:var(--text);line-height:1.3}
+.ship-row.done .ship-row-label{text-decoration:line-through;color:var(--text-3)}
+.ship-detail-toggle{margin-top:4px;background:none;border:none;color:var(--primary-light);font-size:13px;font-weight:600;padding:2px 0;display:inline-flex;align-items:center;gap:5px}
+.ship-detail-toggle i{transition:transform .15s;font-size:11px}
+.ship-detail-toggle.open i{transform:rotate(180deg)}
+.ship-row-qty{flex:0 0 auto;font-size:24px;font-weight:800;color:var(--primary);white-space:nowrap}
+.ship-row-qty span{font-size:13px;font-weight:700;color:var(--text-3);margin-left:2px}
+.ship-row.done .ship-row-qty{color:var(--text-3)}
+.ship-detail{background:var(--bg);padding:6px 16px 10px 68px;border-bottom:1px solid var(--border)}
+.ship-detail-row{display:flex;justify-content:space-between;gap:10px;padding:5px 0;font-size:14px}
+.ship-d-name{font-weight:600;color:var(--text-2)}
+.ship-d-meta{color:var(--text-3);white-space:nowrap}
+.ship-order-list{padding:4px 0}
+.ship-order-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--border)}
+.ship-order-row:last-child{border-bottom:none}
+.ship-order-info{min-width:0}
+.ship-order-name{font-size:16px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ship-order-status{font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
+.ship-order-status.is-ready{background:#fff7ed;color:#c2410c;border-color:#fed7aa}
+.ship-order-meta{font-size:13px;color:var(--text-3);margin-top:3px}
+.ship-complete-btn{flex:0 0 auto;background:var(--success);color:#fff;font-size:14px;font-weight:700;padding:11px 16px;min-height:44px}
+.ship-complete-btn:hover{filter:brightness(.95)}
+@media(max-width:640px){
+  .ship-tab{padding:10px 14px;font-size:14px}
+  .ship-row-label{font-size:16px}
+  .ship-row-qty{font-size:21px}
+  .ship-detail{padding-left:60px}
+  .ship-complete-btn{padding:11px 13px}
+}

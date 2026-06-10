@@ -61,6 +61,7 @@ let currentView='';
 const NAV_ADMIN=[
   {id:'dashboard',         label:'대시보드',      icon:'fa-gauge'},
   {id:'orders',            label:'발주서 목록',    icon:'fa-file-invoice'},
+  {id:'shipping-view',     label:'출고 현황',      icon:'fa-truck-ramp-box'},
   {id:'purchase-requests', label:'발주 필요 목록', icon:'fa-clipboard-list'},
   {id:'inventory',         label:'재고 관리',      icon:'fa-boxes-stacked'},
   {id:'items',             label:'품목 마스터',    icon:'fa-list'},
@@ -76,7 +77,7 @@ const NAV_ORDERER=[
 function getNavItems(){return isAdmin()?NAV_ADMIN:NAV_ORDERER;}
 
 function navigate(view, {addHistory=true}={}){
-  const adminOnly=['inventory','items','accounts','usage-stats','price-settings'];
+  const adminOnly=['inventory','items','accounts','usage-stats','price-settings','shipping-view'];
   if(adminOnly.includes(view)&&!isAdmin()){toast('관리자만 접근할 수 있습니다.','error');view='dashboard';}
   if(currentView&&currentView!==view){
     navHistory.push(currentView);
@@ -95,6 +96,7 @@ function navigate(view, {addHistory=true}={}){
   setTimeout(()=>{
     if(view==='dashboard')renderDashboard();
     else if(view==='orders')renderOrders();
+    else if(view==='shipping-view')renderShippingView();
     else if(view==='purchase-requests')renderPurchaseRequests();
     else if(view==='inventory')renderInventory();
     else if(view==='stock-view')renderStockView();
@@ -137,7 +139,7 @@ function goBack(){
   updateBackBtn();
 }
 // 메인 네비게이션 페이지 목록 — 이 페이지에서는 뒤로가기 숨김
-const MAIN_VIEWS=['dashboard','orders','purchase-requests','inventory','items','accounts','stock-view','shortage-view','usage-stats','price-settings'];
+const MAIN_VIEWS=['dashboard','orders','shipping-view','purchase-requests','inventory','items','accounts','stock-view','shortage-view','usage-stats','price-settings'];
 
 function updateBackBtn(){
   const backBtn=document.getElementById('topbar-back');
