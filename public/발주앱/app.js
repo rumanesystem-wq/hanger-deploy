@@ -378,6 +378,7 @@ function renderDashboard(){
 
     </div>
     <div class="section-sub">오늘의 발주·재고 현황을 확인합니다.</div>
+    ${isAdmin()?'<div id="dash-ip-monitor"></div>':''}
     <div class="grid-4" style="margin-bottom:20px">
       <div class="stat-card" data-nav="orders">
         <div class="stat-icon bg-amber"><i class="fas fa-file-invoice"></i></div>
@@ -544,6 +545,7 @@ function renderDashboard(){
   el.innerHTML=html;
   const nb=document.getElementById('dash-new-order-btn');
   if(nb)nb.addEventListener('click',openOrderModal);
+  if(isAdmin())loadDashIpMonitor();
 
   // 대시보드 재고 카드 아코디언 이벤트 바인딩
   document.querySelectorAll('.sv-item-row').forEach(row=>{
@@ -758,6 +760,44 @@ function downloadStatsExcel(){
   const wb=XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(rows),'사용량통계');
   xlsxDownload(wb,`사용량통계_${xlsxDate()}.xlsx`);
+}
+
+// ── 이카운트 IP 모니터 — 대시보드 위젯 ──
+async function loadDashIpMonitor(){
+  const wrap=document.getElementById('dash-ip-monitor');
+  if(!wrap||!window._FS)return;
+  try{
+    const data=await window._FS.get('ecount_ip_monitor');
+    if(!data||!data.currentIp)return;
+    const seen=localStorage.getItem('_lastSeenEcountIp')||'';
+    const changed=seen&&seen!==data.currentIp;
+    localStorage.setItem('_lastSeenEcountIp',data.currentIp);
+    const last=data.lastCheckedAt?new Date(data.lastCheckedAt).toLocaleString('ko-KR'):'-';
+    if(changed){
+      // 새 IP 감지 → 빨간 알림 배너
+      wrap.innerHTML=`
+        <div class="card" style="margin-bottom:20px;border-left:4px solid #dc2626;background:#fef2f2;padding:14px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <div style="background:#dc2626;color:#fff;border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <i class="fas fa-triangle-exclamation"></i>
+          </div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:800;color:#991b1b;font-size:14px">이카운트 IP 변경 감지</div>
+            <div style="font-size:13px;color:#7f1d1d;margin-top:2px">새 IP <span style="font-family:monospace;font-weight:800">${data.currentIp}</span> — 이카운트 ERP에서 IP 등록 추가하세요. (이전: ${seen})</div>
+          </div>
+          <button class="btn btn-outline btn-sm" data-nav="ip-monitor" style="border-color:#dc2626;color:#dc2626;font-weight:700">자세히</button>
+        </div>`;
+      toast('이카운트 IP가 변경되었습니다. 등록 추가가 필요합니다.','warning');
+    }else{
+      // 평상시: 작은 정보 카드
+      wrap.innerHTML=`
+        <div class="card" style="margin-bottom:20px;padding:10px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;cursor:pointer" data-nav="ip-monitor">
+          <i class="fas fa-network-wired" style="color:var(--primary)"></i>
+          <span style="font-size:12px;color:var(--text-3)">이카운트 IP</span>
+          <span style="font-family:monospace;font-weight:700;color:var(--text)">${data.currentIp}</span>
+          <span style="font-size:11px;color:var(--text-3);margin-left:auto">${last}</span>
+        </div>`;
+    }
+  }catch(e){console.warn('[대시보드 IP 모니터]',e.message);}
 }
 
 // ── 이카운트 IP 모니터 ──
