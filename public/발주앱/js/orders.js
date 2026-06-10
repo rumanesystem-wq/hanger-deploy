@@ -1674,10 +1674,9 @@ async function submitEditOrder(orderId){
     statusHistory:orig.statusHistory||[]
   };
 
-  // 기존 발주 삭제 (재고 롤백은 openEditOrder 진입 시 이미 완료됨)
-  orders.splice(idx,1);
-  DB.set('orders',orders);
-  // 기존 발주 필요 목록 제거
+  // ── 기존 splice + DB.set 제거 (race condition 원인) ──
+  // saveOrder가 _editOverride.id로 같은 자리에 교체 처리하므로 사전 삭제 불필요
+  // 기존 발주 필요 목록만 제거 (submitOrder가 새로 추가)
   const prs=DB.get('purchase_requests',[]).filter(p=>p.orderId!==orderId);
   DB.set('purchase_requests',prs);
   // 모달 제목/버튼 원복

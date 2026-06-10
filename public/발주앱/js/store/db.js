@@ -1459,7 +1459,15 @@ async function saveOrder(payload, saveMode='발주확정'){
     siteName:payload.deliveryTo||'',
     customerName:payload.address||'',
   };
-  orders.push(orderDoc);
+  // 수정 모드: 기존 발주서를 같은 자리에 교체 (splice + push 분리 시 race condition 방지)
+  // 신규 모드: 끝에 push
+  if(_eo){
+    const _existingIdx=orders.findIndex(o=>o.id===orderDoc.id);
+    if(_existingIdx!==-1) orders[_existingIdx]=orderDoc;
+    else orders.push(orderDoc);
+  } else {
+    orders.push(orderDoc);
+  }
   DB.set('orders',orders);DB.set('purchase_requests',prs);
   return{orderId,shortageCount};
 }

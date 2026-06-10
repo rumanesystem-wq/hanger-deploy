@@ -497,6 +497,7 @@ function openOrderModal(){
 function confirmCloseOrderModal(){
   closeModal('order-modal');
   _resetOrderModalBtn();
+  window._editOverride=null; // 수정 모달 취소 시 정리 (다음 신규 등록에 누수 방지)
 }
 
 // 발주 모달 제목/버튼 초기화
