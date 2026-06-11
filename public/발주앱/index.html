@@ -187,6 +187,7 @@
           } catch(e) { console.warn('[Firestore watch 초기화 실패]', e.message); }
         },
         // 범용 실시간 동기화: orders, inventory 등 주요 데이터
+        // (핫픽스 C 20260611) 배열 데이터는 _mergeById로 병합 — 다른 기기의 사고가 _mem 통째 덮어쓰기 방지
         watchData(key, onChange) {
           try {
             return db.collection('hanger_data').doc(key)
@@ -197,8 +198,14 @@
                 const localStr = JSON.stringify(val);
                 const existing = (window._mem&&window._mem[key]!==undefined)?JSON.stringify(window._mem[key]):null;
                 if(existing === localStr) return; // 내가 방금 저장한 것이면 무시
-                window._mem[key]=val;
-                if(typeof onChange === 'function') onChange(val);
+                // 배열은 ID 기준 병합 (감소 차단), 그 외는 직접 대입
+                let next = val;
+                if(Array.isArray(val) && typeof window._mergeById === 'function'){
+                  const localArr = (window._mem && Array.isArray(window._mem[key])) ? window._mem[key] : [];
+                  if(localArr.length > 0) next = window._mergeById(localArr, val);
+                }
+                window._mem[key]=next;
+                if(typeof onChange === 'function') onChange(next);
               }, e => console.warn('[Firestore watch 실패]', key, e.message));
           } catch(e) { console.warn('[Firestore watch 초기화 실패]', key, e.message); }
         }

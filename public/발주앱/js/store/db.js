@@ -116,21 +116,28 @@ function _mergeById(local, remote){
     if(!remoteItem||remoteItem.id==null) return;
     const localItem=result.get(remoteItem.id);
     if(!localItem){ result.set(remoteItem.id, remoteItem); return; }
-    // 기본은 Firestore 우선, ERP 코드 필드는 더 많은 쪽 우선
-    const merged={...remoteItem};
+    // (핫픽스 C 20260611) updatedAt 비교 — 더 최신값을 base로 채택, 옛값에서 ERP/필드 보강
+    const lu=localItem.updatedAt||'';
+    const ru=remoteItem.updatedAt||'';
+    const localIsNewer=lu && (!ru || lu>ru);
+    const base = localIsNewer ? localItem : remoteItem;
+    const other = localIsNewer ? remoteItem : localItem;
+    const merged={...base};
     ERP_FIELDS.forEach(f=>{
-      const lv=localItem[f], rv=remoteItem[f];
-      if(!rv && lv) { merged[f]=lv; return; }
-      if(lv && rv && typeof lv==='object' && typeof rv==='object'){
-        const lCount=Object.keys(lv).filter(k=>lv[k]&&lv[k]!=='N/A').length;
-        const rCount=Object.keys(rv).filter(k=>rv[k]&&rv[k]!=='N/A').length;
-        if(lCount>rCount) merged[f]=lv;
+      const bv=base[f], ov=other[f];
+      if(!bv && ov) { merged[f]=ov; return; }
+      if(bv && ov && typeof bv==='object' && typeof ov==='object'){
+        const bCount=Object.keys(bv).filter(k=>bv[k]&&bv[k]!=='N/A').length;
+        const oCount=Object.keys(ov).filter(k=>ov[k]&&ov[k]!=='N/A').length;
+        if(oCount>bCount) merged[f]=ov;
       }
     });
     result.set(remoteItem.id, merged);
   });
   return [...result.values()].sort((a,b)=>(a.id||0)-(b.id||0));
 }
+// (핫픽스 C 20260611) watchData / shipping에서 호출하기 위해 글로벌 노출
+window._mergeById = _mergeById;
 
 // ── Firestore → 메모리(window._mem) 서버우선 동기화 (앱 시작 1회) ──
 // 서버=진실. getAll 성공 시 서버값 채택. 서버 미수신 시에만 로컬 폴백(읽기).

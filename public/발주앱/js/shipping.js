@@ -293,7 +293,13 @@
     const vo=verify.find(function(x){ return x && String(x.id)===String(orderId); });
     if(!vo || vo.status!=='출고완료') return {ok:false, reason:'writefail'};
 
-    if(window._mem) window._mem['orders']=verify; // 검증된 서버값으로만 미러 동기화
+    // (핫픽스 C 20260611) _mem 직접 대입 금지 — _mergeById로 병합하여 다른 기기의 신규 발주 보존
+    if(window._mem){
+      const localArr = Array.isArray(window._mem['orders']) ? window._mem['orders'] : [];
+      window._mem['orders'] = (typeof window._mergeById==='function' && localArr.length>0)
+        ? window._mergeById(localArr, verify)
+        : verify;
+    }
     return {ok:true};
   }
 
