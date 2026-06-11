@@ -220,8 +220,16 @@
             console.warn('[hanger_orders upsert 실패]', orderDoc.orderNum, e.message);
             throw e;
           }
+        },
+        // (Phase 3a 읽기 전환 20260611) hanger_orders 컬렉션 전체 발주서 로드
+        // 호출자: syncFromServer (앱 시작 시 1회) — 옛 hanger_data/orders 대신 새 컬렉션에서 로드
+        async getAllOrders() {
+          const snap = await db.collection('hanger_orders').get();
+          return snap.docs.map(d => d.data()).filter(o => o && o.id != null);
         }
       };
+      // (Phase 3a) 읽기 전환 활성화 플래그 — 문제 시 콘솔에서 false로 즉시 롤백 가능
+      window._FS.PHASE3_READ_FROM_NEW = true;
       // Firebase Auth 초기화
       try {
         window._fbAuth = app.auth();

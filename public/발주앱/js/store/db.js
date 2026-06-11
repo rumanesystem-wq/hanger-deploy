@@ -218,6 +218,22 @@ async function syncFromServer(){
       }
     }
     console.log(`[서버우선 동기화 완료] ${Object.keys(data).length}개 키 서버값 채택 (역업로드 0)`);
+    // (Phase 3a 읽기 전환 20260611) 발주서를 hanger_orders 컬렉션에서 다시 로드 (옛 데이터 덮어쓰기)
+    // 안전망: 새 컬렉션이 옛 데이터의 80% 미만이면 옛 데이터 유지 (롤백 보호)
+    if(window._FS && window._FS.PHASE3_READ_FROM_NEW && typeof window._FS.getAllOrders === 'function'){
+      try{
+        const newOrders = await window._FS.getAllOrders();
+        const oldLen = Array.isArray(window._mem['orders']) ? window._mem['orders'].length : 0;
+        if(Array.isArray(newOrders) && newOrders.length >= Math.max(1, oldLen * 0.95)){
+          window._mem['orders'] = newOrders;
+          console.log(`[Phase 3a] 발주서 hanger_orders에서 ${newOrders.length}건 로드 (옛: ${oldLen}건)`);
+        } else {
+          console.warn(`[Phase 3a 안전망] hanger_orders가 옛 곳의 95% 미만 (${newOrders?.length||0} < ${Math.floor(oldLen*0.95)}) → 옛 데이터 유지`);
+        }
+      } catch(e){
+        console.warn('[Phase 3a] hanger_orders 로드 실패, 옛 데이터 유지:', e&&e.message);
+      }
+    }
   }catch(e){
     console.warn('[Firestore 수신 실패] 로컬 폴백으로 계속합니다.',e&&e.message);
     _loadLocalFallback();
