@@ -281,9 +281,10 @@
     orders[idx].status='출고완료';
     orders[idx].updatedAt=new Date().toISOString();
 
-    // ③ Firestore에 직접 기록 — _FS.set은 에러를 삼키므로 직접 set+catch로 실패를 잡는다
+    // ③ DB.set 경유 (Phase 0 — 20260611) — 직접 Firestore set 제거
+    //    핫픽스 A의 보호(서버 재조회 + _mergeById)가 적용되어 다른 기기의 신규 발주가 보존됨
     try{
-      await fs.collection('hanger_data').doc('orders').set({value:orders, updatedAt:new Date().toISOString()});
+      await DB.set('orders', orders);
     }catch(e){ return {ok:false, reason:'writefail'}; }
 
     // ④ 실제 서버 반영 검증 — 서버소스 재조회해서 상태가 출고완료인지 확인
