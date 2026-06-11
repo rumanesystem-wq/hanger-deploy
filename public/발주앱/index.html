@@ -208,6 +208,18 @@
                 if(typeof onChange === 'function') onChange(next);
               }, e => console.warn('[Firestore watch 실패]', key, e.message));
           } catch(e) { console.warn('[Firestore watch 초기화 실패]', key, e.message); }
+        },
+        // (Phase 1 듀얼 라이트 20260611) 발주서 단건 doc 저장 — hanger_orders/{orderNum}
+        // 옛 hanger_data/orders 배열 구조의 race condition 사고 차단용 구조 전환의 1단계
+        // 호출자: db.js의 DB.set('orders') 내부에서 변경된 발주서만 자동 호출
+        async upsertOrder(orderDoc) {
+          if(!orderDoc || !orderDoc.orderNum) throw new Error('orderNum 필수');
+          try {
+            await db.collection('hanger_orders').doc(String(orderDoc.orderNum)).set(orderDoc);
+          } catch(e) {
+            console.warn('[hanger_orders upsert 실패]', orderDoc.orderNum, e.message);
+            throw e;
+          }
         }
       };
       // Firebase Auth 초기화

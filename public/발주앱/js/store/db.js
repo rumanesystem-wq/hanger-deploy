@@ -36,7 +36,31 @@ const DB={
           ]);
           const serverArr=Array.isArray(server)?server:[];
           const merged=_mergeById(serverArr, v);
-          return self._setInternal(k, merged);
+          const result=self._setInternal(k, merged);
+          // ── (Phase 1 듀얼 라이트 20260611) 변경된 발주서만 hanger_orders/{orderNum}에도 단건 저장 ──
+          // 옛 경로(hanger_data/orders 배열) 성공 후에만 새 경로 시도. best-effort, 옛 경로 안전 우선.
+          // 일일 비교 함수로 차집합 모니터링 후 단계 4에서 읽기 전환 예정.
+          if(typeof window._FS.upsertOrder==='function'){
+            try{
+              const serverById=new Map((serverArr||[]).map(o=>[o.id,o]));
+              const changed=merged.filter(m=>{
+                if(!m||!m.orderNum) return false;
+                const prev=serverById.get(m.id);
+                if(!prev) return true; // 신규
+                // 단순 비교: updatedAt 차이로 변경 감지 (정확도 충분)
+                return (prev.updatedAt||'')!==(m.updatedAt||'');
+              });
+              if(changed.length>0){
+                // 비동기 best-effort (실패해도 옛 경로 성공으로 결과 반환)
+                Promise.allSettled(changed.map(o=>window._FS.upsertOrder(o)))
+                  .then(results=>{
+                    const failed=results.filter(r=>r.status==='rejected');
+                    if(failed.length>0) console.warn('[듀얼 라이트] hanger_orders 부분 실패:', failed.length, '/', changed.length);
+                  });
+              }
+            }catch(dwErr){ console.warn('[듀얼 라이트] 새 경로 처리 중 예외:', dwErr&&dwErr.message); }
+          }
+          return result;
         }catch(e){
           console.error('[핫픽스A] orders 저장 차단 — 서버 재조회 실패:', e&&e.message);
           if(typeof toast==='function') toast('서버 연결 확인 필요. 재시도 하세요.','error');
