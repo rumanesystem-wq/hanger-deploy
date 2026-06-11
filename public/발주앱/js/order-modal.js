@@ -901,11 +901,16 @@ async function submitOrder(saveMode='발주확정'){
   // race condition 1차 방어: 같은 발주서(수정) 또는 새 발주(new) 동시 저장 차단
   const _lockKey = (window._editOverride&&window._editOverride.id) ? window._editOverride.id : 'new';
   return _withOrderLock(_lockKey, 'save', async () => {
-  // 콘솔 우회 방어 — 발주 저장 직전 납품처를 현재 본인 deliveryName으로 강제 덮어쓰기
-  const _forceDeliv=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
+  // 콘솔 우회 방어 — 발주자는 자기 deliveryName으로 강제, 관리자는 폼 값 유지 (수정 시 원본 보존)
   const _delivEl=document.getElementById('o-delivery-to');
-  if(_delivEl) _delivEl.value=_forceDeliv;
-  const deliveryTo=_forceDeliv;
+  let deliveryTo;
+  if(isAdmin()){
+    deliveryTo=(_delivEl?_delivEl.value:'').trim();
+  } else {
+    const _forceDeliv=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
+    if(_delivEl) _delivEl.value=_forceDeliv;
+    deliveryTo=_forceDeliv;
+  }
   const address=document.getElementById('o-address').value.trim();
   // 날짜 입력 최종 동기화 (키보드 입력 후 blur 없이 제출한 경우 대비)
   syncDateParts('o-date');
