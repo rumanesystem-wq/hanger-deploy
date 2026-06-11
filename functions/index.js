@@ -605,3 +605,75 @@ exports.monitorOutboundIp = onSchedule(
   }
 );
 
+// ─── 발주서 차집합 검증 (매일 KST 03:00) ───────────────────────────
+// 옛 hanger_data/orders 배열 vs 새 hanger_orders 컬렉션 비교
+// id 기준 차집합 발견 시 슬랙 알림. 결과는 hanger_data/orders_diff_monitor 문서에 저장.
+async function notifySlackOrdersDiff(result) {
+  const url = process.env.SLACK_WEBHOOK_URL;
+  if (!url) { logger.warn("[Slack] SLACK_WEBHOOK_URL 미설정 — 알림 스킵"); return; }
+  try {
+    const ts = new Date(result.checkedAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" });
+    const onlyOldStr = result.onlyOld.length > 0 ? "\\`" + result.onlyOld.join(", ") + "\\`" : "(없음)";
+    const onlyNewStr = result.onlyNew.length > 0 ? "\\`" + result.onlyNew.join(", ") + "\\`" : "(없음)";
+    const text = `:warning: *발주서 차집합 감지*
+• 옛 곳(\`hanger_data/orders\`): ${result.oldCount}건 (고유 id ${result.oldIds}개)
+• 새 곳(\`hanger_orders\`): ${result.newCount}건 (고유 id ${result.newIds}개)
+• 옛에만 있는 id (${result.onlyOldCount}개): ${onlyOldStr}
+• 새에만 있는 id (${result.onlyNewCount}개): ${onlyNewStr}
+• 시각: ${ts}
+• 조치: 발주앱 관리자가 콘솔에서 확인 후 보정 필요`;
+    await axios.post(url, { text }, { timeout: 10000 });
+    logger.info("[Slack] 차집합 알림 발송 완료");
+  } catch (e) {
+    logger.warn("[Slack] 차집합 알림 발송 실패:", e.message);
+  }
+}
+
+exports.dailyOrdersDiffCheck = onSchedule(
+  { schedule: "0 3 * * *", timeZone: "Asia/Seoul", region: "asia-northeast3" },
+  async () => {
+    try {
+      const db = admin.firestore();
+      const oldDoc = await db.collection("hanger_data").doc("orders").get();
+      const oldArr = oldDoc.exists ? (oldDoc.data().value || []) : [];
+      const oldIds = new Set(oldArr.filter(o => o && o.id != null).map(o => o.id));
+
+      const newSnap = await db.collection("hanger_orders").get();
+      const newIds = new Set();
+      newSnap.docs.forEach(d => {
+        const data = d.data();
+        if (data && data.id != null) newIds.add(data.id);
+      });
+
+      const onlyOld = [...oldIds].filter(id => !newIds.has(id));
+      const onlyNew = [...newIds].filter(id => !oldIds.has(id));
+      const now = new Date().toISOString();
+      const result = {
+        oldCount: oldArr.length,
+        newCount: newSnap.size,
+        oldIds: oldIds.size,
+        newIds: newIds.size,
+        onlyOldCount: onlyOld.length,
+        onlyNewCount: onlyNew.length,
+        onlyOld: onlyOld.slice(0, 20),
+        onlyNew: onlyNew.slice(0, 20),
+        checkedAt: now
+      };
+
+      await db.collection("hanger_data").doc("orders_diff_monitor").set({
+        value: result,
+        updatedAt: now
+      });
+
+      if (onlyOld.length > 0 || onlyNew.length > 0) {
+        logger.warn(`[차집합 검증] ⚠️ 불일치 감지: 옛전용 ${onlyOld.length}건, 새전용 ${onlyNew.length}건`);
+        await notifySlackOrdersDiff(result);
+      } else {
+        logger.info(`[차집합 검증] 정상: 옛 ${result.oldCount}건 == 새 ${result.newCount}건 (id 일치)`);
+      }
+    } catch (e) {
+      logger.error("[dailyOrdersDiffCheck] 오류:", e.message);
+    }
+  }
+);
+
