@@ -4,6 +4,9 @@
 // ============================================================
 
 async function _openFromOrder(order) {
+  // inflight 가드 — 같은 발주서로 더블 클릭 시 중복 invoice 저장 방지
+  if (window._invoiceOpenInFlight) return;
+  window._invoiceOpenInFlight = true;
   try {
     // 발주번호 없으면 중복 방지 보장 불가 — 진행 중단
     if (!order || !order.orderNum) {
@@ -29,6 +32,8 @@ async function _openFromOrder(order) {
   } catch (e) {
     console.error('[Invoice] openFromOrder 실패:', e && e.message);
     if (typeof toast === 'function') toast('거래명세서 생성 중 오류가 발생했습니다.', 'error');
+  } finally {
+    window._invoiceOpenInFlight = false;
   }
 }
 

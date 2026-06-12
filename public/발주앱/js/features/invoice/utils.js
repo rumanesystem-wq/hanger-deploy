@@ -99,8 +99,8 @@ function orderToInvoice(order) {
     });
   });
 
-  // 서랍/옵션
-  (order.drawerItems || order.items || []).forEach(oi => {
+  // 서랍/옵션 — order.items는 재고 이동 기록이라 폴백에서 제외 (호환성 fix)
+  (order.drawerItems || []).forEach(oi => {
     if (!oi.requiredQty || oi.requiredQty <= 0) return;
     const spec = oi.color || '';
     const qty  = oi.requiredQty;

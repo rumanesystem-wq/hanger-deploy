@@ -355,12 +355,26 @@ function renderTrend(orders) {
  */
 /**
  * 정산 표에서 거래명세서 버튼 클릭 핸들러
- * 단계 1B 시점: Mock 데이터라 운영 DB 오염 방지 차원에서 alert만.
- * Phase D(실 데이터 연결) 후 LumaneInvoice.openFromOrder(order) 정상 호출로 교체.
+ * Phase D3: 실 발주서 → LumaneInvoice.openFromOrder() 호출
+ * inflight 가드 + 발주서 검증
  * @param {number} orderId
  */
-function openInvoiceFromSettlement(orderId) {
-  alert('Mock 데이터입니다 — Phase D(실 데이터 연결) 후 정상 작동합니다.\n현재는 운영 DB 보호 차원에서 모달 표시를 막아두었습니다.');
+async function openInvoiceFromSettlement(orderId) {
+  const allOrders = (typeof DB !== 'undefined' && typeof DB.get === 'function')
+    ? DB.get('orders', [])
+    : [];
+  const order = allOrders.find(o => o && o.id === orderId);
+  if (!order) {
+    if (typeof toast === 'function') toast('발주서를 찾을 수 없습니다.', 'error');
+    else alert('발주서를 찾을 수 없습니다.');
+    return;
+  }
+  if (!window.LumaneInvoice || typeof window.LumaneInvoice.openFromOrder !== 'function') {
+    if (typeof toast === 'function') toast('거래명세서 모듈 로드 실패. 새로고침 후 다시 시도하세요.', 'error');
+    else alert('거래명세서 모듈 로드 실패. 새로고침 후 다시 시도하세요.');
+    return;
+  }
+  await window.LumaneInvoice.openFromOrder(order);
 }
 
 async function exportExcel() {
