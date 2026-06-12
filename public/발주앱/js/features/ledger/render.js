@@ -6,9 +6,6 @@
 /** @type {string|null} */
 let currentCustomer = null;
 
-/** @type {boolean} */
-let onlyUnpaid = false;
-
 /**
  * 기간 필터 (YYYY-MM-DD). 빈 문자열이면 전체.
  * @type {{startDate: string, endDate: string}}
@@ -98,13 +95,12 @@ async function handleCustomerSearch() {
 // ============================================================
 /**
  * 거래처 목록 표를 가져와서 #tbody-customers에 렌더
- * onlyUnpaid 플래그 ON 이면 미수금 > 0 인 거래처만 표시
  * @returns {Promise<void>}
  */
 async function renderCustomerList() {
   const [orders, payments] = await Promise.all([fetchAllCompletedOrders(), fetchAllPayments()]);
   const summaries = listCustomersSummary(orders, payments);
-  const filtered = onlyUnpaid ? summaries.filter(s => s.balance > 0) : summaries;
+  const filtered = summaries;
 
   const tbody = document.getElementById('tbody-customers');
   if (!tbody) { console.warn('[ledger] #tbody-customers not found'); return; }
@@ -495,10 +491,5 @@ function goBackToList() {
 // 초기화 + 이벤트 바인딩
 // ============================================================
 window.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('filter-unpaid').addEventListener('change', e => {
-    onlyUnpaid = e.target.checked;
-    renderCustomerList();
-  });
-
   showListView();
 });
