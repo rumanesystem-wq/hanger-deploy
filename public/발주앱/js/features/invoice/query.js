@@ -130,6 +130,34 @@ async function updateInvoice(invoice) {
 }
 
 /**
+ * 발주확정 취소 시 — 해당 orderNum의 활성 invoice에 cancelled=true 플래그
+ * 삭제 X (사용자 수기 편집값 보존 + 복구 가능)
+ * 5중 안전망 동일 적용
+ * @param {string} orderNum
+ * @returns {Promise<number>} 취소 처리된 invoice 수
+ */
+async function cancelInvoiceByOrderNum(orderNum) {
+  if (!window._FS) throw new Error('[Invoice] _FS 미초기화');
+  if (!orderNum) return 0;
+  let list = await _safeFetchInvoiceList();
+  if (list === null) return 0;
+  const beforeLen = list.length;
+  let changed = 0;
+  const newList = list.map(inv => {
+    if (inv && inv.orderNum === orderNum && !inv.cancelled) {
+      changed++;
+      return { ...inv, cancelled: true, cancelledAt: new Date().toISOString() };
+    }
+    return inv;
+  });
+  if (changed === 0) return 0;
+  if (newList.length !== beforeLen) throw new Error('[Invoice] cancel: 길이 변경 — 저장 중단');
+  await _verifyBeforeSave({ length: beforeLen });
+  await window._FS.set(INVOICE_DOC_KEY, newList);
+  return changed;
+}
+
+/**
  * 특정 날짜의 거래명세서 시리얼 목록 반환 (일련번호 생성용)
  * @param {string} yyyymmdd - 예: "20260612"
  * @returns {Promise<string[]>}

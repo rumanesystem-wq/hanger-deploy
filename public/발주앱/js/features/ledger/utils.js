@@ -11,6 +11,7 @@ function buildInvoiceMap(invoices) {
   const map = {};
   (invoices || []).forEach(inv => {
     if (!inv || !inv.orderNum) return;
+    if (inv.cancelled) return; // 취소된 invoice는 원장 매출 계산에서 제외
     map[inv.orderNum] = inv; // 마지막 등록 invoice가 덮어씀 (최신)
   });
   return map;

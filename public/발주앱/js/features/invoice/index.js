@@ -134,10 +134,71 @@ async function _listInvoices(orderNum) {
   return getInvoicesByOrderNum(orderNum);
 }
 
+/**
+ * 자동 거래명세서 발급 (모달 없이 백그라운드 saveInvoice만)
+ * 발주확정 시점에 orders.js에서 호출
+ * 이미 활성 invoice 있으면 skip (중복 방지)
+ * 실패 시 silent (발주확정은 유지, 운영 영향 0)
+ * @param {Object} order
+ * @returns {Promise<{created:boolean, reason?:string}>}
+ */
+async function _autoCreateForOrder(order) {
+  try {
+    if (!order || !order.orderNum) {
+      return { created: false, reason: 'orderNum 없음' };
+    }
+    // 활성 invoice 이미 있으면 skip (cancelled는 무시 — 새로 발급)
+    const existing = await getInvoicesByOrderNum(order.orderNum);
+    const active = (existing || []).filter(i => i && !i.cancelled);
+    if (active.length > 0) {
+      return { created: false, reason: '이미 활성 invoice 있음' };
+    }
+    const draft = orderToInvoice(order);
+    const dateKey = (draft.shipDate || '').replace(/-/g, '');
+    const existingSerials = await getInvoicesByDate(dateKey);
+    draft.serial = generateSerial(draft.shipDate || '', existingSerials);
+    await saveInvoice(draft);
+    if (typeof toast === 'function') {
+      toast('거래명세서가 자동 발급되었습니다. (' + draft.orderNum + ')', 'success');
+    }
+    return { created: true };
+  } catch (e) {
+    console.error('[Invoice] autoCreateForOrder 실패:', e && e.message);
+    if (typeof toast === 'function') {
+      toast('거래명세서 자동 발급 실패: ' + (e && e.message), 'error');
+    }
+    return { created: false, reason: e && e.message };
+  }
+}
+
+/**
+ * 발주확정 취소 시 거래명세서 취소 처리 (cancelled=true 플래그)
+ * 실패 시 silent
+ * @param {string} orderNum
+ * @returns {Promise<{cancelled:number}>}
+ */
+async function _cancelByOrderNum(orderNum) {
+  try {
+    const count = await cancelInvoiceByOrderNum(orderNum);
+    if (count > 0 && typeof toast === 'function') {
+      toast('거래명세서 ' + count + '건 취소되었습니다.', 'warning');
+    }
+    return { cancelled: count };
+  } catch (e) {
+    console.error('[Invoice] cancelByOrderNum 실패:', e && e.message);
+    if (typeof toast === 'function') {
+      toast('거래명세서 취소 실패: ' + (e && e.message), 'error');
+    }
+    return { cancelled: 0 };
+  }
+}
+
 window.LumaneInvoice = {
-  openFromOrder: _openFromOrder,
-  openFromSaved: _openFromSaved,
-  list:          _listInvoices
+  openFromOrder:     _openFromOrder,
+  openFromSaved:     _openFromSaved,
+  list:              _listInvoices,
+  autoCreateForOrder: _autoCreateForOrder,
+  cancelByOrderNum:  _cancelByOrderNum
 };
 
 (function () {

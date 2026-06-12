@@ -563,7 +563,10 @@ async function toggleOrderLock(orderId){
     addStatusHistory(idx, orders, '발주확정', '관리자 확정');
     DB.set('orders',orders);
     toast('발주가 확정되었습니다.','success');
-    // 이카운트 자동 연동 제거됨 (2026-06-11)
+    // 거래명세서 자동 발급 (best-effort, 실패해도 발주확정은 유지)
+    if(window.LumaneInvoice && typeof window.LumaneInvoice.autoCreateForOrder==='function'){
+      window.LumaneInvoice.autoCreateForOrder(orders[idx]).catch(e=>console.warn('[Invoice 자동발급]',e&&e.message));
+    }
   } else {
     // 확정 해제: status → 발주대기, 자물쇠 열림
     orders[idx].isLocked=false;
@@ -572,6 +575,10 @@ async function toggleOrderLock(orderId){
     addStatusHistory(idx, orders, '발주대기', '확정 해제');
     DB.set('orders',orders);
     toast('확정이 해제되었습니다.','warning');
+    // 거래명세서 자동 취소 (cancelled 플래그, 사용자 수기 편집값 보존)
+    if(window.LumaneInvoice && typeof window.LumaneInvoice.cancelByOrderNum==='function'){
+      window.LumaneInvoice.cancelByOrderNum(order.orderNum).catch(e=>console.warn('[Invoice 취소]',e&&e.message));
+    }
   }
   openOrderDetail(orderId);
   if(currentView==='orders')renderOrders();
