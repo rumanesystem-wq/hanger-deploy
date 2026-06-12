@@ -1544,7 +1544,7 @@ function renderSettlement(){
     });
   });
 
-  // 원장 모듈 onclick 어댑터 (customer-ledger.html의 onclick → ledger 모듈 함수)
+  // 원장 모듈 onclick 어댑터 (원장 HTML의 onclick → ledger 모듈 함수)
   if (typeof window.savePayment !== 'function' && typeof handleSavePayment === 'function') {
     window.savePayment = function(){ return handleSavePayment(); };
   }
