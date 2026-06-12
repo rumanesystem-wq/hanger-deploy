@@ -1245,6 +1245,159 @@ function renderHistoryContent(){
   }
 }
 
+function _renderLedgerPanelHTML(){
+  return `
+    <style>
+      .ledger-scope .data-card { background:#fff; border:1px solid var(--border); border-radius:var(--r); padding:16px 18px; margin-bottom:16px; }
+      .ledger-scope table { width:100%; border-collapse:collapse; font-size:13px; }
+      .ledger-scope th { background:#f9fafb; padding:10px 12px; text-align:left; border-bottom:2px solid var(--border); font-size:12px; font-weight:700; color:var(--text-2); }
+      .ledger-scope td { padding:10px 12px; border-bottom:1px solid var(--border); }
+      .ledger-scope td.num, .ledger-scope th.num { text-align:right; font-variant-numeric:tabular-nums; }
+      .ledger-scope td.center, .ledger-scope th.center { text-align:center; }
+      .ledger-scope tr.paid { cursor:pointer; }
+      .ledger-scope tr.paid:hover { background:#f0fdf4; }
+      .ledger-scope .btn-view { background:var(--primary); color:#fff; border:none; padding:6px 14px; border-radius:var(--r-sm); font-size:12px; font-weight:700; cursor:pointer; }
+      .ledger-scope .btn-back { background:#fff; color:var(--text-2); border:1px solid var(--border); padding:7px 14px; border-radius:var(--r-sm); font-size:13px; font-weight:600; cursor:pointer; }
+      .ledger-scope .btn-add-payment { background:#15803d; color:#fff; border:none; padding:8px 16px; border-radius:var(--r-sm); font-size:13px; font-weight:700; cursor:pointer; }
+      .ledger-scope .btn-print { background:#475569; color:#fff; border:none; padding:8px 16px; border-radius:var(--r-sm); font-size:13px; font-weight:700; cursor:pointer; }
+      .ledger-scope .btn-search { background:var(--primary); color:#fff; border:none; padding:9px 20px; border-radius:var(--r-sm); font-size:13px; font-weight:700; cursor:pointer; }
+      .ledger-scope .hidden { display:none !important; }
+      .ledger-scope .ec-print-area { background:#fff; padding:28px 36px; border:1px solid var(--border); border-radius:var(--r); }
+      .ledger-scope .ec-doc-title { text-align:center; font-size:22px; font-weight:800; margin-bottom:6px; letter-spacing:-0.5px; }
+      .ledger-scope .ec-doc-title-sub { font-weight:600; font-size:14px; }
+      .ledger-scope .ec-meta { display:flex; justify-content:space-between; align-items:end; margin:14px 0 8px; font-size:12px; }
+      .ledger-scope .ec-meta-left { color:var(--text); font-weight:600; }
+      .ledger-scope .ec-meta-right { color:var(--text-2); }
+      .ledger-scope .ec-info-table { width:100%; border-collapse:collapse; font-size:12px; margin-bottom:14px; border-top:1.5px solid #94a3b8; border-bottom:1.5px solid #94a3b8; }
+      .ledger-scope .ec-info-table th, .ledger-scope .ec-info-table td { padding:7px 12px; border:1px solid #cbd5e1; }
+      .ledger-scope .ec-info-table th { background:#f8fafc; font-weight:700; color:var(--text-2); width:110px; text-align:left; }
+      .ledger-scope .ec-info-table td { color:var(--text); }
+      .ledger-scope .ec-ledger-title { background:#e0f2fe; text-align:center; font-weight:800; font-size:13px; padding:7px; border:1px solid #94a3b8; border-bottom:none; }
+      .ledger-scope .ec-ledger { width:100%; border-collapse:collapse; font-size:12px; }
+      .ledger-scope .ec-ledger th, .ledger-scope .ec-ledger td { border:1px solid #cbd5e1; padding:6px 10px; }
+      .ledger-scope .ec-ledger thead th { background:#f1f5f9; font-weight:700; color:var(--text); text-align:center; }
+      .ledger-scope .ec-ledger td.num { text-align:right; font-variant-numeric:tabular-nums; }
+      .ledger-scope .ec-ledger td.date { width:100px; white-space:nowrap; }
+      .ledger-scope .ec-ledger td.summary-cell { width:110px; }
+      .ledger-scope .ec-row-header { background:#f8fafc; font-weight:700; }
+      .ledger-scope .ec-row-header td { background:#f8fafc; }
+      .ledger-scope .ec-row-item td { padding-left:24px; color:var(--text-2); background:#fef2f2; }
+      .ledger-scope .ec-row-item td.num { background:#fef2f2; }
+      .ledger-scope .ec-row-payment td { background:#f0fdf4; }
+      .ledger-scope .ec-row-carry { background:#fffbeb; font-weight:700; }
+      .ledger-scope .ec-row-carry td { background:#fffbeb; }
+      .ledger-scope .ec-row-month-sum td { background:#dbeafe; font-weight:800; text-align:center; }
+      .ledger-scope .ec-row-grand-sum td { background:#bfdbfe; font-weight:800; text-align:center; }
+      .ledger-scope .ec-print-footer { text-align:right; font-size:11px; color:var(--text-3); margin-top:10px; }
+      .ledger-scope .ec-filter-bar { background:#fff; border:1px solid var(--border); border-radius:var(--r); padding:14px 18px; margin-bottom:14px; display:flex; gap:14px; flex-wrap:wrap; align-items:end; }
+      .ledger-scope .ec-filter-bar .fld { display:flex; flex-direction:column; gap:4px; }
+      .ledger-scope .ec-filter-bar label { font-size:11px; font-weight:700; color:var(--text-2); }
+      .ledger-scope .ec-filter-bar input[type="date"] { padding:6px 10px; border:1px solid var(--border); border-radius:var(--r-sm); font-size:13px; }
+      .ledger-scope .ec-filter-bar .spacer { flex:1; }
+      .ledger-scope .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:2100; align-items:center; justify-content:center; }
+      .ledger-scope .modal-overlay.show { display:flex; }
+      .ledger-scope .modal { background:#fff; border-radius:var(--r); width:90%; max-width:420px; }
+      .ledger-scope .modal-header { padding:16px 20px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
+      .ledger-scope .modal-title { font-size:15px; font-weight:700; }
+      .ledger-scope .modal-close { background:none; border:none; font-size:20px; cursor:pointer; color:var(--text-3); }
+      .ledger-scope .modal-body { padding:20px; display:flex; flex-direction:column; gap:14px; }
+      .ledger-scope .modal-body label { display:flex; flex-direction:column; gap:5px; font-size:12px; font-weight:700; color:var(--text-2); }
+      .ledger-scope .modal-body input, .ledger-scope .modal-body textarea { padding:9px 12px; border:1px solid var(--border); border-radius:var(--r-sm); font-size:13px; }
+      .ledger-scope .modal-footer { padding:12px 20px; border-top:1px solid var(--border); display:flex; gap:8px; justify-content:flex-end; }
+    </style>
+    <div class="ledger-scope">
+      <!-- 거래처 목록 화면 -->
+      <div id="view-list">
+        <div class="data-card">
+          <div style="overflow-x:auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>납품처</th>
+                  <th class="num">총 발주 건수</th>
+                  <th class="num">총 출고금액</th>
+                  <th class="num">총 입금액</th>
+                  <th class="center">상세 보기</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-customers"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- 거래처 원장 상세 화면 -->
+      <div id="view-detail" class="hidden">
+        <div class="no-print" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+          <button class="btn-back" onclick="goBackToList()"><i class="fas fa-arrow-left"></i> 거래처 목록</button>
+          <button class="btn-add-payment" onclick="openPaymentModal()"><i class="fas fa-plus"></i> 입금 등록</button>
+          <button class="btn-print" onclick="window.print()"><i class="fas fa-print"></i> 인쇄</button>
+        </div>
+        <div class="ec-filter-bar no-print">
+          <div class="fld"><label>시작일</label><input type="date" id="ec-start-date"/></div>
+          <div class="fld"><label>종료일</label><input type="date" id="ec-end-date"/></div>
+          <button class="btn-search" onclick="applyDateRange()"><i class="fas fa-search"></i> 조회</button>
+          <div class="spacer"></div>
+          <div class="fld" style="min-width:220px">
+            <label>납품처 검색</label>
+            <input type="text" id="ec-customer-search" list="ec-customer-list" placeholder="납품처명 입력" oninput="handleCustomerSearch()"/>
+            <datalist id="ec-customer-list"></datalist>
+          </div>
+        </div>
+        <div class="ec-print-area" id="ec-print-area">
+          <div class="ec-doc-title"><span id="ec-doc-customer-name">—</span> 관리대장<span class="ec-doc-title-sub">(거래명세서별)</span></div>
+          <div class="ec-meta">
+            <div class="ec-meta-left">회사명 : 루마네시스템 / 담당 : </div>
+            <div class="ec-meta-right" id="ec-doc-period">—</div>
+          </div>
+          <table class="ec-info-table">
+            <tbody>
+              <tr><th>사업자등록번호</th><td id="ec-info-bizno">&nbsp;</td><th>대표자</th><td id="ec-info-ceo">&nbsp;</td></tr>
+              <tr><th>여신한도</th><td id="ec-info-credit">0</td><th>전화</th><td id="ec-info-tel">(모바일 : )</td></tr>
+              <tr><th>Email</th><td id="ec-info-email">&nbsp;</td><th>Fax</th><td id="ec-info-fax">&nbsp;</td></tr>
+              <tr><th>주 소</th><td colspan="3" id="ec-info-addr">&nbsp;</td></tr>
+              <tr><th>적 요</th><td colspan="3" id="ec-info-memo">&nbsp;</td></tr>
+            </tbody>
+          </table>
+          <div class="ec-ledger-title">판매/수금내역</div>
+          <table class="ec-ledger">
+            <thead>
+              <tr>
+                <th style="width:100px">일자</th>
+                <th>적요</th>
+                <th class="num" style="width:110px">판매</th>
+                <th class="num" style="width:110px">수금</th>
+                <th class="num" style="width:110px">잔액</th>
+              </tr>
+            </thead>
+            <tbody id="tbody-ledger"></tbody>
+          </table>
+          <div class="ec-print-footer" id="ec-print-time">—</div>
+        </div>
+      </div>
+
+      <!-- 입금 등록 모달 -->
+      <div class="modal-overlay" id="payment-modal">
+        <div class="modal">
+          <div class="modal-header">
+            <div class="modal-title">입금 등록</div>
+            <button class="modal-close" onclick="closePaymentModal()">×</button>
+          </div>
+          <div class="modal-body">
+            <label>입금일<input type="date" id="payment-date"/></label>
+            <label>입금 금액<input type="number" id="payment-amount" placeholder="0" min="0"/></label>
+            <label>메모 (선택)<textarea id="payment-memo" rows="2" placeholder="예: 6월 1차 정산, 어음"></textarea></label>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-back" onclick="closePaymentModal()">취소</button>
+            <button class="btn-add-payment" onclick="savePayment()"><i class="fas fa-check"></i> 저장</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function renderSettlement(){
   if(!requireAdmin())return;
   document.getElementById('content').innerHTML = `
@@ -1362,9 +1515,9 @@ function renderSettlement(){
         </div>
       </div>
 
-      <!-- 거래처 원장 패널 (단계 1C에서 본문 채움) -->
+      <!-- 거래처 원장 패널 -->
       <div class="stl-panel" data-stl-panel="ledger">
-        <div style="padding:40px;text-align:center;color:var(--text-3)">거래처 원장 (단계 1C에서 작성 예정)</div>
+        ${_renderLedgerPanelHTML()}
       </div>
     </div>
   `;
@@ -1384,8 +1537,17 @@ function renderSettlement(){
       const target = btn.dataset.stlTab;
       document.querySelectorAll('.stl-tab').forEach(b=>b.classList.toggle('active', b===btn));
       document.querySelectorAll('.stl-panel').forEach(p=>p.classList.toggle('active', p.dataset.stlPanel===target));
+      // 원장 탭 첫 진입 시 init (lazy)
+      if (target === 'ledger' && typeof showListView === 'function') {
+        showListView();
+      }
     });
   });
+
+  // 원장 모듈 onclick 어댑터 (customer-ledger.html의 onclick → ledger 모듈 함수)
+  if (typeof window.savePayment !== 'function' && typeof handleSavePayment === 'function') {
+    window.savePayment = function(){ return handleSavePayment(); };
+  }
 
   // 정산 초기 로드 (settlement 모듈의 init은 단계 2에서, 지금은 직접 호출)
   if(typeof updateDatePicker==='function') updateDatePicker();

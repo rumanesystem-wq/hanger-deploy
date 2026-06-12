@@ -29,29 +29,44 @@ function _editTd(value, field, opts) {
   return `<td class="${cls}" contenteditable="true" data-field="${field}" spellcheck="false">${safe}</td>`;
 }
 
+// 일자 표시: YYYY-MM-DD → MM/DD (원본 양식)
+function _shortDate(d) {
+  if (!d) return '';
+  const m = String(d).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[2]}/${m[3]}` : String(d);
+}
+
 // 행 단위 HTML 생성 (편집 가능)
 function _itemRowHTML(item, shipDate) {
   item = item || {};
   const name = item.spec ? `${item.name || ''} [${item.spec}]` : (item.name || '');
+  const dateVal = item.date || shipDate || '';
+  const supplyText = item.supply != null && item.supply !== '' ? Number(item.supply).toLocaleString() : '';
+  const vatText    = item.vat    != null && item.vat    !== '' ? Number(item.vat).toLocaleString() : '';
   return `<tr class="invoice-item-row">
-    ${_editTd(item.date || shipDate || '', 'date', { center: true })}
+    ${_editTd(_shortDate(dateVal), 'date', { center: true })}
     ${_editTd(name, 'name')}
     ${_editTd(item.qty != null ? item.qty : '', 'qty', { right: true })}
     ${_editTd(item.unitPrice != null ? item.unitPrice : '', 'unitPrice', { right: true })}
-    <td class="invoice-td invoice-td-right invoice-td-supply">${item.supply != null && item.supply !== '' ? Number(item.supply).toLocaleString() : ''}</td>
-    <td class="invoice-td invoice-td-right invoice-td-vat">${item.vat != null && item.vat !== '' ? Number(item.vat).toLocaleString() : ''}</td>
-    <td class="invoice-td invoice-td-center invoice-row-del-cell"><button type="button" class="invoice-row-del" title="행 삭제">×</button></td>
+    <td class="invoice-td invoice-td-right invoice-td-supply invoice-editable" contenteditable="true" data-field="supply" spellcheck="false">${supplyText}</td>
+    <td class="invoice-td invoice-td-right invoice-td-vat invoice-editable" contenteditable="true" data-field="vat" spellcheck="false">${vatText}</td>
+    <td class="invoice-td invoice-td-center invoice-row-del-cell no-print"><button type="button" class="invoice-row-del" title="행 삭제">×</button></td>
   </tr>`;
 }
 
 /**
- * 거래명세서 HTML 문자열 생성 (가로 landscape 양식, 편집 가능)
+ * 거래명세서 HTML 문자열 생성 (한국 표준 거래명세서 양식 — 가로 landscape)
+ * 좌상단: 제목 + 공급받는자 박스 (貴 中 형식)
+ * 우상단: 공급자 박스 (일련번호/TEL/사업자등록번호/성명/상호/주소)
+ * 상단 중앙: 금액 강조 박스
+ * 표: 일자/품목명[규격]/수량(단위포함)/단가/공급가액/부가세
+ * 하단: 한 줄 합계 (수량/공급가액/VAT/합계/인수)
  * @param {Invoice} invoice
  * @returns {string}
  */
 function buildInvoiceHTML(invoice) {
   const items = invoice.items || [];
-  const MIN_ROWS = 8;
+  const MIN_ROWS = 13; // 원본 영수증 느낌 — 빈 행 많이
   const rows = [...items];
   while (rows.length < MIN_ROWS) rows.push(null);
 
@@ -61,6 +76,11 @@ function buildInvoiceHTML(invoice) {
   const totalSupply = invoice.totalSupply != null ? invoice.totalSupply : items.reduce((s,i)=>s+(Number(i.supply)||0),0);
   const totalVat    = invoice.totalVat    != null ? invoice.totalVat    : items.reduce((s,i)=>s+(Number(i.vat)||0),0);
   const totalAmount = invoice.totalAmount != null ? invoice.totalAmount : (totalSupply + totalVat);
+
+  // 일련번호 형식: YYYY/MM/DD -N
+  const serialDisplay = invoice.serial
+    ? (invoice.serial.includes('-') || invoice.serial.includes('/') ? invoice.serial : invoice.serial)
+    : '';
 
   return `
 <style>
@@ -73,94 +93,98 @@ function buildInvoiceHTML(invoice) {
   .invoice-add-row-wrap { padding: 8px 0; text-align: center; }
   .invoice-add-row-btn { background: #eff6ff; color: #1e40af; border: 1px dashed #2563eb; padding: 6px 18px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; }
   .invoice-add-row-btn:hover { background: #dbeafe; }
-  .invoice-receipt-input { background: #fffef0; outline: none; cursor: text; min-width: 80px; display: inline-block; padding: 2px 8px; border-radius: 4px; }
+  .invoice-receipt-input { background: #fffef0; outline: none; cursor: text; min-width: 80px; display: inline-block; padding: 2px 6px; border-radius: 3px; }
   .invoice-receipt-input:hover { background: #fef9c3; }
   .invoice-receipt-input:focus { background: #fff; box-shadow: inset 0 0 0 2px #2563eb; }
 </style>
-<div class="invoice-wrap" data-invoice-id="${escHtml(invoice.id || '')}" data-invoice-order-num="${escHtml(invoice.orderNum || '')}" data-invoice-serial="${escHtml(invoice.serial || '')}" data-invoice-ship-date="${escHtml(invoice.shipDate || '')}" data-invoice-delivery-to="${escHtml(invoice.deliveryTo || '')}" data-invoice-address="${escHtml(invoice.address || '')}">
-  <div class="invoice-title">거 래 명 세 서</div>
+<div class="invoice-wrap classic" data-invoice-id="${escHtml(invoice.id || '')}" data-invoice-order-num="${escHtml(invoice.orderNum || '')}" data-invoice-serial="${escHtml(invoice.serial || '')}" data-invoice-ship-date="${escHtml(invoice.shipDate || '')}" data-invoice-delivery-to="${escHtml(invoice.deliveryTo || '')}" data-invoice-address="${escHtml(invoice.address || '')}">
 
-  <div class="invoice-parties">
-    <table class="invoice-party-tbl">
-      <colgroup><col style="width:90px"/><col/></colgroup>
-      <thead><tr><th colspan="2" class="invoice-party-head">공급받는자</th></tr></thead>
-      <tbody>
-        <tr><th class="invoice-th">상호</th><td class="invoice-td-party">${escHtml(invoice.deliveryTo || '')}</td></tr>
-        <tr><th class="invoice-th">주소</th><td class="invoice-td-party">${escHtml(invoice.address || '')}</td></tr>
-        <tr><th class="invoice-th">발주번호</th><td class="invoice-td-party">${escHtml(invoice.orderNum || '')}</td></tr>
-      </tbody>
-    </table>
-
-    <div class="invoice-parties-spacer"></div>
-
-    <table class="invoice-party-tbl">
-      <colgroup><col style="width:90px"/><col/></colgroup>
-      <thead><tr><th colspan="2" class="invoice-party-head">공급자</th></tr></thead>
-      <tbody>
-        <tr><th class="invoice-th">상호</th><td class="invoice-td-party">${SUPPLIER.name}</td></tr>
-        <tr><th class="invoice-th">사업자등록번호</th><td class="invoice-td-party">${SUPPLIER.bizno}</td></tr>
-        <tr><th class="invoice-th">대표자</th><td class="invoice-td-party">${SUPPLIER.ceo}</td></tr>
-        <tr><th class="invoice-th">주소</th><td class="invoice-td-party">${SUPPLIER.address}</td></tr>
-        <tr><th class="invoice-th">TEL</th><td class="invoice-td-party">${SUPPLIER.tel}</td></tr>
-      </tbody>
-    </table>
+  <!-- 상단: 좌(제목 + 받는자) | 우(공급자) -->
+  <div class="ci-top">
+    <div class="ci-top-left">
+      <div class="ci-title">거래명세서</div>
+      <table class="ci-receiver-tbl">
+        <tbody>
+          <tr><td class="ci-receiver-name"><span contenteditable="true" data-field="recv-name" class="invoice-editable">${escHtml(invoice.deliveryTo || '')}</span> <span class="ci-gwiing">貴 中</span></td></tr>
+          <tr><td class="ci-receiver-addr"><span contenteditable="true" data-field="recv-addr" class="invoice-editable">${escHtml(invoice.address || '')}</span></td></tr>
+          <tr><td class="ci-receiver-order"><span class="ci-row-label">발주번호</span> <span contenteditable="true" data-field="recv-order" class="invoice-editable">${escHtml(invoice.orderNum || '')}</span></td></tr>
+          <tr><td class="ci-receiver-tel"><span class="ci-tel-icon">☎</span> <span contenteditable="true" data-field="recv-tel" class="invoice-editable">${escHtml(invoice.receiverTel || '')}</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="ci-top-right">
+      <table class="ci-supplier-tbl">
+        <tbody>
+          <tr>
+            <td class="ci-sup-side" rowspan="4">공<br>급<br>자</td>
+            <th>일련번호</th><td class="ci-sup-val">${escHtml(serialDisplay)}</td>
+            <th>TEL</th><td class="ci-sup-val">${escHtml(SUPPLIER.tel)}</td>
+          </tr>
+          <tr>
+            <th>사업자등록<br>번호</th><td class="ci-sup-val">${escHtml(SUPPLIER.bizno)}</td>
+            <th>성명</th><td class="ci-sup-val">${escHtml(SUPPLIER.ceo)}</td>
+          </tr>
+          <tr>
+            <th>상호</th><td class="ci-sup-val" colspan="3">${escHtml(SUPPLIER.name)}</td>
+          </tr>
+          <tr>
+            <th>주소</th><td class="ci-sup-val" colspan="3">${escHtml(SUPPLIER.address)}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
-  <div class="invoice-serial">No. ${escHtml(invoice.serial || '')}</div>
+  <!-- 상단 금액 강조 박스 -->
+  <div class="ci-amount-bar">
+    <span class="ci-amount-label">금  액 :</span>
+    <span class="ci-amount-korean">${numberToKorean(totalAmount || 0)}</span>
+    <span class="ci-amount-won">(<span class="ci-amount-won-mark">₩</span><span class="ci-amount-won-value">${(totalAmount || 0).toLocaleString()}</span>)</span>
+  </div>
 
-  <table class="invoice-items-tbl">
+  <!-- 메인 표 -->
+  <table class="ci-items-tbl">
     <thead>
       <tr>
-        <th class="invoice-th-item" style="width:90px">일자</th>
-        <th class="invoice-th-item">품목명 [규격]</th>
-        <th class="invoice-th-item" style="width:60px">수량</th>
-        <th class="invoice-th-item" style="width:90px">단가</th>
-        <th class="invoice-th-item" style="width:100px">공급가액</th>
-        <th class="invoice-th-item" style="width:90px">부가세</th>
-        <th class="invoice-th-item" style="width:36px"></th>
+        <th style="width:80px">일자</th>
+        <th>품목명[규격]</th>
+        <th style="width:80px">수량<br>(단위포함)</th>
+        <th style="width:90px">단가</th>
+        <th style="width:100px">공급가액</th>
+        <th style="width:90px">부가세</th>
+        <th class="no-print" style="width:30px"></th>
       </tr>
     </thead>
     <tbody class="invoice-items-tbody">${itemRowsHTML}</tbody>
-    <tfoot>
-      <tr class="invoice-total-row">
-        <td class="invoice-td invoice-td-center">합계</td>
-        <td class="invoice-td"></td>
-        <td class="invoice-td invoice-td-right invoice-td-total-qty">${totalQty.toLocaleString()}</td>
-        <td class="invoice-td"></td>
-        <td class="invoice-td invoice-td-right invoice-td-total-supply">${(totalSupply || 0).toLocaleString()}</td>
-        <td class="invoice-td invoice-td-right invoice-td-total-vat">${(totalVat || 0).toLocaleString()}</td>
-        <td class="invoice-td"></td>
-      </tr>
-    </tfoot>
   </table>
 
-  <div class="invoice-add-row-wrap">
+  <div class="invoice-add-row-wrap no-print">
     <button type="button" class="invoice-add-row-btn"><i class="fas fa-plus"></i> 행 추가</button>
   </div>
 
-  <div class="invoice-summary">
-    <div class="invoice-summary-row">
-      <span class="invoice-summary-label">공급가액</span>
-      <span class="invoice-summary-value invoice-summary-supply">${(totalSupply || 0).toLocaleString()} 원</span>
-    </div>
-    <div class="invoice-summary-row">
-      <span class="invoice-summary-label">부가세</span>
-      <span class="invoice-summary-value invoice-summary-vat">${(totalVat || 0).toLocaleString()} 원</span>
-    </div>
-    <div class="invoice-summary-row invoice-summary-total">
-      <span class="invoice-summary-label">합계금액</span>
-      <span class="invoice-summary-value invoice-summary-amount">${(totalAmount || 0).toLocaleString()} 원</span>
-    </div>
-    <div class="invoice-summary-row">
-      <span class="invoice-summary-label">한글금액</span>
-      <span class="invoice-summary-value invoice-korean-amount">${numberToKorean(totalAmount || 0)}</span>
-    </div>
-  </div>
+  <!-- 하단 합계 한 줄 -->
+  <table class="ci-total-tbl">
+    <tbody>
+      <tr>
+        <th style="width:70px">수량</th>
+        <td class="ci-total-num"><span class="invoice-td-total-qty">${totalQty.toLocaleString()}</span></td>
+        <th style="width:90px">공급가액</th>
+        <td class="ci-total-num"><span class="invoice-td-total-supply">${(totalSupply || 0).toLocaleString()}</span></td>
+        <th style="width:60px">VAT</th>
+        <td class="ci-total-num"><span class="invoice-td-total-vat">${(totalVat || 0).toLocaleString()}</span></td>
+        <th style="width:60px">합계</th>
+        <td class="ci-total-num"><span class="invoice-summary-amount">${(totalAmount || 0).toLocaleString()}</span></td>
+        <th style="width:60px">인수</th>
+        <td class="ci-receiver-cell"><span contenteditable="true" data-field="receiver-name" class="invoice-receipt-input">${escHtml(invoice.receiverName || '')}</span><span class="ci-in-mark">인</span></td>
+      </tr>
+    </tbody>
+  </table>
 
-  <div class="invoice-receipt">
-    <div class="invoice-receipt-label">인수</div>
-    <div><span class="invoice-receipt-input" contenteditable="true" data-field="receiver-name" spellcheck="false">${escHtml(invoice.receiverName || '')}</span></div>
-    <div class="invoice-receipt-stamp"><span class="invoice-receipt-input" contenteditable="true" data-field="receiver-stamp" spellcheck="false">${escHtml(invoice.receiverStamp || '(인)')}</span></div>
+  <!-- 합계금액/한글금액은 hidden span 으로 유지 (실시간 재계산용) -->
+  <div class="invoice-hidden-totals" style="display:none">
+    <span class="invoice-summary-supply">${(totalSupply || 0).toLocaleString()} 원</span>
+    <span class="invoice-summary-vat">${(totalVat || 0).toLocaleString()} 원</span>
+    <span class="invoice-korean-amount">${numberToKorean(totalAmount || 0)}</span>
   </div>
 </div>
 `;
@@ -209,10 +233,17 @@ function _attachInvoiceEditEvents(wrap) {
 
   // 셀 편집 시 같은 행 재계산 + 전체 합계 갱신
   wrap.addEventListener('input', e => {
-    const td = e.target.closest('[data-field="qty"], [data-field="unitPrice"]');
-    if (td) {
-      const tr = td.closest('tr');
+    // 수량/단가 → 공급가액·부가세 자동 계산 + 합계 갱신
+    const qtyOrPrice = e.target.closest('[data-field="qty"], [data-field="unitPrice"]');
+    if (qtyOrPrice) {
+      const tr = qtyOrPrice.closest('tr');
       _recalcRow(tr);
+      _recalcTotals(wrap);
+      return;
+    }
+    // 공급가액/부가세 직접 수정 → 합계만 갱신 (행 자동 계산 안 함, 사용자 입력 보존)
+    const supplyOrVat = e.target.closest('[data-field="supply"], [data-field="vat"]');
+    if (supplyOrVat) {
       _recalcTotals(wrap);
     }
   });
@@ -253,13 +284,19 @@ function collectInvoiceFromDOM(baseInvoice) {
     const qty = Number((tr.querySelector('[data-field="qty"]')?.textContent || '').replace(/[,\s]/g,'')) || 0;
     const unitPrice = Number((tr.querySelector('[data-field="unitPrice"]')?.textContent || '').replace(/[,\s]/g,'')) || 0;
     // 모두 빈 행은 제외
-    if (!date && !nameRaw && !qty && !unitPrice) return;
+    // 공급가액·부가세도 셀에서 직접 읽음 (사용자가 수정한 값 보존)
+    const supplyText = (tr.querySelector('[data-field="supply"]')?.textContent || '').replace(/[,\s]/g,'');
+    const vatText = (tr.querySelector('[data-field="vat"]')?.textContent || '').replace(/[,\s]/g,'');
+    const supplyParsed = Number(supplyText) || 0;
+    const vatParsed = Number(vatText) || 0;
+    if (!date && !nameRaw && !qty && !unitPrice && !supplyParsed && !vatParsed) return;
     // 품목명 [규격] 형식 파싱
     let name = nameRaw, spec = '';
     const m = nameRaw.match(/^(.*?)\s*\[(.+?)\]\s*$/);
     if (m) { name = m[1].trim(); spec = m[2].trim(); }
-    const supply = Math.round(qty * unitPrice);
-    const vat = Math.round(supply * 0.1);
+    // 사용자가 입력한 supply/vat 우선, 없으면 수량×단가 자동 계산
+    const supply = supplyParsed || Math.round(qty * unitPrice);
+    const vat = vatParsed || Math.round(supply * 0.1);
     items.push({ date, name, spec, qty, unitPrice, supply, vat });
   });
   const totalSupply = items.reduce((s,i)=>s+(i.supply||0),0);

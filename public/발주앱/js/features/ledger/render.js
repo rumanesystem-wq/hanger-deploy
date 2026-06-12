@@ -98,8 +98,13 @@ async function handleCustomerSearch() {
  * @returns {Promise<void>}
  */
 async function renderCustomerList() {
-  const [orders, payments] = await Promise.all([fetchAllCompletedOrders(), fetchAllPayments()]);
-  const summaries = listCustomersSummary(orders, payments);
+  const [orders, payments, invoices] = await Promise.all([
+    fetchAllCompletedOrders(),
+    fetchAllPayments(),
+    fetchAllInvoices()
+  ]);
+  const invoiceMap = buildInvoiceMap(invoices);
+  const summaries = listCustomersSummary(orders, payments, invoiceMap);
   const filtered = summaries;
 
   const tbody = document.getElementById('tbody-customers');
@@ -129,8 +134,15 @@ async function renderCustomerList() {
  */
 async function renderCustomerDetail() {
   if (!currentCustomer) return;
-  const [orders, payments] = await Promise.all([fetchAllCompletedOrders(), fetchAllPayments()]);
-  const stats = calcCustomerStats(currentCustomer, orders, payments);
+  const [orders, payments, invoices] = await Promise.all([
+    fetchAllCompletedOrders(),
+    fetchAllPayments(),
+    fetchAllInvoices()
+  ]);
+  const invoiceMap = buildInvoiceMap(invoices);
+  const stats = calcCustomerStats(currentCustomer, orders, payments, invoiceMap);
+  // detail 화면에서 사용할 수 있도록 dateRange 처리 함수에 전달
+  stats._invoiceMap = invoiceMap;
 
   // 헤더: 거래처명·기간
   document.getElementById('ec-doc-customer-name').textContent = currentCustomer;
@@ -200,7 +212,7 @@ function renderEcountLedgerBody(stats, range) {
   // 기간 내 거래만 추출 (시간순 정렬)
   const inRangeOrders = filterOrdersInRange(stats.orders, range);
   const inRangePayments = filterPaymentsInRange(stats.payments, range);
-  const events = buildTimelineEvents(inRangeOrders, inRangePayments);
+  const events = buildTimelineEvents(inRangeOrders, inRangePayments, stats._invoiceMap);
 
   // 이월잔액 행
   tbody.insertAdjacentHTML('beforeend', renderCarryOverRow(carryOver));
@@ -336,11 +348,16 @@ function renderGrandSumRow(sale, recv, balance) {
  */
 function calcCarryOver(stats, startDate) {
   if (!startDate) return 0;
+  const invoiceMap = stats._invoiceMap;
   let carry = 0;
   (stats.orders || []).forEach(o => {
     const dateField = o.shipDate || o.orderDate || '';
     if (dateField && dateField < startDate) {
-      carry += (o.totalAmount || (o.totalSupply || 0) * 1.1);
+      const inv = invoiceMap && invoiceMap[o.orderNum];
+      const amt = inv && typeof inv.totalAmount === 'number'
+        ? inv.totalAmount
+        : (o.totalAmount || (o.totalSupply || 0) * 1.1);
+      carry += amt;
     }
   });
   (stats.payments || []).forEach(p => {
@@ -372,18 +389,23 @@ function filterPaymentsInRange(payments, range) {
  * 발주서·입금을 시간순 통합 (날짜 오름차순)
  * @returns {Array<{type:'out'|'in', date:string, ...}>}
  */
-function buildTimelineEvents(orders, payments) {
+function buildTimelineEvents(orders, payments, invoiceMap) {
   const events = [];
   orders.forEach(o => {
+    // 거래명세서가 있으면 그 totalSupply/totalVat/totalAmount 우선
+    const inv = invoiceMap && invoiceMap[o.orderNum];
+    const supply = inv && typeof inv.totalSupply === 'number' ? inv.totalSupply : (o.totalSupply || 0);
+    const withVat = inv && typeof inv.totalAmount === 'number' ? inv.totalAmount : (o.totalAmount || Math.round(supply * 1.1));
     events.push({
       type: 'out',
       date: o.shipDate || o.orderDate || '',
       orderNum: o.orderNum,
       address: o.address || '',
       warehouse: o.warehouse || '',
-      amount: o.totalSupply || 0,
-      amountWithVat: o.totalAmount || Math.round((o.totalSupply || 0) * 1.1),
-      items: o.items || []
+      amount: supply,
+      amountWithVat: withVat,
+      hasInvoice: !!inv,
+      items: inv && Array.isArray(inv.items) && inv.items.length ? inv.items : (o.items || [])
     });
   });
   payments.forEach(p => {

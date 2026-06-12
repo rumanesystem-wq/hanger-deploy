@@ -165,3 +165,22 @@ async function createPayment(payment) {
 async function deletePayment(paymentId) {
   LEDGER_MOCK_PAYMENTS = LEDGER_MOCK_PAYMENTS.filter(p => p.id !== paymentId);
 }
+
+/**
+ * 전체 거래명세서(invoice) 조회 — 원장의 출고 매출에 적용
+ * 발주앱 메인 통합 환경에서만 작동 (window._FS 필요)
+ * 단독 페이지(Firebase 미초기화)에선 빈 배열 반환
+ * @returns {Promise<Array>}
+ */
+async function fetchAllInvoices() {
+  if (typeof window === 'undefined' || !window._FS) {
+    return []; // 단독 페이지/Mock 환경
+  }
+  try {
+    const list = await window._FS.get('invoices');
+    return Array.isArray(list) ? list : [];
+  } catch (e) {
+    console.warn('[ledger] invoices fetch 실패:', e && e.message);
+    return [];
+  }
+}
