@@ -107,6 +107,7 @@ async function renderCustomerList() {
   const filtered = onlyUnpaid ? summaries.filter(s => s.balance > 0) : summaries;
 
   const tbody = document.getElementById('tbody-customers');
+  if (!tbody) { console.warn('[ledger] #tbody-customers not found'); return; }
   tbody.innerHTML = '';
 
   filtered.forEach(s => {
@@ -194,6 +195,7 @@ function formatPrintTime(d) {
  */
 function renderEcountLedgerBody(stats, range) {
   const tbody = document.getElementById('tbody-ledger');
+  if (!tbody) { console.warn('[ledger] #tbody-ledger not found'); return; }
   tbody.innerHTML = '';
 
   // 이월잔액 = 시작일 이전까지의 누적 (판매 - 수금)

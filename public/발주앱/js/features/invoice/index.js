@@ -5,8 +5,14 @@
 
 async function _openFromOrder(order) {
   try {
+    // 발주번호 없으면 중복 방지 보장 불가 — 진행 중단
+    if (!order || !order.orderNum) {
+      if (typeof toast === 'function') toast('발주번호가 없어 거래명세서를 생성할 수 없습니다.', 'error');
+      console.warn('[Invoice] openFromOrder: missing orderNum', order);
+      return;
+    }
     // 중복 저장 방지: 같은 발주번호의 거래명세서가 이미 있으면 그걸 재사용
-    const existing = await getInvoicesByOrderNum(order.orderNum || '');
+    const existing = await getInvoicesByOrderNum(order.orderNum);
     if (existing && existing.length > 0) {
       const latest = existing[existing.length - 1];
       openInvoiceModal(latest, 'view');

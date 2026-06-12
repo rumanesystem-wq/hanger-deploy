@@ -10,7 +10,12 @@
  * @returns {string}
  */
 function numberToKorean(n) {
-  if (!n || n === 0) return '영원 정';
+  // 비정상 입력 가드: 숫자 아니거나 NaN/Infinity면 0원으로 표시
+  if (typeof n !== 'number' || !isFinite(n)) return '영원 정';
+  // 음수는 절대값 처리 후 접두어, 소수는 정수 반올림 (PDF 금액은 정수 단위)
+  const negative = n < 0;
+  n = Math.round(Math.abs(n));
+  if (n === 0) return '영원 정';
   const ONES = ['', '일', '이', '삼', '사', '오', '육', '칠', '팔', '구'];
   const UNITS = ['', '십', '백', '천'];
   const BIGS  = ['', '만', '억'];
@@ -43,7 +48,7 @@ function numberToKorean(n) {
     result += v + BIGS[chunks.length - 1 - i];
   });
 
-  return result + '원 정';
+  return (negative ? '마이너스 ' : '') + result + '원 정';
 }
 
 /**
