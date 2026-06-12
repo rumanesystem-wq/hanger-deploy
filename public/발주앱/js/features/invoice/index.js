@@ -46,11 +46,53 @@ function _openFromSaved(invoice) {
   _setupInvoiceModalButtons(invoice);
 }
 
+// 모달 footer에 저장 버튼 동적 추가 (1회만)
+function _ensureSaveButton() {
+  if (document.getElementById('invoiceBtnSave')) return document.getElementById('invoiceBtnSave');
+  const btnClose = document.getElementById('invoiceBtnClose');
+  if (!btnClose || !btnClose.parentNode) return null;
+  const btn = document.createElement('button');
+  btn.id = 'invoiceBtnSave';
+  btn.type = 'button';
+  btn.className = 'btn btn-primary';
+  btn.style.cssText = 'background:#15803d;color:#fff;border:none;padding:8px 18px;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;margin-right:6px';
+  btn.innerHTML = '<i class="fas fa-save"></i> 저장';
+  btnClose.parentNode.insertBefore(btn, btnClose);
+  return btn;
+}
+
 function _setupInvoiceModalButtons(invoice) {
   const btnPdf   = document.getElementById('invoiceBtnPdf');
   const btnPrint = document.getElementById('invoiceBtnPrint');
   const btnClose = document.getElementById('invoiceBtnClose');
+  const btnSave  = _ensureSaveButton();
   const content  = document.getElementById('invoiceContent');
+
+  if (btnSave) {
+    btnSave.onclick = async () => {
+      if (btnSave.disabled) return;
+      const originalHtml = btnSave.innerHTML;
+      btnSave.disabled = true;
+      btnSave.innerHTML = '저장 중...';
+      try {
+        const collected = (typeof window._collectInvoiceFromDOM === 'function')
+          ? window._collectInvoiceFromDOM(invoice)
+          : invoice;
+        await updateInvoice(collected);
+        if (typeof toast === 'function') toast('거래명세서가 저장되었습니다.', 'success');
+        else alert('거래명세서가 저장되었습니다.');
+        // 저장된 객체를 기준으로 핸들러 재바인딩 (다음 저장도 최신본 사용)
+        invoice = collected;
+      } catch (e) {
+        console.error('[Invoice] 저장 실패:', e && e.message);
+        if (typeof toast === 'function') toast('저장 중 오류가 발생했습니다.', 'error');
+        else alert('저장 중 오류가 발생했습니다.');
+      } finally {
+        btnSave.disabled = false;
+        btnSave.innerHTML = originalHtml;
+      }
+    };
+  }
 
   if (btnPdf) {
     btnPdf.onclick = async () => {

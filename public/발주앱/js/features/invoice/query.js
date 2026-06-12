@@ -35,6 +35,28 @@ async function getInvoicesByOrderNum(orderNum) {
 }
 
 /**
+ * 거래명세서 업데이트 (수기 편집 저장)
+ * 같은 id로 찾아서 통째 교체 (patch가 아니라 full replace — 사용자 직접 수정한 최종본 반영)
+ * @param {Invoice} invoice - id 필수, 이외 필드는 갱신될 최종값
+ * @returns {Promise<Invoice>}
+ */
+async function updateInvoice(invoice) {
+  if (!window._FS) throw new Error('[Invoice] _FS 미초기화');
+  if (!invoice || !invoice.id) throw new Error('[Invoice] update: id 없음');
+  let list = await window._FS.get(INVOICE_DOC_KEY);
+  if (!Array.isArray(list)) list = [];
+  const idx = list.findIndex(inv => inv && inv.id === invoice.id);
+  if (idx < 0) {
+    // 기존에 없으면 push (신규로 취급)
+    list.push(invoice);
+  } else {
+    list[idx] = invoice;
+  }
+  await window._FS.set(INVOICE_DOC_KEY, list);
+  return invoice;
+}
+
+/**
  * 특정 날짜의 거래명세서 시리얼 목록 반환 (일련번호 생성용)
  * @param {string} yyyymmdd - 예: "20260612"
  * @returns {Promise<string[]>}
