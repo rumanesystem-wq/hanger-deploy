@@ -530,8 +530,6 @@ function showApp(){
   setupDateInput('o-ship-date');
   // 비밀번호 보기 토글 초기화
   ['login-pw','reg-pw','reg-pw2','setup-pw','setup-pw2','profile-pw','profile-pw2','acc-pw'].forEach(wrapPwToggle);
-  // 관리자: 이카운트 IP 자동 폴링 (10분마다, 변경 감지 시 토스트)
-  if(isAdmin()&&typeof startIpAutoPoll==='function')startIpAutoPoll();
 }
 
 document.getElementById('login-pw').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});

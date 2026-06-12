@@ -68,7 +68,6 @@ const NAV_ADMIN=[
   {id:'usage-stats',       label:'사용량 통계',    icon:'fa-chart-bar'},
   {id:'price-settings',    label:'단가 관리',      icon:'fa-tags'},
   {id:'accounts',          label:'계정 관리',      icon:'fa-users-gear'},
-  {id:'ip-monitor',        label:'이카운트 IP',    icon:'fa-network-wired'},
 ];
 const NAV_ORDERER=[
   {id:'dashboard',         label:'대시보드',      icon:'fa-gauge'},
@@ -78,7 +77,7 @@ const NAV_ORDERER=[
 function getNavItems(){return isAdmin()?NAV_ADMIN:NAV_ORDERER;}
 
 function navigate(view, {addHistory=true}={}){
-  const adminOnly=['inventory','items','accounts','usage-stats','price-settings','shipping-view','ip-monitor'];
+  const adminOnly=['inventory','items','accounts','usage-stats','price-settings','shipping-view'];
   if(adminOnly.includes(view)&&!isAdmin()){toast('관리자만 접근할 수 있습니다.','error');view='dashboard';}
   if(currentView&&currentView!==view){
     navHistory.push(currentView);
@@ -107,7 +106,6 @@ function navigate(view, {addHistory=true}={}){
     else if(view==='accounts')renderAccounts();
     else if(view==='usage-stats')renderUsageStats();
     else if(view==='price-settings')renderPriceSettings();
-    else if(view==='ip-monitor')renderIpMonitor();
   },30);
 }
 
@@ -141,7 +139,7 @@ function goBack(){
   updateBackBtn();
 }
 // 메인 네비게이션 페이지 목록 — 이 페이지에서는 뒤로가기 숨김
-const MAIN_VIEWS=['dashboard','orders','shipping-view','purchase-requests','inventory','items','accounts','stock-view','shortage-view','usage-stats','price-settings','ip-monitor'];
+const MAIN_VIEWS=['dashboard','orders','shipping-view','purchase-requests','inventory','items','accounts','stock-view','shortage-view','usage-stats','price-settings'];
 
 function updateBackBtn(){
   const backBtn=document.getElementById('topbar-back');
@@ -378,7 +376,6 @@ function renderDashboard(){
 
     </div>
     <div class="section-sub">오늘의 발주·재고 현황을 확인합니다.</div>
-    ${isAdmin()?'<div id="dash-ip-monitor"></div>':''}
     <div class="grid-4" style="margin-bottom:20px">
       <div class="stat-card" data-nav="orders">
         <div class="stat-icon bg-amber"><i class="fas fa-file-invoice"></i></div>
@@ -545,7 +542,6 @@ function renderDashboard(){
   el.innerHTML=html;
   const nb=document.getElementById('dash-new-order-btn');
   if(nb)nb.addEventListener('click',openOrderModal);
-  if(isAdmin())loadDashIpMonitor();
 
   // 대시보드 재고 카드 아코디언 이벤트 바인딩
   document.querySelectorAll('.sv-item-row').forEach(row=>{
@@ -762,105 +758,8 @@ function downloadStatsExcel(){
   xlsxDownload(wb,`사용량통계_${xlsxDate()}.xlsx`);
 }
 
-// ── 이카운트 IP 자동 폴링 (10분마다, 변경 감지 시 토스트) ──
-let _ipPollTimer=null;
-function startIpAutoPoll(){
-  if(_ipPollTimer)return;
-  const check=async()=>{
-    if(!window._FS)return;
-    try{
-      const data=await window._FS.get('ecount_ip_monitor');
-      if(!data||!data.currentIp)return;
-      const seen=localStorage.getItem('_lastSeenEcountIp')||'';
-      if(seen&&seen!==data.currentIp){
-        toast(`이카운트 IP 변경: ${data.currentIp} (이전: ${seen}) — 등록 추가 필요`,'warning');
-      }
-      localStorage.setItem('_lastSeenEcountIp',data.currentIp);
-      // 대시보드 화면이면 위젯 갱신
-      if(currentView==='dashboard'&&document.getElementById('dash-ip-monitor')){loadDashIpMonitor();}
-    }catch(e){console.warn('[IP 폴링]',e.message);}
-  };
-  check();
-  _ipPollTimer=setInterval(check,10*60*1000); // 10분
-}
 
-// ── 이카운트 IP 모니터 — 대시보드 위젯 ──
-async function loadDashIpMonitor(){
-  const wrap=document.getElementById('dash-ip-monitor');
-  if(!wrap||!window._FS)return;
-  try{
-    const data=await window._FS.get('ecount_ip_monitor');
-    if(!data||!data.currentIp)return;
-    const seen=localStorage.getItem('_lastSeenEcountIp')||'';
-    const changed=seen&&seen!==data.currentIp;
-    localStorage.setItem('_lastSeenEcountIp',data.currentIp);
-    const last=data.lastCheckedAt?new Date(data.lastCheckedAt).toLocaleString('ko-KR'):'-';
-    if(changed){
-      // 새 IP 감지 → 빨간 알림 배너
-      wrap.innerHTML=`
-        <div class="card" style="margin-bottom:20px;border-left:4px solid #dc2626;background:#fef2f2;padding:14px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-          <div style="background:#dc2626;color:#fff;border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
-            <i class="fas fa-triangle-exclamation"></i>
-          </div>
-          <div style="flex:1;min-width:0">
-            <div style="font-weight:800;color:#991b1b;font-size:14px">이카운트 IP 변경 감지</div>
-            <div style="font-size:13px;color:#7f1d1d;margin-top:2px">새 IP <span style="font-family:monospace;font-weight:800">${data.currentIp}</span> — 이카운트 ERP에서 IP 등록 추가하세요. (이전: ${seen})</div>
-          </div>
-          <button class="btn btn-outline btn-sm" data-nav="ip-monitor" style="border-color:#dc2626;color:#dc2626;font-weight:700">자세히</button>
-        </div>`;
-      toast('이카운트 IP가 변경되었습니다. 등록 추가가 필요합니다.','warning');
-    }else{
-      // 평상시: 작은 정보 카드
-      wrap.innerHTML=`
-        <div class="card" style="margin-bottom:20px;padding:10px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;cursor:pointer" data-nav="ip-monitor">
-          <i class="fas fa-network-wired" style="color:var(--primary)"></i>
-          <span style="font-size:12px;color:var(--text-3)">이카운트 IP</span>
-          <span style="font-family:monospace;font-weight:700;color:var(--text)">${data.currentIp}</span>
-          <span style="font-size:11px;color:var(--text-3);margin-left:auto">${last}</span>
-        </div>`;
-    }
-  }catch(e){console.warn('[대시보드 IP 모니터]',e.message);}
-}
-
-// ── 이카운트 IP 모니터 ──
-async function renderIpMonitor(){
-  document.getElementById('content').innerHTML=`
-    <div style="margin-bottom:14px">
-      <div class="section-title">이카운트 IP 모니터</div>
-      <div class="section-sub">Cloud Function이 이카운트에 접속할 때 사용하는 IP. 30분마다 자동 갱신. 변경되면 이카운트 ERP > API인증키 > IP등록에 추가 등록 필요.</div>
-    </div>
-    <div id="ip-monitor-body" class="card" style="padding:20px"><div class="empty"><i class="fas fa-spinner fa-spin"></i><p>불러오는 중...</p></div></div>`;
-  try{
-    const data=window._FS?await window._FS.get('ecount_ip_monitor'):null;
-    const body=document.getElementById('ip-monitor-body');
-    if(!data){
-      body.innerHTML='<div class="empty"><i class="fas fa-info-circle"></i><p>아직 측정된 IP가 없습니다. 함수 배포 후 최대 30분 기다려주세요.</p></div>';
-      return;
-    }
-    const cur=data.currentIp||'(없음)';
-    const last=data.lastCheckedAt?new Date(data.lastCheckedAt).toLocaleString('ko-KR'):'-';
-    const hist=(data.history||[]).map(h=>{
-      const t=new Date(h.at).toLocaleString('ko-KR');
-      return `<tr><td style="font-family:monospace;font-weight:700;font-size:14px">${h.ip}</td><td class="td-muted">${t}</td></tr>`;
-    }).join('');
-    body.innerHTML=`
-      <div style="display:flex;align-items:center;gap:24px;padding:8px 0 20px;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap">
-        <div>
-          <div style="font-size:12px;color:var(--text-3);font-weight:600;margin-bottom:6px">현재 IP</div>
-          <div style="font-family:monospace;font-size:24px;font-weight:800;color:var(--primary)">${cur}</div>
-        </div>
-        <div>
-          <div style="font-size:12px;color:var(--text-3);font-weight:600;margin-bottom:6px">마지막 확인</div>
-          <div style="font-size:14px;font-weight:600;color:var(--text)">${last}</div>
-        </div>
-        <button class="btn btn-outline btn-sm" onclick="renderIpMonitor()" style="margin-left:auto"><i class="fas fa-rotate"></i> 새로고침</button>
-      </div>
-      <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:8px">변경 이력 (최근 ${(data.history||[]).length}건)</div>
-      ${hist?`<div class="table-wrap"><table><thead><tr><th>IP</th><th>변경 시각</th></tr></thead><tbody>${hist}</tbody></table></div>`:'<div class="empty"><p>이력 없음</p></div>'}`;
-  }catch(e){
-    document.getElementById('ip-monitor-body').innerHTML=`<div class="empty"><i class="fas fa-triangle-exclamation"></i><p>불러오기 실패: ${e.message}</p></div>`;
-  }
-}
+// 이카운트 IP 모니터 관련 함수 제거됨 (2026-06-11)
 
 let priceSettingsSearch='',priceSettingsOnlyNull=false;
 function renderPriceSettings(){

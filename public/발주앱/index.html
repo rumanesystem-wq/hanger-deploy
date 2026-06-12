@@ -139,13 +139,9 @@
       const db  = app.firestore();
       db.enablePersistence({synchronizeTabs:true}).catch(e=>console.warn('[Firestore persistence 실패]',e&&e.code));
 
-      // Firebase Functions 초기화 (이카운트 ERP 연동)
+      // Firebase Functions 초기화 (이카운트 연동 제거 후 핵심 함수만 유지)
       const fnApp = app.functions('asia-northeast3');
       window._FN = {
-        updateEcountPrice:      fnApp.httpsCallable('updateEcountPrice'),
-        createSaleOrder:        fnApp.httpsCallable('createEcountSaleOrder'),
-        testConnection:         fnApp.httpsCallable('testEcountConnection'),
-        getProducts:            fnApp.httpsCallable('getEcountProducts'),
         getEmailById:           fnApp.httpsCallable('getEmailById'),
         getNextIds:             fnApp.httpsCallable('getNextIds')
       };

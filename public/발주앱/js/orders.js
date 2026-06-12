@@ -153,214 +153,8 @@ async function changeOrderStatus(orderId, newStatus){
 }
 
 
-// ── 이카운트 판매전표 생성 (발주확정 시 호출) ─────────────────────
-// 처리 대상: 상부자재 / 옷봉 / 선반 / 코너선반 / 서랍장&옵션
-async function _createEcountSaleFromOrder(order){
-  if(!window._FN){return;}
-  const allItems=DB.get('items',[]);
-  const wh=order.warehouse||'시흥';
-  const whCd=getWhErpCd(wh);
-  const sharedColor=order.sharedColor||'';
 
-  // 거래처코드: 발주 올린 사람 / 담당자: 출고확정 누른 사람(현재 로그인)
-  const accounts=DB.get('accounts',[]);
-  const ordererAcc=accounts.find(a=>a.id===order.createdBy);
-  const confirmerAcc=accounts.find(a=>a.id===(currentUser?.id));
-  const custCd=ordererAcc?.bizCd||'';
-  const empCd=confirmerAcc?.empCd||'';
-  const custNm=order.deliveryTo||'';
-
-  const ecountItems=[];
-
-  // ① 상부자재
-  // colorProdCdMap 키는 한글 색상명 (화이트, 블랙, 실버, 샴페인골드)
-  // upperMaterials 항목: {name, white, black, silver, champagne, qty, unitPrice}
-  const upperColorMap={'white':'화이트','black':'블랙','silver':'실버','champagne':'샴페인골드'};
-  (order.upperMaterials||[]).forEach(r=>{
-    if(!r.name)return;
-    const name=compatUpperName(r.name);
-    // 1차: 정확한 이름 매칭 (공백 제거)
-    let dbItem=allItems.find(i=>normalizeName(i.name)===normalizeName(name));
-    // 2차 fallback: 괄호·구두점까지 제거 후 완전 일치
-    if(!dbItem){
-      const aggName=aggressiveNormalize(name);
-      dbItem=allItems.find(i=>aggressiveNormalize(i.name)===aggName);
-    }
-    // 3차 fallback: DB 품목명이 주문 품목명의 접두어이거나 그 반대인 경우
-    if(!dbItem){
-      const aggName=aggressiveNormalize(name);
-      dbItem=allItems.find(i=>{
-        const aggItem=aggressiveNormalize(i.name);
-        return aggItem.length>=2&&(aggName.startsWith(aggItem)||aggItem.startsWith(aggName));
-      });
-    }
-    // 4차 fallback: 원래 이름(compat 변환 전)으로 재시도
-    if(!dbItem){
-      dbItem=allItems.find(i=>normalizeName(i.name)===normalizeName(r.name));
-    }
-    if(!dbItem){
-      const aggOrig=aggressiveNormalize(r.name);
-      dbItem=allItems.find(i=>aggressiveNormalize(i.name)===aggOrig);
-    }
-    if(!dbItem){
-      console.warn('[이카운트] 상부자재 품목 미매칭 (건너뜀):',r.name,'→',name);
-      return;
-    }
-
-    // 공통색상이 지정된 경우 → 해당 색상으로 전체 수량 처리
-    if(order.upperCommonColor){
-      const qty=r.qty||r.white||r.black||r.silver||r.champagne||0;
-      if(qty<=0)return;
-      const colorKey=resolveColorKey(order.upperCommonColor);
-      const prodCd=dbItem.colorProdCdMap?.[colorKey]||dbItem.colorProdCdMap?.[order.upperCommonColor]||dbItem.prodCd||'';
-      if(!prodCd)return;
-      const price=r.unitPrice??getActivePriceForItem(name)??null;
-      // 길이 분할이 있으면 분할별로 행 분리 (같은 품목코드, 수량만 분리)
-      const splits=Array.isArray(r.lengthSplits)?r.lengthSplits:null;
-      if(splits&&splits.length>0&&splits.reduce((a,s)=>a+(s.qty||0),0)===qty){
-        splits.forEach(sp=>{
-          if(sp.qty>0)ecountItems.push({prodCd,qty:sp.qty,prodNm:name,sizeNm:colorKey,price});
-        });
-      }else{
-        ecountItems.push({prodCd,qty,prodNm:name,sizeNm:colorKey,price});
-      }
-    } else {
-      // 색상별 수량이 따로 있는 경우 → 색상별로 각각 생성
-      ['white','black','silver','champagne'].forEach(engKey=>{
-        const qty=r[engKey]||0;
-        if(qty<=0)return;
-        const korColor=upperColorMap[engKey];
-        const colorKey=resolveColorKey(korColor);
-        const prodCd=dbItem.colorProdCdMap?.[colorKey]||dbItem.colorProdCdMap?.[korColor]||dbItem.prodCd||'';
-        if(!prodCd)return;
-        const price=r.unitPrice??getActivePriceForItem(name)??null;
-        ecountItems.push({prodCd,qty,prodNm:name,sizeNm:colorKey,price});
-      });
-    }
-  });
-
-  // ② 옷봉 2400 (색상별 코드 조회 — 이카운트 023~026)
-  if((order.rodItems||[]).length>0){
-    const rodQty=order.rod2400Required||0;
-    if(rodQty>0){
-      const rodItem=allItems.find(i=>{const n=normalizeName(i.name);return n==='옷봉2400'||n==='옷봉2400mm';});
-      if(rodItem){
-        // 옷봉 색상 = 상부자재 공통색상 → 주문 공통색상 순으로 결정
-        const rodColor=order.upperCommonColor||sharedColor||'';
-        const rodColorKey=resolveColorKey(rodColor);
-        const prodCd=(rodItem.colorProdCdMap&&rodColorKey&&(rodItem.colorProdCdMap[rodColorKey]||rodItem.colorProdCdMap[rodColor]))
-          ?(rodItem.colorProdCdMap[rodColorKey]||rodItem.colorProdCdMap[rodColor])
-          :(rodItem.prodCd||'');
-        if(prodCd){
-          const price=getActivePriceForItem('옷봉 2400')??4500;
-          ecountItems.push({prodCd,qty:rodQty,prodNm:'옷봉 2400',sizeNm:rodColorKey,price});
-        }else{console.warn('[이카운트] 옷봉 prodCd 없음 (건너뜀): 색상',rodColor);}
-      }else{console.warn('[이카운트] 옷봉 품목 미매칭 (건너뜀)');}
-    }
-  }
-
-  // ③ 선반 / 코너선반
-  (order.shelfItems||[]).forEach(si=>{
-    const isCorner=(si.name==='코너선반');
-    (si.entries||[]).forEach(e=>{
-      const qty=e.qty||0;
-      if(qty<=0)return;
-      const color=e.color||sharedColor||'';
-      let prodCd='';
-      if(isCorner){
-        prodCd=getCornerShelfEcountCode(e.width,e.height,color)||e.ecountCd||'';
-      } else {
-        prodCd=getShelfEcountCode(e.size,color)||e.ecountCd||'';
-      }
-      if(!prodCd)return;
-      const price=e.unitPrice??(isCorner?getCornerShelfPrice(e.width,e.height):getShelfPrice(e.size));
-      const sizeNm=isCorner?`${e.width}×${e.height}`:(e.size?`${e.size}mm`:'');
-      ecountItems.push({prodCd,qty,prodNm:si.name,sizeNm:`${color}${sizeNm?(' '+sizeNm):''}`,price});
-    });
-  });
-
-  // ④ 서랍장 / 옵션
-  (order.drawerItems||order.items||[]).forEach(oi=>{
-    const qty=oi.requiredQty||0;
-    if(qty<=0)return;
-    const item=allItems.find(i=>i.id===oi.itemId);
-    if(!item)return;
-    const color=oi.color||sharedColor||'';
-    const colorKey=resolveColorKey(color);
-
-    // ── 서브타입 선택된 경우: 각 서브타입을 개별 이카운트 품목으로 전송 ──
-    const subtypeDefs=(typeof ITEM_SUBTYPES!=='undefined')?ITEM_SUBTYPES[item.name]:null;
-    if(subtypeDefs&&oi.subTypeChecked&&oi.subTypeChecked.length>0){
-      oi.subTypeChecked.forEach(stName=>{
-        const stDef=subtypeDefs.find(s=>s.name===stName);
-        const lookupName=stDef?.itemName||stName;
-        // DB 품목 찾기 (aggressiveNormalize fallback)
-        let stItem=allItems.find(i=>normalizeName(i.name)===normalizeName(lookupName));
-        if(!stItem){const agg=aggressiveNormalize(lookupName);stItem=allItems.find(i=>aggressiveNormalize(i.name)===agg);}
-        if(!stItem){console.warn('[이카운트] 서브타입 품목 미매칭:',stName,'→',lookupName);return;}
-        const stColorKey=resolveColorKey(color);
-        const stProdCd=(stItem.colorProdCdMap&&stColorKey&&(stItem.colorProdCdMap[stColorKey]||stItem.colorProdCdMap[color]))
-          ?(stItem.colorProdCdMap[stColorKey]||stItem.colorProdCdMap[color])
-          :(stItem.prodCd||'');
-        if(!stProdCd){console.warn('[이카운트] 서브타입 코드 없음:',stName,color);return;}
-        const stIsColorless=stItem.noColor||(stItem.prodCd&&!stItem.colorProdCdMap);
-        const stSizeNm=stIsColorless?'':stColorKey;
-        const stPrice=getActivePriceForItem(lookupName)??null;
-        ecountItems.push({prodCd:stProdCd,qty,prodNm:lookupName,sizeNm:stSizeNm,price:stPrice});
-      });
-      // 서브타입 전송 후 부모 품목도 이어서 전송 (아래 공통 로직으로 fall-through)
-    }
-
-    // 부모 품목 전송 (서브타입 유무와 관계없이 항상 전송)
-    const prodCd=(item.colorProdCdMap&&colorKey&&(item.colorProdCdMap[colorKey]||item.colorProdCdMap[color]))
-      ?(item.colorProdCdMap[colorKey]||item.colorProdCdMap[color])
-      :(item.prodCd||'');
-    if(!prodCd)return;
-    const isColorless=item.noColor||(item.prodCd&&!item.colorProdCdMap);
-    const sizeNm=isColorless?'':colorKey;
-    const price=oi.unitPrice??getActivePriceForItem(item.name)??null;
-    ecountItems.push({prodCd,qty,prodNm:item.name,sizeNm,price});
-  });
-
-  // ── 디버그 로그 ──
-  console.log('[이카운트 디버그] order.upperMaterials:', JSON.stringify(order.upperMaterials||[]));
-  console.log('[이카운트 디버그] order.shelfItems:', JSON.stringify(order.shelfItems||[]));
-  console.log('[이카운트 디버그] order.drawerItems:', JSON.stringify(order.drawerItems||[]));
-  console.log('[이카운트 디버그] sharedColor:', sharedColor);
-  console.log('[이카운트 디버그] 수집된 ecountItems:', JSON.stringify(ecountItems));
-
-  if(ecountItems.length===0){
-    console.warn('[이카운트 연동] ERP 품목코드가 설정된 품목 없음 — 전표 생성 건너뜀');
-    toast('이카운트: 연동 가능한 품목코드가 없어 전표 생성을 건너뜁니다.','warning');
-    return;
-  }
-
-  let ioDate='';
-  if(order.orderDate&&order.orderDate!=='0000-00-00') ioDate=order.orderDate.replace(/-/g,'');
-
-  toast('이카운트에 판매전표 생성 중...','info');
-  try{
-    const result=await window._FN.createSaleOrder({
-      custCd,
-      custNm,
-      empCd,
-      whCd,
-      ioDate,
-      remarks: order.orderNum || `발주 #${order.id}`,
-      items:ecountItems
-    });
-    toast(result.data.message||'이카운트 판매전표 생성 완료','success');
-    if(result.data.slipNos?.length){
-      const latestOrders=DB.get('orders',[]);
-      const oidx=latestOrders.findIndex(o=>o.id===order.id);
-      if(oidx!==-1){latestOrders[oidx].ecountSlipNos=result.data.slipNos;DB.set('orders',latestOrders);}
-    }
-  }catch(e){
-    const msg=e?.message||String(e);
-    toast('이카운트 출고 연동 실패: '+msg,'error');
-    console.error('[이카운트 판매전표]',e);
-  }
-}
+// 이카운트 연동 코드 제거됨 (2026-06-11) — _createEcountSaleFromOrder 및 호출부 삭제
 
 
 // 발주 취소: 차감된 재고 롤백
@@ -769,11 +563,7 @@ async function toggleOrderLock(orderId){
     addStatusHistory(idx, orders, '발주확정', '관리자 확정');
     DB.set('orders',orders);
     toast('발주가 확정되었습니다.','success');
-    // ─── 출고확정 버튼 누를 때 이카운트 판매전표 자동 생성 ───
-    if(window._FN){
-      const confirmedOrder=DB.get('orders',[]).find(o=>o.id===orderId);
-      if(confirmedOrder) _createEcountSaleFromOrder(confirmedOrder).catch(e=>console.error('[이카운트 출고연동]',e));
-    }
+    // 이카운트 자동 연동 제거됨 (2026-06-11)
   } else {
     // 확정 해제: status → 발주대기, 자물쇠 열림
     orders[idx].isLocked=false;
@@ -1007,7 +797,6 @@ function renderOrders(){
   document.querySelectorAll('.order-list-sub-tab').forEach(btn=>{
     btn.addEventListener('click',()=>{orderListSubTab=btn.dataset.subTab;renderOrders();});
   });
-
   // 렌더 후 포커스·커서 복원 — 필터 입력칸 연속 타이핑 시 한 글자마다 포커스 풀리는 문제 방지
   // INPUT만 대상(버튼·select 제외), preventScroll로 긴 목록에서 스크롤 점프 방지
   if(_focusId){
