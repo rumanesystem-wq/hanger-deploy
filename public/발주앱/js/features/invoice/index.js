@@ -47,9 +47,21 @@ function _setupInvoiceModalButtons(invoice) {
   const content  = document.getElementById('invoiceContent');
 
   if (btnPdf) {
-    btnPdf.onclick = () => {
+    btnPdf.onclick = async () => {
+      if (btnPdf.disabled) return;
       const filename = _safeFileName(`거래명세서_${invoice.deliveryTo || ''}_${invoice.serial || invoice.orderNum || ''}`) + '.pdf';
-      downloadInvoicePDF(content, filename);
+      const originalHtml = btnPdf.innerHTML;
+      btnPdf.disabled = true;
+      btnPdf.innerHTML = '생성 중...';
+      try {
+        await downloadInvoicePDF(content, filename);
+      } catch (e) {
+        console.error('[Invoice] PDF 생성 실패:', e && e.message);
+        if (typeof toast === 'function') toast('PDF 생성 중 오류가 발생했습니다.', 'error');
+      } finally {
+        btnPdf.disabled = false;
+        btnPdf.innerHTML = originalHtml;
+      }
     };
   }
   if (btnPrint) {

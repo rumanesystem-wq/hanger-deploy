@@ -798,9 +798,12 @@ function renderOrders(){
   document.querySelectorAll('.order-list-sub-tab').forEach(btn=>{
     btn.addEventListener('click',()=>{orderListSubTab=btn.dataset.subTab;renderOrders();});
   });
-  // 거래명세서 버튼 클릭 (이벤트 위임)
-  document.querySelectorAll('.invoice-btn').forEach(btn=>{
-    btn.addEventListener('click',e=>{
+  // 거래명세서 버튼 클릭 (컨테이너 단일 이벤트 위임 — 핸들러 누적 차단)
+  if(!document._invoiceBtnDelegated){
+    document._invoiceBtnDelegated=true;
+    document.addEventListener('click',e=>{
+      const btn=e.target.closest && e.target.closest('.invoice-btn');
+      if(!btn)return;
       e.stopPropagation();
       const oid=parseInt(btn.dataset.orderId);
       const order=getOrders().find(o=>o.id===oid);
@@ -808,7 +811,7 @@ function renderOrders(){
       if(!window.LumaneInvoice){toast('거래명세서 모듈 로드 실패. 새로고침 후 다시 시도하세요.','error');return;}
       window.LumaneInvoice.openFromOrder(order);
     });
-  });
+  }
 
   // 렌더 후 포커스·커서 복원 — 필터 입력칸 연속 타이핑 시 한 글자마다 포커스 풀리는 문제 방지
   // INPUT만 대상(버튼·select 제외), preventScroll로 긴 목록에서 스크롤 점프 방지
