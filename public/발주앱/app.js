@@ -1248,11 +1248,167 @@ function renderHistoryContent(){
 function renderSettlement(){
   if(!requireAdmin())return;
   document.getElementById('content').innerHTML = `
-    <div style="padding:24px">
-      <h2 style="font-size:22px;font-weight:800;margin-bottom:8px">정산</h2>
-      <p style="color:var(--text-3);font-size:13px">정산 준비 중... (단계 1A — 빈 화면)</p>
+    <style>
+      .settlement-scope { padding: 24px; }
+      .settlement-scope .filter-card { background: #fff; border: 1px solid var(--border); border-radius: var(--r); padding: 14px 18px; margin-bottom: 16px; }
+      .settlement-scope .filter-row { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; }
+      .settlement-scope .filter-label { font-size: 11px; font-weight: 700; color: var(--text-2); margin-bottom: 4px; }
+      .settlement-scope .filter-card input, .settlement-scope .filter-card select { padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--r-sm); font-size: 13px; }
+      .settlement-scope .filter-card .spacer { flex: 1; }
+      .settlement-scope .period-tabs { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
+      .settlement-scope .period-tab { padding: 7px 14px; background: #fff; border: 1px solid var(--border); border-radius: var(--r-sm); font-size: 12px; font-weight: 600; color: var(--text-2); cursor: pointer; }
+      .settlement-scope .period-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+      .settlement-scope .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+      .settlement-scope .summary-card { background: #fff; border: 1px solid var(--border); border-radius: var(--r); padding: 16px 20px; }
+      .settlement-scope .summary-label { font-size: 11px; color: var(--text-3); font-weight: 600; margin-bottom: 4px; }
+      .settlement-scope .summary-value { font-size: 20px; font-weight: 800; color: var(--text); }
+      .settlement-scope .data-card { background: #fff; border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; margin-bottom: 16px; }
+      .settlement-scope .data-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+      .settlement-scope .data-card-title { font-size: 14px; font-weight: 700; color: var(--text); }
+      .settlement-scope table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      .settlement-scope th { background: #f9fafb; padding: 10px 12px; text-align: left; border-bottom: 2px solid var(--border); font-size: 12px; font-weight: 700; color: var(--text-2); }
+      .settlement-scope td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+      .settlement-scope td.num, .settlement-scope th.num { text-align: right; font-variant-numeric: tabular-nums; }
+      .settlement-scope td.center, .settlement-scope th.center { text-align: center; }
+      .settlement-scope tr.row-main { cursor: pointer; }
+      .settlement-scope tr.row-main:hover { background: #f0f9ff; }
+      .settlement-scope tr.row-total td { background: #eff6ff; font-weight: 700; }
+      .settlement-scope tr.row-detail.hidden { display: none; }
+      .settlement-scope tr.row-detail td { background: #fafafa; padding: 0; }
+      .settlement-scope .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+      .settlement-scope .badge-wh-siheung { background: #dbeafe; color: #1e40af; }
+      .settlement-scope .badge-wh-pyeongtaek { background: #fef3c7; color: #92400e; }
+      .settlement-scope .btn-edit { background: #f3f4f6; color: var(--text-2); border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; }
+      .settlement-scope .btn-edit:hover { background: #e5e7eb; }
+      .settlement-scope .btn-link { background: #fff; color: var(--primary); border: 1px solid var(--primary); padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; }
+      .settlement-scope .btn-link:hover { background: #eff6ff; }
+      .settlement-scope .btn-invoice { background: #1e40af; color: #fff; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer; }
+      .settlement-scope .btn-invoice:hover { background: #1e3a8a; }
+      .settlement-scope .btn-search { background: var(--primary); color: #fff; border: none; padding: 9px 20px; border-radius: var(--r-sm); font-size: 13px; font-weight: 700; cursor: pointer; }
+      .settlement-scope .btn-export { background: #15803d; color: #fff; border: none; padding: 9px 16px; border-radius: var(--r-sm); font-size: 13px; font-weight: 700; cursor: pointer; }
+      .settlement-scope .inline-edit { padding: 12px 16px; background: #fffbeb; }
+      .settlement-scope .inline-edit-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+      .settlement-scope .inline-edit label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; font-weight: 700; color: var(--text-2); }
+      .settlement-scope .inline-edit input, .settlement-scope .inline-edit select { padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; }
+      .settlement-scope .inline-edit-actions { display: flex; gap: 6px; }
+      .settlement-scope .btn-save { background: #15803d; color: #fff; border: none; padding: 6px 14px; border-radius: 4px; font-size: 12px; font-weight: 700; cursor: pointer; }
+      .settlement-scope .btn-cancel { background: #fff; color: var(--text-2); border: 1px solid var(--border); padding: 6px 14px; border-radius: 4px; font-size: 12px; cursor: pointer; }
+      .settlement-scope @media (max-width: 900px) { .settlement-scope .summary-grid { grid-template-columns: repeat(2, 1fr); } }
+      .stl-tabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 2px solid var(--border); }
+      .stl-tab { padding: 10px 20px; background: none; border: none; border-bottom: 3px solid transparent; font-size: 14px; font-weight: 700; color: var(--text-3); cursor: pointer; margin-bottom: -2px; }
+      .stl-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+      .stl-panel { display: none; }
+      .stl-panel.active { display: block; }
+    </style>
+    <div class="settlement-scope">
+      <div class="stl-tabs">
+        <button class="stl-tab active" data-stl-tab="settlement"><i class="fas fa-receipt"></i> 기간별 정산</button>
+        <button class="stl-tab" data-stl-tab="ledger"><i class="fas fa-book"></i> 거래처 원장</button>
+      </div>
+
+      <!-- 정산 패널 -->
+      <div class="stl-panel active" data-stl-panel="settlement">
+        <div class="period-tabs">
+          <button class="period-tab" data-mode="daily">일별</button>
+          <button class="period-tab" data-mode="weekly">주별</button>
+          <button class="period-tab active" data-mode="monthly">월별</button>
+          <button class="period-tab" data-mode="quarterly">분기</button>
+          <button class="period-tab" data-mode="yearly">연도</button>
+          <button class="period-tab" data-mode="custom">사용자 지정</button>
+        </div>
+        <div class="filter-card">
+          <div class="filter-row">
+            <div class="fld" id="date-picker-wrap"></div>
+            <div class="fld">
+              <div class="filter-label">납품처 검색</div>
+              <input type="text" id="filter-orderer" placeholder="납품처명 (Enter)" style="width:180px"/>
+            </div>
+            <div class="fld">
+              <div class="filter-label">창고</div>
+              <select id="filter-warehouse" style="width:120px">
+                <option value="">전체</option>
+                <option value="시흥">시흥</option>
+                <option value="평택">평택</option>
+              </select>
+            </div>
+            <button class="btn-search" onclick="loadData()"><i class="fas fa-search"></i> 조회</button>
+            <div class="spacer"></div>
+            <button class="btn-export" onclick="exportExcel()"><i class="fas fa-file-excel"></i> 엑셀 내보내기</button>
+          </div>
+        </div>
+        <div class="summary-grid">
+          <div class="summary-card"><div class="summary-label">출고 건수</div><div class="summary-value" id="sum-count">0건</div></div>
+          <div class="summary-card"><div class="summary-label">공급가액</div><div class="summary-value" id="sum-supply">₩0</div></div>
+          <div class="summary-card"><div class="summary-label">부가세</div><div class="summary-value" id="sum-vat">₩0</div></div>
+          <div class="summary-card"><div class="summary-label" style="color:#1e40af">합계</div><div class="summary-value" id="sum-total" style="color:#1e40af">₩0</div></div>
+        </div>
+        <div class="data-card">
+          <div class="data-card-head"><div class="data-card-title">납품처별 정산 내역</div></div>
+          <div style="overflow-x:auto">
+            <table>
+              <thead><tr><th>납품처</th><th class="num">건수</th><th class="num">공급가액</th><th class="num">부가세</th><th class="num">합계</th><th class="center">상세</th></tr></thead>
+              <tbody id="tbody-ordererwise"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="data-card" id="trend-card">
+          <div class="data-card-head"><div class="data-card-title" id="trend-title">일별 추이</div></div>
+          <div style="overflow-x:auto">
+            <table>
+              <thead><tr><th>날짜</th><th class="num">건수</th><th class="num">합계</th></tr></thead>
+              <tbody id="tbody-trend"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- 거래처 원장 패널 (단계 1C에서 본문 채움) -->
+      <div class="stl-panel" data-stl-panel="ledger">
+        <div style="padding:40px;text-align:center;color:var(--text-3)">거래처 원장 (단계 1C에서 작성 예정)</div>
+      </div>
     </div>
   `;
+
+  // 발주서 이동(onclick="goToOrder('...')") — 정산 표 → 발주서 화면
+  if(typeof window.goToOrder!=='function'){
+    window.goToOrder = function(orderNum){
+      if(!orderNum) return;
+      orderFilterNum = orderNum;
+      navigate('orders');
+    };
+  }
+
+  // 탭 전환
+  document.querySelectorAll('.stl-tab').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const target = btn.dataset.stlTab;
+      document.querySelectorAll('.stl-tab').forEach(b=>b.classList.toggle('active', b===btn));
+      document.querySelectorAll('.stl-panel').forEach(p=>p.classList.toggle('active', p.dataset.stlPanel===target));
+    });
+  });
+
+  // 정산 초기 로드 (settlement 모듈의 init은 단계 2에서, 지금은 직접 호출)
+  if(typeof updateDatePicker==='function') updateDatePicker();
+  if(typeof loadData==='function') loadData();
+
+  // 납품처 검색 Enter 핸들러
+  const ordererInput = document.getElementById('filter-orderer');
+  if(ordererInput){
+    ordererInput.addEventListener('keydown',e=>{
+      if(e.key==='Enter'){ e.preventDefault(); if(typeof loadData==='function') loadData(); }
+    });
+  }
+
+  // 기간 모드 탭 클릭
+  document.querySelectorAll('.period-tab').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      document.querySelectorAll('.period-tab').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      if(typeof currentMode!=='undefined') currentMode = btn.dataset.mode;
+      if(typeof updateDatePicker==='function') updateDatePicker();
+      if(typeof loadData==='function') loadData();
+    });
+  });
 }
 
 // 품목 마스터 (관리자)

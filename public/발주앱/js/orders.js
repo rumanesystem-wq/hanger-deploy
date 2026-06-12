@@ -675,7 +675,7 @@ function renderOrders(){
       const cancelBtn=isAdmin()&&orderListSubTab==='active'?`<button class="btn btn-ghost btn-xs order-cancel-btn" data-order-id="${o.id}" style="color:var(--danger);white-space:nowrap"><i class="fas fa-ban"></i> 발주 취소</button>`:'';
       const uncancelBtn=orderListSubTab==='cancelled'&&(isAdmin()||(currentUser&&o.createdBy===currentUser.id))?`<button class="btn btn-ghost btn-xs order-uncancel-btn" data-order-id="${o.id}" style="color:#16a34a;white-space:nowrap"><i class="fas fa-rotate-left"></i> 취소 되돌리기</button>`:'';
       const reorderBtn=`<button class="btn btn-outline btn-xs reorder-btn" data-order-id="${o.id}" title="이 발주서로 재발주" style="border:1.5px solid #0ea5e9;color:#0369a1;font-weight:700;white-space:nowrap"><i class="fas fa-rotate-right"></i> 재발주</button>`;
-      const invoiceBtn=isAdmin()&&o.status==='출고완료'?`<button class="btn btn-outline btn-xs invoice-btn" data-order-id="${o.id}" style="border:1.5px solid #7c3aed;color:#7c3aed;font-weight:700;white-space:nowrap"><i class="fas fa-file-invoice"></i> 거래명세서</button>`:'';
+      const invoiceBtn=isAdmin()&&(o.status==='출고완료'||o.status==='발주확정')?`<button class="btn btn-outline btn-xs invoice-btn" data-order-id="${o.id}" style="border:1.5px solid #7c3aed;color:#7c3aed;font-weight:700;white-space:nowrap"><i class="fas fa-file-invoice"></i> 거래명세서</button>`:'';
       const cancelReasonCell=orderListSubTab==='cancelled'?`<td class="td-muted" style="font-size:12px;color:#dc2626;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${o.cancelReason||''}">${o.cancelReason||'-'}</td>`:'';
       return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer" title="클릭하여 상세 보기"><td class="td-name">${dTo}</td><td class="td-muted" style="font-size:12px">${addr}</td><td style="font-size:12px;font-weight:600;color:#0f172a">${o.orderNum||('#'+o.id)}${lockBadge}</td><td class="td-muted">${fmt(o.orderDate)}</td><td class="td-muted">${o.shipDate?fmt(o.shipDate):'-'}</td><td class="td-center">${statusBadge}</td><td class="td-center td-muted">${fmt(o.createdAt)}</td>${cancelReasonCell}<td class="td-center">${cancelBtn} ${uncancelBtn} ${reorderBtn} ${invoiceBtn}</td></tr>`;
     }).join('')}</tbody></table></div>`;
@@ -1220,11 +1220,11 @@ function openOrderDetail(orderId){
       detailCancelBtn.style.display='none';
     }
   }
-  // 거래명세서 버튼 (출고완료 + 관리자만)
+  // 거래명세서 버튼 (출고확정(=발주확정) 이상 + 관리자만)
   {
     const existingInvBtn=document.getElementById('detail-invoice-btn');
     if(existingInvBtn)existingInvBtn.remove();
-    if(isAdmin()&&order.status==='출고완료'){
+    if(isAdmin()&&(order.status==='출고완료'||order.status==='발주확정')){
       const leftBtns=document.querySelector('#order-detail-modal .modal-footer > div');
       if(leftBtns){
         const invBtn=document.createElement('button');

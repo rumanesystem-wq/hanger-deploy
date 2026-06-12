@@ -491,5 +491,7 @@ function goBackToList() {
 // 초기화 + 이벤트 바인딩
 // ============================================================
 window.addEventListener('DOMContentLoaded', () => {
+  // 발주앱 메인 통합 환경 가드: 원장 화면 진입 전엔 자동 실행 안 함 (탭 전환 시 직접 호출)
+  if (!document.getElementById('view-list')) return;
   showListView();
 });

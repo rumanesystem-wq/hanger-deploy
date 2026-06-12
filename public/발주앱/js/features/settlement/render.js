@@ -201,6 +201,7 @@ function renderCustomerDetailTable(orders) {
             <th class="center">발주일</th>
             <th class="num">공급가액</th>
             <th class="num">합계</th>
+            <th class="center">거래명세서</th>
             <th class="center">수정</th>
             <th class="center">상세</th>
           </tr>
@@ -228,6 +229,7 @@ function renderOrderRow(o) {
       <td class="center" style="font-size:12px">${fmtShortDate(o.orderDate)}</td>
       <td class="num">${fmtMoney(o.totalSupply)}</td>
       <td class="num"><strong>${fmtMoney(o.totalAmount)}</strong></td>
+      <td class="center"><button class="btn-invoice" onclick="openInvoiceFromSettlement(${o.id})"><i class="fas fa-file-invoice"></i> 거래명세서</button></td>
       <td class="center"><button class="btn-edit" onclick="startInlineEdit(${o.id})"><i class="fas fa-edit"></i> 수정</button></td>
       <td class="center"><button class="btn-link" onclick="goToOrder('${escapeHtml(o.orderNum)}')"><i class="fas fa-external-link-alt"></i> 이동</button></td>
     </tr>
@@ -351,6 +353,16 @@ function renderTrend(orders) {
  * 현재 필터에 맞는 데이터를 다시 fetch한 후 export.js에 위임
  * @returns {Promise<void>}
  */
+/**
+ * 정산 표에서 거래명세서 버튼 클릭 핸들러
+ * 단계 1B 시점: Mock 데이터라 운영 DB 오염 방지 차원에서 alert만.
+ * Phase D(실 데이터 연결) 후 LumaneInvoice.openFromOrder(order) 정상 호출로 교체.
+ * @param {number} orderId
+ */
+function openInvoiceFromSettlement(orderId) {
+  alert('Mock 데이터입니다 — Phase D(실 데이터 연결) 후 정상 작동합니다.\n현재는 운영 DB 보호 차원에서 모달 표시를 막아두었습니다.');
+}
+
 async function exportExcel() {
   const range = getDateRange(currentMode, currentValue);
   const filter = {
@@ -370,6 +382,8 @@ async function exportExcel() {
 // 초기화 + 이벤트 바인딩
 // ============================================================
 window.addEventListener('DOMContentLoaded', () => {
+  // 발주앱 메인 통합 환경 가드: 정산 화면 진입 전엔 자동 실행 안 함 (renderSettlement이 직접 호출)
+  if (!document.getElementById('date-picker-wrap')) return;
   // 탭 클릭
   document.querySelectorAll('.period-tab').forEach(btn => {
     btn.addEventListener('click', () => {
