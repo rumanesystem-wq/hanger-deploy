@@ -67,6 +67,7 @@ const NAV_ADMIN=[
   {id:'items',             label:'품목 마스터',    icon:'fa-list'},
   {id:'usage-stats',       label:'사용량 통계',    icon:'fa-chart-bar'},
   {id:'price-settings',    label:'단가 관리',      icon:'fa-tags'},
+  {id:'settlement',        label:'정산',          icon:'fa-receipt'},
   {id:'accounts',          label:'계정 관리',      icon:'fa-users-gear'},
 ];
 const NAV_ORDERER=[
@@ -77,7 +78,7 @@ const NAV_ORDERER=[
 function getNavItems(){return isAdmin()?NAV_ADMIN:NAV_ORDERER;}
 
 function navigate(view, {addHistory=true}={}){
-  const adminOnly=['inventory','items','accounts','usage-stats','price-settings','shipping-view'];
+  const adminOnly=['inventory','items','accounts','usage-stats','price-settings','shipping-view','settlement'];
   if(adminOnly.includes(view)&&!isAdmin()){toast('관리자만 접근할 수 있습니다.','error');view='dashboard';}
   if(currentView&&currentView!==view){
     navHistory.push(currentView);
@@ -106,6 +107,7 @@ function navigate(view, {addHistory=true}={}){
     else if(view==='accounts')renderAccounts();
     else if(view==='usage-stats')renderUsageStats();
     else if(view==='price-settings')renderPriceSettings();
+    else if(view==='settlement')renderSettlement();
   },30);
 }
 
@@ -139,7 +141,7 @@ function goBack(){
   updateBackBtn();
 }
 // 메인 네비게이션 페이지 목록 — 이 페이지에서는 뒤로가기 숨김
-const MAIN_VIEWS=['dashboard','orders','shipping-view','purchase-requests','inventory','items','accounts','stock-view','shortage-view','usage-stats','price-settings'];
+const MAIN_VIEWS=['dashboard','orders','shipping-view','purchase-requests','inventory','items','accounts','stock-view','shortage-view','usage-stats','price-settings','settlement'];
 
 function updateBackBtn(){
   const backBtn=document.getElementById('topbar-back');
@@ -1241,6 +1243,16 @@ function renderHistoryContent(){
     }
     c.innerHTML=`<div class="card"><div class="card-header"><h3>발주자별 현황</h3></div>${tbl}</div>`;
   }
+}
+
+function renderSettlement(){
+  if(!requireAdmin())return;
+  document.getElementById('content').innerHTML = `
+    <div style="padding:24px">
+      <h2 style="font-size:22px;font-weight:800;margin-bottom:8px">정산</h2>
+      <p style="color:var(--text-3);font-size:13px">정산 준비 중... (단계 1A — 빈 화면)</p>
+    </div>
+  `;
 }
 
 // 품목 마스터 (관리자)
