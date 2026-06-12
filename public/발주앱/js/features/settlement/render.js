@@ -141,7 +141,7 @@ function renderCustomerTable(grouped, totalSummary) {
     const rowId = `detail-${idx}`;
     tbody.insertAdjacentHTML('beforeend', `
       <tr class="row-main" data-target="${rowId}">
-        <td><strong>${name}</strong></td>
+        <td><strong>${escapeHtml(name)}</strong></td>
         <td class="num">${g.orders.length}건</td>
         <td class="num">${fmtMoney(g.totalSupply)}</td>
         <td class="num">${fmtMoney(g.totalVat)}</td>
@@ -222,14 +222,14 @@ function renderOrderRow(o) {
   const whClass = o.warehouse === '시흥' ? 'badge-wh-siheung' : 'badge-wh-pyeongtaek';
   return `
     <tr id="order-row-${o.id}">
-      <td><code style="background:#eff6ff;color:#1e40af;padding:2px 6px;border-radius:4px;font-weight:700">${o.orderNum}</code></td>
-      <td style="font-size:12px;color:var(--text-2)">${o.address}</td>
-      <td class="center"><span class="badge ${whClass}">${o.warehouse}</span></td>
+      <td><code style="background:#eff6ff;color:#1e40af;padding:2px 6px;border-radius:4px;font-weight:700">${escapeHtml(o.orderNum)}</code></td>
+      <td style="font-size:12px;color:var(--text-2)">${escapeHtml(o.address)}</td>
+      <td class="center"><span class="badge ${whClass}">${escapeHtml(o.warehouse)}</span></td>
       <td class="center" style="font-size:12px">${fmtShortDate(o.orderDate)}</td>
       <td class="num">${fmtMoney(o.totalSupply)}</td>
       <td class="num"><strong>${fmtMoney(o.totalAmount)}</strong></td>
       <td class="center"><button class="btn-edit" onclick="startInlineEdit(${o.id})"><i class="fas fa-edit"></i> 수정</button></td>
-      <td class="center"><button class="btn-link" onclick="goToOrder('${o.orderNum}')"><i class="fas fa-external-link-alt"></i> 이동</button></td>
+      <td class="center"><button class="btn-link" onclick="goToOrder('${escapeHtml(o.orderNum)}')"><i class="fas fa-external-link-alt"></i> 이동</button></td>
     </tr>
   `;
 }
@@ -253,7 +253,7 @@ function startInlineEdit(orderId) {
     <td colspan="8">
       <div class="inline-edit">
         <div class="inline-edit-row">
-          <label>발주번호<input type="text" value="${order.orderNum}" disabled style="background:#f3f4f6"/></label>
+          <label>발주번호<input type="text" value="${escapeHtml(order.orderNum)}" disabled style="background:#f3f4f6"/></label>
           <label>공급가액<input type="number" id="edit-supply-${orderId}" value="${order.totalSupply}"/></label>
           <label>부가세<input type="number" id="edit-vat-${orderId}" value="${order.totalVat}"/></label>
           <label>합계<input type="number" id="edit-total-${orderId}" value="${order.totalAmount}"/></label>
@@ -264,7 +264,7 @@ function startInlineEdit(orderId) {
               <option value="평택" ${order.warehouse === '평택' ? 'selected' : ''}>평택</option>
             </select>
           </label>
-          <label style="flex:1;min-width:200px">시공 주소<input type="text" id="edit-addr-${orderId}" value="${order.address}" style="width:100%"/></label>
+          <label style="flex:1;min-width:200px">시공 주소<input type="text" id="edit-addr-${orderId}" value="${escapeHtml(order.address)}" style="width:100%"/></label>
         </div>
         <div class="inline-edit-actions">
           <button class="btn-save" onclick="saveInlineEdit(${orderId})"><i class="fas fa-check"></i> 저장</button>

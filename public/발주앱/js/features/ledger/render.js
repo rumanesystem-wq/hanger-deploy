@@ -476,26 +476,7 @@ async function handleDeletePayment(id) {
   }
 }
 
-// ============================================================
-// HTML 이스케이프 (XSS 방어)
-// ============================================================
-/**
- * HTML 특수문자를 엔티티로 치환해 XSS 방어
- * @param {string|null|undefined} str - 입력 문자열 (null/undefined는 '')
- * @returns {string} 안전한 문자열
- * @example
- * escapeHtml('<script>alert(1)</script>')
- * // '&lt;script&gt;alert(1)&lt;/script&gt;'
- */
-function escapeHtml(str) {
-  if (str == null) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
+// escapeHtml 함수는 shared/format.js로 이동됨
 
 // ============================================================
 // goBackToList — HTML onclick에서 호출되는 글로벌 함수

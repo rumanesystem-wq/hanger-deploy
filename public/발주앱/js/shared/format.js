@@ -43,3 +43,18 @@ function fmtShortDate(dateStr) {
 function pad2(n) {
   return String(n).padStart(2, '0');
 }
+
+/**
+ * HTML 특수문자를 엔티티로 치환해 XSS 방어
+ * @param {string|null|undefined} str
+ * @returns {string}
+ */
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
