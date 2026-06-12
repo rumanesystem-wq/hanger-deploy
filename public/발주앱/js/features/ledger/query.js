@@ -1,0 +1,382 @@
+// ============================================================
+// features/ledger/query.js — 원장 데이터 가져오기/저장 (Mock 데이터)
+// 추후 Firestore 쿼리·쓰기로 교체 예정
+// ============================================================
+
+/**
+ * Mock 데이터 — 발주서 + 품목 상세
+ * items: [{ name, color, qty, unitPrice }]
+ *   - 표시: name [color] / qty * unitPrice = amount (부가세 포함)
+ *   - 실제 Firestore 연결 시 upperMaterials/shelfItems/drawerItems 등에서 추출
+ * @type {Order[]}
+ */
+const LEDGER_MOCK_ORDERS = [
+  { id: 1, orderNum: '20260601-001', status: '출고완료', orderDate: '2026-06-01', shipDate: '2026-06-03', deliveryTo: '홍길동', address: '101-204', warehouse: '시흥', totalSupply: 150000, totalVat: 15000, totalAmount: 165000,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 9, unitPrice: 10000 },
+      { name: '선반바 400', color: '화이트', qty: 20, unitPrice: 2000 },
+      { name: '코너바 2200', color: '화이트', qty: 2, unitPrice: 5800 },
+      { name: '조절발', color: '화이트', qty: 18, unitPrice: 900 },
+      { name: '옷봉 2400', color: '화이트', qty: 4, unitPrice: 5000 },
+    ]
+  },
+  { id: 2, orderNum: '20260603-001', status: '출고완료', orderDate: '2026-06-03', shipDate: '2026-06-06', deliveryTo: '홍길동', address: '909동1701호', warehouse: '시흥', totalSupply: 180000, totalVat: 18000, totalAmount: 198000,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 6, unitPrice: 10000 },
+      { name: '선반바 400', color: '화이트', qty: 12, unitPrice: 2000 },
+      { name: '선반', color: '솔리드 770mm', qty: 8, unitPrice: 4600 },
+      { name: '겉서랍 2단', color: '솔리드', qty: 1, unitPrice: 69000 },
+    ]
+  },
+  { id: 3, orderNum: '20260605-001', status: '출고완료', orderDate: '2026-06-05', shipDate: '2026-06-08', deliveryTo: '김철수', address: '107동1009호', warehouse: '시흥', totalSupply: 120000, totalVat: 12000, totalAmount: 132000,
+    items: [
+      { name: '포스트바 2250', color: '실버', qty: 4, unitPrice: 10000 },
+      { name: '선반바 400', color: '실버', qty: 12, unitPrice: 2000 },
+      { name: '선반', color: '스톤그레이 520mm', qty: 4, unitPrice: 3600 },
+      { name: '코너선반', color: '스톤그레이 710×520', qty: 2, unitPrice: 11000 },
+    ]
+  },
+  { id: 4, orderNum: '20260608-001', status: '출고완료', orderDate: '2026-06-08', shipDate: '2026-06-11', deliveryTo: '홍길동', address: '107동1904호', warehouse: '시흥', totalSupply: 160000, totalVat: 16000, totalAmount: 176000,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 7, unitPrice: 10000 },
+      { name: '선반바 400', color: '화이트', qty: 17, unitPrice: 2000 },
+      { name: '선반', color: '솔리드 770mm', qty: 6, unitPrice: 4600 },
+      { name: '겉서랍 3단', color: '솔리드', qty: 1, unitPrice: 92000 },
+    ]
+  },
+  { id: 5, orderNum: '20260610-001', status: '출고완료', orderDate: '2026-06-10', shipDate: '2026-06-13', deliveryTo: '이영희', address: '716동505호', warehouse: '시흥', totalSupply: 140000, totalVat: 14000, totalAmount: 154000,
+    items: [
+      { name: '포스트바 2250', color: '블랙', qty: 8, unitPrice: 11000 },
+      { name: '선반바 400', color: '블랙', qty: 14, unitPrice: 2100 },
+      { name: '선반', color: '스톤그레이 570mm', qty: 9, unitPrice: 4200 },
+    ]
+  },
+  { id: 6, orderNum: '20260612-001', status: '출고완료', orderDate: '2026-06-12', shipDate: '2026-06-15', deliveryTo: '홍길동', address: '111동101호', warehouse: '평택', totalSupply: 220000, totalVat: 22000, totalAmount: 242000,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 7, unitPrice: 11000 },
+      { name: '선반바 400', color: '화이트', qty: 21, unitPrice: 2100 },
+      { name: '선반', color: '솔리드 770mm', qty: 7, unitPrice: 5300 },
+      { name: '겉서랍 3단', color: '솔리드', qty: 1, unitPrice: 92000 },
+      { name: '거울장 목대', color: '솔리드', qty: 1, unitPrice: 87000 },
+    ]
+  },
+  { id: 7, orderNum: '20260614-001', status: '출고완료', orderDate: '2026-06-14', shipDate: '2026-06-17', deliveryTo: '김철수', address: '103-1803', warehouse: '시흥', totalSupply: 130000, totalVat: 13000, totalAmount: 143000,
+    items: [
+      { name: '포스트바 2250', color: '블랙', qty: 3, unitPrice: 11000 },
+      { name: '선반바 400', color: '블랙', qty: 6, unitPrice: 2100 },
+      { name: '선반', color: '메이플 2400mm', qty: 3, unitPrice: 16000 },
+    ]
+  },
+  { id: 8, orderNum: '20260615-001', status: '출고완료', orderDate: '2026-06-15', shipDate: '2026-06-18', deliveryTo: '박규태', address: '송파504호', warehouse: '시흥', totalSupply: 190000, totalVat: 19000, totalAmount: 209000,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 10, unitPrice: 11000 },
+      { name: '선반바 400', color: '화이트', qty: 38, unitPrice: 2100 },
+      { name: '선반', color: '솔리드 370mm', qty: 14, unitPrice: 3200 },
+      { name: '겉서랍 2단', color: '솔리드', qty: 2, unitPrice: 69000 },
+    ]
+  },
+  { id: 9, orderNum: '20260617-001', status: '출고완료', orderDate: '2026-06-17', shipDate: '2026-06-20', deliveryTo: '이영희', address: '호매실402호', warehouse: '평택', totalSupply: 175000, totalVat: 17500, totalAmount: 192500,
+    items: [
+      { name: '포스트바 2250', color: '실버', qty: 5, unitPrice: 11000 },
+      { name: '선반바 400', color: '실버', qty: 9, unitPrice: 2100 },
+      { name: '선반', color: '스톤그레이 570mm', qty: 6, unitPrice: 4200 },
+      { name: '코너선반', color: '스톤그레이 780×585', qty: 3, unitPrice: 13000 },
+    ]
+  },
+  { id: 10, orderNum: '20260620-001', status: '출고완료', orderDate: '2026-06-20', shipDate: '2026-06-23', deliveryTo: '박규태', address: '광주 2층계단', warehouse: '평택', totalSupply: 210000, totalVat: 21000, totalAmount: 231000,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 9, unitPrice: 11000 },
+      { name: '선반바 400', color: '화이트', qty: 24, unitPrice: 2100 },
+      { name: '겉서랍 4단', color: '솔리드', qty: 1, unitPrice: 139000 },
+    ]
+  },
+  { id: 11, orderNum: '20260622-001', status: '출고완료', orderDate: '2026-06-22', shipDate: '2026-06-25', deliveryTo: '홍길동', address: '102-804', warehouse: '시흥', totalSupply: 165000, totalVat: 16500, totalAmount: 181500,
+    items: [
+      { name: '포스트바 2250', color: '골드', qty: 12, unitPrice: 11000 },
+      { name: '선반바 400', color: '골드', qty: 34, unitPrice: 2100 },
+      { name: '선반', color: '스톤그레이 570mm', qty: 21, unitPrice: 4200 },
+    ]
+  },
+  { id: 12, orderNum: '20260624-001', status: '출고완료', orderDate: '2026-06-24', shipDate: '2026-06-27', deliveryTo: '김철수', address: '303-1704', warehouse: '시흥', totalSupply: 155000, totalVat: 15500, totalAmount: 170500,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 5, unitPrice: 11000 },
+      { name: '선반바 400', color: '화이트', qty: 10, unitPrice: 2100 },
+      { name: '겉서랍 3단', color: '화이트 오크', qty: 1, unitPrice: 92000 },
+    ]
+  },
+  { id: 13, orderNum: '20260625-001', status: '출고완료', orderDate: '2026-06-25', shipDate: '2026-06-28', deliveryTo: '이영희', address: '103-1203', warehouse: '평택', totalSupply: 185000, totalVat: 18500, totalAmount: 203500,
+    items: [
+      { name: '포스트바 2250', color: '골드', qty: 15, unitPrice: 11000 },
+      { name: '선반바 400', color: '골드', qty: 24, unitPrice: 2100 },
+      { name: '이불 긴장문', color: '메이플', qty: 2, unitPrice: 70000 },
+    ]
+  },
+
+  // ─── 데모-A 거래처 데모 데이터 (배포 전 제거) ───
+  { id: 101, orderNum: '20260502-001', status: '출고완료', orderDate: '2026-05-02', shipDate: '2026-05-02', deliveryTo: '데모-A', address: '101-204', warehouse: '시흥', totalSupply: 536600, totalVat: 53660, totalAmount: 590260,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 9, unitPrice: 10000 },
+      { name: '선반바 400', color: '화이트', qty: 20, unitPrice: 2000 },
+      { name: '코너바 2200', color: '화이트', qty: 2, unitPrice: 5800 },
+      { name: '코너앵글', color: '화이트', qty: 6, unitPrice: 400 },
+      { name: '조절발', color: '화이트', qty: 18, unitPrice: 900 },
+      { name: '옷봉캡', color: '화이트', qty: 20, unitPrice: 350 },
+      { name: '코너옷봉캡', color: '화이트', qty: 4, unitPrice: 500 },
+      { name: '옷봉 2400', color: '화이트', qty: 4, unitPrice: 5000 },
+      { name: '선반', color: '솔리드 730mm', qty: 3, unitPrice: 4600 },
+      { name: '선반', color: '솔리드 570mm', qty: 3, unitPrice: 3600 },
+      { name: '선반', color: '솔리드 770mm', qty: 8, unitPrice: 4600 },
+      { name: '코너선반', color: '솔리드 780×520', qty: 3, unitPrice: 11000 },
+      { name: '코너선반', color: '솔리드 660×560', qty: 3, unitPrice: 11000 },
+      { name: '겉서랍 3단', color: '솔리드', qty: 2, unitPrice: 92000 },
+      { name: '선반재단비', color: '', qty: 9, unitPrice: 1000 },
+      { name: '포스트 조립비', color: '', qty: 9, unitPrice: 3000 },
+    ]
+  },
+  { id: 102, orderNum: '20260503-001', status: '출고완료', orderDate: '2026-05-03', shipDate: '2026-05-03', deliveryTo: '데모-A', address: '437번길25-26', warehouse: '시흥', totalSupply: 52400, totalVat: 5240, totalAmount: 57640,
+    items: [
+      { name: '포스트바 2400', color: '화이트', qty: 2, unitPrice: 10500 },
+      { name: '선반바 400', color: '화이트', qty: 3, unitPrice: 2000 },
+      { name: '조절발', color: '화이트', qty: 4, unitPrice: 900 },
+      { name: '옷봉캡', color: '화이트', qty: 4, unitPrice: 350 },
+      { name: '조절발 연장캡', color: '화이트', qty: 4, unitPrice: 400 },
+      { name: '옷봉 2400', color: '화이트', qty: 1, unitPrice: 5000 },
+      { name: '선반', color: '화이트 오크 600mm', qty: 3, unitPrice: 3600 },
+      { name: '선반재단비', color: '', qty: 3, unitPrice: 1000 },
+    ]
+  },
+  { id: 103, orderNum: '20260503-002', status: '출고완료', orderDate: '2026-05-03', shipDate: '2026-05-03', deliveryTo: '데모-A', address: '909동1701호', warehouse: '시흥', totalSupply: 397200, totalVat: 39720, totalAmount: 436920,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 6, unitPrice: 10000 },
+      { name: '포스트바 2400', color: '화이트', qty: 2, unitPrice: 10500 },
+      { name: '선반바 400', color: '화이트', qty: 12, unitPrice: 2000 },
+      { name: '조절발', color: '화이트', qty: 16, unitPrice: 900 },
+      { name: '옷봉캡', color: '화이트', qty: 18, unitPrice: 350 },
+      { name: '옷봉 2400', color: '화이트', qty: 3, unitPrice: 5000 },
+      { name: '선반', color: '솔리드 400mm', qty: 3, unitPrice: 2700 },
+      { name: '선반', color: '솔리드 520mm', qty: 3, unitPrice: 3600 },
+      { name: '선반', color: '솔리드 570mm', qty: 3, unitPrice: 3600 },
+      { name: '선반', color: '솔리드 770mm', qty: 3, unitPrice: 4600 },
+      { name: '겉서랍 2단', color: '솔리드', qty: 3, unitPrice: 69000 },
+      { name: '선반재단비', color: '', qty: 6, unitPrice: 1000 },
+    ]
+  },
+  { id: 104, orderNum: '20260504-001', status: '출고완료', orderDate: '2026-05-04', shipDate: '2026-05-04', deliveryTo: '데모-A', address: '107동1009호', warehouse: '시흥', totalSupply: 117600, totalVat: 11760, totalAmount: 129360,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 3, unitPrice: 10000 },
+      { name: '선반바 400', color: '화이트', qty: 8, unitPrice: 2000 },
+      { name: '코너바 2200', color: '화이트', qty: 1, unitPrice: 5800 },
+      { name: '코너앵글', color: '화이트', qty: 4, unitPrice: 400 },
+      { name: '조절발', color: '화이트', qty: 6, unitPrice: 900 },
+      { name: '선반', color: '스톤그레이 370mm', qty: 4, unitPrice: 2700 },
+      { name: '코너선반', color: '스톤그레이 730×585', qty: 4, unitPrice: 11000 },
+      { name: '선반재단비', color: '', qty: 4, unitPrice: 1000 },
+    ]
+  },
+  { id: 105, orderNum: '20260506-002', status: '출고완료', orderDate: '2026-05-06', shipDate: '2026-05-06', deliveryTo: '데모-A', address: '124동907호', warehouse: '시흥', totalSupply: 629450, totalVat: 62945, totalAmount: 692395,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 7, unitPrice: 10000 },
+      { name: '선반바 400', color: '화이트', qty: 17, unitPrice: 2000 },
+      { name: '코너바 2200', color: '화이트', qty: 2, unitPrice: 5800 },
+      { name: '조절발', color: '화이트', qty: 14, unitPrice: 900 },
+      { name: '옷봉 2400', color: '화이트', qty: 2, unitPrice: 5000 },
+      { name: '선반', color: '화이트 오크 770mm', qty: 6, unitPrice: 4600 },
+      { name: '코너선반', color: '화이트 오크 780×560', qty: 6, unitPrice: 11000 },
+      { name: '겉서랍 4단', color: '화이트 오크', qty: 1, unitPrice: 139000 },
+      { name: '디바이더', color: '화이트 오크', qty: 1, unitPrice: 58000 },
+      { name: '거울장 목대', color: '화이트 오크', qty: 1, unitPrice: 87000 },
+      { name: '거울장 거울문', color: '실버', qty: 1, unitPrice: 60000 },
+      { name: '선반재단비', color: '', qty: 10, unitPrice: 1000 },
+    ]
+  },
+  { id: 106, orderNum: '20260507-001', status: '출고완료', orderDate: '2026-05-07', shipDate: '2026-05-07', deliveryTo: '데모-A', address: '716동505호', warehouse: '평택', totalSupply: 501400, totalVat: 50140, totalAmount: 551540,
+    items: [
+      { name: '포스트바 2250', color: '블랙', qty: 8, unitPrice: 11000 },
+      { name: '선반바 400', color: '블랙', qty: 14, unitPrice: 2100 },
+      { name: '조절발', color: '블랙', qty: 16, unitPrice: 1000 },
+      { name: '옷봉캡', color: '블랙', qty: 20, unitPrice: 350 },
+      { name: '옷봉 2400', color: '블랙', qty: 3, unitPrice: 5000 },
+      { name: '선반', color: '스톤그레이 370mm', qty: 3, unitPrice: 3200 },
+      { name: '선반', color: '스톤그레이 570mm', qty: 9, unitPrice: 4200 },
+      { name: '선반', color: '스톤그레이 770mm', qty: 2, unitPrice: 5300 },
+      { name: '겉서랍 2단', color: '스톤그레이', qty: 2, unitPrice: 69000 },
+      { name: '겉서랍 아일랜드', color: '스톤그레이', qty: 1, unitPrice: 150000 },
+    ]
+  },
+  { id: 107, orderNum: '20260508-003', status: '출고완료', orderDate: '2026-05-08', shipDate: '2026-05-08', deliveryTo: '데모-A', address: '111동101호', warehouse: '평택', totalSupply: 558800, totalVat: 55880, totalAmount: 614680,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 7, unitPrice: 11000 },
+      { name: '포스트바 2400', color: '화이트', qty: 2, unitPrice: 12000 },
+      { name: '선반바 400', color: '화이트', qty: 21, unitPrice: 2100 },
+      { name: '코너바 2200', color: '화이트', qty: 1, unitPrice: 6000 },
+      { name: '조절발', color: '화이트', qty: 18, unitPrice: 1000 },
+      { name: '옷봉 2400', color: '화이트', qty: 3, unitPrice: 5000 },
+      { name: '선반', color: '솔리드 770mm', qty: 7, unitPrice: 5300 },
+      { name: '코너선반', color: '솔리드 700×520', qty: 3, unitPrice: 13000 },
+      { name: '겉서랍 3단', color: '솔리드', qty: 1, unitPrice: 92000 },
+      { name: '거울장 목대', color: '솔리드', qty: 1, unitPrice: 87000 },
+      { name: '거울장 거울문', color: '실버', qty: 1, unitPrice: 60000 },
+    ]
+  },
+  { id: 108, orderNum: '20260514-003', status: '출고완료', orderDate: '2026-05-14', shipDate: '2026-05-14', deliveryTo: '데모-A', address: '송파504호', warehouse: '평택', totalSupply: 727800, totalVat: 72780, totalAmount: 800580,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 10, unitPrice: 11000 },
+      { name: '포스트바 2400', color: '화이트', qty: 2, unitPrice: 12000 },
+      { name: '선반바 400', color: '화이트', qty: 38, unitPrice: 2100 },
+      { name: '코너바 2200', color: '화이트', qty: 3, unitPrice: 6000 },
+      { name: '조절발', color: '화이트', qty: 24, unitPrice: 1000 },
+      { name: '옷봉 2400', color: '화이트', qty: 3, unitPrice: 5000 },
+      { name: '선반', color: '솔리드 370mm', qty: 14, unitPrice: 3200 },
+      { name: '선반', color: '솔리드 770mm', qty: 5, unitPrice: 5300 },
+      { name: '코너선반', color: '솔리드 780×585', qty: 3, unitPrice: 13000 },
+      { name: '코너선반', color: '솔리드 610×520', qty: 7, unitPrice: 13000 },
+      { name: '겉서랍 2단', color: '솔리드', qty: 2, unitPrice: 69000 },
+    ]
+  },
+  { id: 109, orderNum: '20260518-002', status: '출고완료', orderDate: '2026-05-18', shipDate: '2026-05-18', deliveryTo: '데모-A', address: '광주 2층계단', warehouse: '평택', totalSupply: 649600, totalVat: 64960, totalAmount: 714560,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 9, unitPrice: 11000 },
+      { name: '선반바 400', color: '화이트', qty: 24, unitPrice: 2100 },
+      { name: '조절발', color: '화이트', qty: 18, unitPrice: 1000 },
+      { name: '옷봉 2400', color: '화이트', qty: 3, unitPrice: 5000 },
+      { name: '선반', color: '솔리드 770mm', qty: 7, unitPrice: 5300 },
+      { name: '코너선반', color: '솔리드 780×530', qty: 10, unitPrice: 13000 },
+      { name: '겉서랍 3단', color: '솔리드', qty: 1, unitPrice: 92000 },
+      { name: '겉서랍 4단', color: '솔리드', qty: 1, unitPrice: 139000 },
+    ]
+  },
+  { id: 110, orderNum: '20260527-001', status: '출고완료', orderDate: '2026-05-27', shipDate: '2026-05-27', deliveryTo: '데모-A', address: '3동1501호', warehouse: '평택', totalSupply: 1170250, totalVat: 117025, totalAmount: 1287275,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 11, unitPrice: 11000 },
+      { name: '선반바 400', color: '화이트', qty: 29, unitPrice: 2100 },
+      { name: '코너바 2200', color: '화이트', qty: 3, unitPrice: 6000 },
+      { name: '조절발', color: '화이트', qty: 22, unitPrice: 1000 },
+      { name: '옷봉 2400', color: '화이트', qty: 3, unitPrice: 5000 },
+      { name: '선반', color: '화이트 오크 770mm', qty: 4, unitPrice: 5300 },
+      { name: '코너선반', color: '화이트 오크 640×565', qty: 6, unitPrice: 13000 },
+      { name: '코너선반', color: '화이트 오크 600×565', qty: 7, unitPrice: 13000 },
+      { name: '겉서랍 3단', color: '화이트 오크', qty: 2, unitPrice: 92000 },
+      { name: '겉서랍 4단', color: '화이트 오크', qty: 2, unitPrice: 139000 },
+      { name: '거울장 목대', color: '화이트 오크', qty: 1, unitPrice: 87000 },
+      { name: '거울장 거울문', color: '실버', qty: 1, unitPrice: 60000 },
+    ]
+  },
+  { id: 111, orderNum: '20260601-002', status: '출고완료', orderDate: '2026-06-01', shipDate: '2026-06-01', deliveryTo: '데모-A', address: '효림빌딩 2층', warehouse: '평택', totalSupply: 282500, totalVat: 28250, totalAmount: 310750,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 10, unitPrice: 11000 },
+      { name: '선반바 400', color: '화이트', qty: 18, unitPrice: 2100 },
+      { name: '조절발', color: '화이트', qty: 14, unitPrice: 1000 },
+      { name: '옷봉 2400', color: '화이트', qty: 4, unitPrice: 5000 },
+      { name: '선반', color: '솔리드 770mm', qty: 12, unitPrice: 5300 },
+      { name: '선반', color: '솔리드 570mm', qty: 6, unitPrice: 4200 },
+    ]
+  },
+  { id: 112, orderNum: '20260601-005', status: '출고완료', orderDate: '2026-06-01', shipDate: '2026-06-01', deliveryTo: '데모-A', address: '윤오빌401호', warehouse: '평택', totalSupply: 943600, totalVat: 94360, totalAmount: 1037960,
+    items: [
+      { name: '포스트바 2250', color: '실버', qty: 9, unitPrice: 11000 },
+      { name: '선반바 400', color: '실버', qty: 25, unitPrice: 2100 },
+      { name: '코너바 2200', color: '실버', qty: 2, unitPrice: 6000 },
+      { name: '조절발', color: '실버', qty: 18, unitPrice: 1000 },
+      { name: '옷봉 2400', color: '실버', qty: 3, unitPrice: 5000 },
+      { name: '코너선반', color: '스톤그레이', qty: 6, unitPrice: 13000 },
+      { name: '선반 770', color: '스톤그레이', qty: 10, unitPrice: 5300 },
+      { name: '3단서랍', color: '스톤그레이', qty: 1, unitPrice: 92000 },
+      { name: '4단서랍', color: '스톤그레이', qty: 2, unitPrice: 139000 },
+      { name: '거울장 목대', color: '스톤그레이', qty: 1, unitPrice: 87000 },
+      { name: '거울장 거울문', color: '실버', qty: 1, unitPrice: 60000 },
+    ]
+  },
+  { id: 113, orderNum: '20260602-002', status: '출고완료', orderDate: '2026-06-02', shipDate: '2026-06-02', deliveryTo: '데모-A', address: '110-402', warehouse: '시흥', totalSupply: 333900, totalVat: 33390, totalAmount: 367290,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 8, unitPrice: 11000 },
+      { name: '선반바 400', color: '화이트', qty: 19, unitPrice: 2100 },
+      { name: '코너바 2200', color: '화이트', qty: 2, unitPrice: 6000 },
+      { name: '조절발', color: '화이트', qty: 16, unitPrice: 1000 },
+      { name: '옷봉 2400', color: '화이트', qty: 4, unitPrice: 5000 },
+      { name: '코너선반', color: '솔리드화이트', qty: 6, unitPrice: 13000 },
+      { name: '선반 570', color: '솔리드화이트', qty: 12, unitPrice: 4200 },
+    ]
+  },
+  { id: 114, orderNum: '20260605-002', status: '출고완료', orderDate: '2026-06-05', shipDate: '2026-06-05', deliveryTo: '데모-A', address: '106-1208', warehouse: '시흥', totalSupply: 686700, totalVat: 68670, totalAmount: 755370,
+    items: [
+      { name: '포스트바 2250', color: '화이트', qty: 11, unitPrice: 11000 },
+      { name: '선반바 400', color: '화이트', qty: 22, unitPrice: 2100 },
+      { name: '코너바 2200', color: '화이트', qty: 3, unitPrice: 6000 },
+      { name: '조절발', color: '화이트', qty: 22, unitPrice: 1000 },
+      { name: '옷봉 2400', color: '화이트', qty: 5, unitPrice: 5000 },
+      { name: '선반', color: '솔리드 770mm', qty: 3, unitPrice: 5300 },
+      { name: '코너선반', color: '솔리드 780×500', qty: 6, unitPrice: 13000 },
+      { name: '겉서랍 2단', color: '솔리드', qty: 1, unitPrice: 69000 },
+      { name: '겉서랍 3단', color: '솔리드', qty: 2, unitPrice: 92000 },
+    ]
+  },
+];
+
+/** @type {Payment[]} */
+let LEDGER_MOCK_PAYMENTS = [
+  { id: 'p1', customer: '홍길동', date: '2026-06-08', amount: 500000, memo: '6월 1차 정산' },
+  { id: 'p2', customer: '박규태', date: '2026-06-22', amount: 440000, memo: '계좌이체' },
+  { id: 'p3', customer: '김철수', date: '2026-06-10', amount: 200000, memo: '카드결제' },
+  { id: 'p4', customer: '홍길동', date: '2026-06-20', amount: 300000, memo: '현금' },
+
+  // ─── 데모-A 입금 데모 데이터 (배포 전 제거) ───
+  { id: 'p101', customer: '데모-A', date: '2026-05-02', amount: 1100000, memo: '계좌이체' },
+  { id: 'p102', customer: '데모-A', date: '2026-05-04', amount: 1024920, memo: '카드결제' },
+  { id: 'p103', customer: '데모-A', date: '2026-05-08', amount: 900000, memo: '현금' },
+  { id: 'p104', customer: '데모-A', date: '2026-05-11', amount: 847530, memo: '계좌이체' },
+  { id: 'p105', customer: '데모-A', date: '2026-05-13', amount: 1100000, memo: '계좌이체' },
+  { id: 'p106', customer: '데모-A', date: '2026-05-19', amount: 1000000, memo: '계좌이체' },
+  { id: 'p107', customer: '데모-A', date: '2026-05-21', amount: 800000, memo: '현금' },
+  { id: 'p108', customer: '데모-A', date: '2026-05-22', amount: 770000, memo: '계좌이체' },
+  { id: 'p109', customer: '데모-A', date: '2026-05-28', amount: 1100000, memo: '계좌이체' },
+  { id: 'p110', customer: '데모-A', date: '2026-05-31', amount: 1348970, memo: '시공비 잔금' },
+  { id: 'p111', customer: '데모-A', date: '2026-06-01', amount: 400000, memo: '계좌이체' },
+  { id: 'p112', customer: '데모-A', date: '2026-06-08', amount: 500000, memo: '계좌이체' },
+  { id: 'p113', customer: '데모-A', date: '2026-06-08', amount: 900000, memo: '카드결제' },
+  { id: 'p114', customer: '데모-A', date: '2026-06-08', amount: 350000, memo: '현금' },
+  { id: 'p115', customer: '데모-A', date: '2026-06-10', amount: 1980000, memo: '계좌이체' },
+];
+
+/**
+ * 전체 출고완료 발주서 조회
+ * (추후 firebase.firestore().collection('hanger_orders').where('status','==','출고완료').get())
+ * @returns {Promise<Order[]>}
+ */
+async function fetchAllCompletedOrders() {
+  return LEDGER_MOCK_ORDERS.filter(o => o.status === '출고완료');
+}
+
+/**
+ * 전체 입금 내역 조회
+ * (추후 firebase.firestore().collection('hanger_payments').get())
+ * @returns {Promise<Payment[]>}
+ */
+async function fetchAllPayments() {
+  return [...LEDGER_MOCK_PAYMENTS];
+}
+
+/**
+ * 입금 등록
+ * (추후 firebase.firestore().collection('hanger_payments').add({...}))
+ * @param {Omit<Payment, 'id'>} payment
+ * @returns {Promise<Payment>} 저장된 (id 부여된) 입금 데이터
+ */
+async function createPayment(payment) {
+  /** @type {Payment} */
+  const saved = {
+    ...payment,
+    id: 'p' + Date.now()
+  };
+  LEDGER_MOCK_PAYMENTS.push(saved);
+  return saved;
+}
+
+/**
+ * 입금 삭제
+ * (추후 firebase.firestore().collection('hanger_payments').doc(id).delete())
+ * @param {string} paymentId
+ * @returns {Promise<void>}
+ */
+async function deletePayment(paymentId) {
+  LEDGER_MOCK_PAYMENTS = LEDGER_MOCK_PAYMENTS.filter(p => p.id !== paymentId);
+}

@@ -237,6 +237,13 @@
   })();
 </script>
 <link rel="stylesheet" href="style.css?v=4">
+<!-- 거래명세서: Pretendard 폰트 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" integrity="sha384-uGEvnSEpW2nM9xJFsrxrwakwrk9QdDTQIBJh0hVMu90OaVyMAMpAK1rIn0/Kh1/k" crossorigin="anonymous"/>
+<!-- 거래명세서: jsPDF + html2canvas (SRI 적용 — 공급망 공격 방어) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<!-- 거래명세서 스타일 -->
+<link rel="stylesheet" href="css/invoice.css"/>
 </head>
 <body>
 <div id="boot-splash" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#fff;display:flex;align-items:center;justify-content:center;z-index:10000;font-size:1rem;color:#1e3a5f;">
@@ -973,6 +980,22 @@
   </div>
 </div>
 
+<!-- 거래명세서 모달 -->
+<div id="invoiceModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2000;align-items:center;justify-content:center;padding:16px;box-sizing:border-box">
+  <div class="invoice-overlay-inner">
+    <div class="invoice-modal-header">
+      <span class="invoice-modal-title">거래명세서</span>
+      <button class="invoice-modal-close" id="invoiceBtnClose" aria-label="닫기">&#x2715;</button>
+    </div>
+    <div id="invoiceContent"></div>
+    <div class="invoice-modal-actions">
+      <button id="invoiceBtnPdf" class="btn btn-outline btn-sm" style="border:1.5px solid #dc2626;color:#dc2626;font-weight:700"><i class="fas fa-file-pdf"></i> PDF 다운로드</button>
+      <button id="invoiceBtnPrint" class="btn btn-outline btn-sm" style="border:1.5px solid #374151;color:#111827;font-weight:700"><i class="fas fa-print"></i> 인쇄</button>
+      <button class="btn btn-primary btn-sm" onclick="document.getElementById('invoiceModal').style.display='none'">닫기</button>
+    </div>
+  </div>
+</div>
+
 <script src="js/store/db.js"></script>
 <script src="js/utils/uiUtils.js"></script>
 <script src="js/utils/dateUtils.js"></script>
@@ -984,6 +1007,14 @@
 <script src="js/order-modal.js"></script>
     <script src="js/excel-print.js"></script>
 <script src="app.js"></script>
+<!-- 거래명세서 모듈 (의존 순서: types→utils→query→render→pdf→print→index) -->
+<script src="js/features/invoice/types.js"></script>
+<script src="js/features/invoice/utils.js"></script>
+<script src="js/features/invoice/query.js"></script>
+<script src="js/features/invoice/render.js"></script>
+<script src="js/features/invoice/pdf.js"></script>
+<script src="js/features/invoice/print.js"></script>
+<script src="js/features/invoice/index.js"></script>
 <script>
 // ── 오프라인 감지 ──
 function _syncOffline(){

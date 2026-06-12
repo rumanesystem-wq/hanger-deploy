@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>거래처 원장 — 발주허브</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css"/>
+<link rel="stylesheet" href="./style.css"/>
+<style>
+  body { background: var(--bg); padding: 24px; max-width: 1280px; margin: 0 auto; }
+  .page-header { margin-bottom: 20px; }
+  .page-title { font-size: 22px; font-weight: 800; color: var(--text); margin-bottom: 4px; }
+  .page-sub { font-size: 13px; color: var(--text-3); }
+  .nav-btns { display: flex; gap: 8px; margin-bottom: 20px; }
+  .nav-btn { padding: 8px 16px; background: #fff; border: 1px solid var(--border); border-radius: var(--r-sm); font-size: 13px; font-weight: 600; color: var(--text-2); text-decoration: none; }
+  .nav-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+  .filter-card { background: #fff; border: 1px solid var(--border); border-radius: var(--r); padding: 12px 18px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+  .toggle-label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+
+  .data-card { background: #fff; border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; margin-bottom: 16px; }
+  .data-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .data-card-title { font-size: 14px; font-weight: 700; color: var(--text); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #f9fafb; padding: 10px 12px; text-align: left; border-bottom: 2px solid var(--border); font-size: 12px; font-weight: 700; color: var(--text-2); }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.center, th.center { text-align: center; }
+  tr.has-unpaid { background: #fef2f2; }
+  tr.has-unpaid:hover { background: #fee2e2; cursor: pointer; }
+  tr.paid:hover { background: #f0fdf4; cursor: pointer; }
+  tr.paid { cursor: pointer; }
+
+  .btn-view { background: var(--primary); color: #fff; border: none; padding: 6px 14px; border-radius: var(--r-sm); font-size: 12px; font-weight: 700; cursor: pointer; }
+  .btn-back { background: #fff; color: var(--text-2); border: 1px solid var(--border); padding: 7px 14px; border-radius: var(--r-sm); font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn-add-payment { background: #15803d; color: #fff; border: none; padding: 8px 16px; border-radius: var(--r-sm); font-size: 13px; font-weight: 700; cursor: pointer; }
+
+  .ledger-summary { background: linear-gradient(135deg, #eff6ff, #dbeafe); border: 1px solid #bfdbfe; border-radius: var(--r); padding: 22px 28px; margin-bottom: 18px; }
+  .ledger-summary-grid { display: grid; grid-template-columns: 1.5fr 1fr 1fr 1fr; gap: 20px; align-items: center; }
+  .ledger-name { font-size: 24px; font-weight: 800; color: var(--primary); }
+  .ledger-label { font-size: 11px; color: var(--text-3); font-weight: 600; margin-bottom: 4px; }
+  .ledger-value { font-size: 19px; font-weight: 800; }
+  .ledger-value.danger { color: #dc2626; }
+  .ledger-value.success { color: #15803d; }
+
+  .type-badge { display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; }
+  .type-out { background: #dbeafe; color: #1e40af; }
+  .type-in  { background: #d1fae5; color: #065f46; }
+
+  /* 입금 등록 모달 */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 100; align-items: center; justify-content: center; }
+  .modal-overlay.show { display: flex; }
+  .modal { background: #fff; border-radius: var(--r); width: 90%; max-width: 420px; }
+  .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  .modal-title { font-size: 15px; font-weight: 700; }
+  .modal-close { background: none; border: none; font-size: 20px; cursor: pointer; color: var(--text-3); }
+  .modal-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+  .modal-body label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-weight: 700; color: var(--text-2); }
+  .modal-body input, .modal-body textarea { padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--r-sm); font-size: 13px; }
+  .modal-footer { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+
+  .hidden { display: none !important; }
+
+  @media (max-width: 768px) {
+    .ledger-summary-grid { grid-template-columns: 1fr 1fr; }
+    .ledger-name { font-size: 18px; }
+    .ledger-value { font-size: 16px; }
+  }
+
+  /* ─── 이카운트 거래명세서 스타일 (관리대장 형식) ─── */
+  .ec-print-area { background: #fff; padding: 28px 36px; border: 1px solid var(--border); border-radius: var(--r); }
+  .ec-doc-title { text-align: center; font-size: 22px; font-weight: 800; margin-bottom: 6px; letter-spacing: -0.5px; }
+  .ec-doc-title-sub { font-weight: 600; font-size: 14px; }
+  .ec-meta { display: flex; justify-content: space-between; align-items: end; margin: 14px 0 8px; font-size: 12px; }
+  .ec-meta-left { color: var(--text); font-weight: 600; }
+  .ec-meta-right { color: var(--text-2); }
+  .ec-info-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 14px; border-top: 1.5px solid #94a3b8; border-bottom: 1.5px solid #94a3b8; }
+  .ec-info-table th, .ec-info-table td { padding: 7px 12px; border: 1px solid #cbd5e1; }
+  .ec-info-table th { background: #f8fafc; font-weight: 700; color: var(--text-2); width: 110px; text-align: left; }
+  .ec-info-table td { color: var(--text); }
+  .ec-info-table tr.empty-row td { color: var(--text-3); font-style: italic; }
+
+  .ec-ledger-title { background: #e0f2fe; text-align: center; font-weight: 800; font-size: 13px; padding: 7px; border: 1px solid #94a3b8; border-bottom: none; }
+  .ec-ledger { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .ec-ledger th, .ec-ledger td { border: 1px solid #cbd5e1; padding: 6px 10px; }
+  .ec-ledger thead th { background: #f1f5f9; font-weight: 700; color: var(--text); text-align: center; }
+  .ec-ledger td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .ec-ledger td.date { width: 100px; white-space: nowrap; }
+  .ec-ledger td.summary-cell { width: 110px; }
+
+  .ec-row-header { background: #f8fafc; font-weight: 700; }
+  .ec-row-header td { background: #f8fafc; }
+  .ec-row-item td { padding-left: 24px; color: var(--text-2); background: #fef2f2; }
+  .ec-row-item td.num { background: #fef2f2; }
+  .ec-row-payment td { background: #f0fdf4; }
+  .ec-row-carry { background: #fffbeb; font-weight: 700; }
+  .ec-row-carry td { background: #fffbeb; }
+  .ec-row-month-sum td { background: #dbeafe; font-weight: 800; text-align: center; }
+  .ec-row-grand-sum td { background: #bfdbfe; font-weight: 800; text-align: center; }
+
+  .ec-print-footer { text-align: right; font-size: 11px; color: var(--text-3); margin-top: 10px; }
+
+  .ec-filter-bar { background: #fff; border: 1px solid var(--border); border-radius: var(--r); padding: 14px 18px; margin-bottom: 14px; display: flex; gap: 14px; flex-wrap: wrap; align-items: end; }
+  .ec-filter-bar .fld { display: flex; flex-direction: column; gap: 4px; }
+  .ec-filter-bar label { font-size: 11px; font-weight: 700; color: var(--text-2); }
+  .ec-filter-bar input[type="date"] { padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--r-sm); font-size: 13px; }
+  .ec-filter-bar .spacer { flex: 1; }
+  .btn-print { background: #475569; color: #fff; border: none; padding: 8px 16px; border-radius: var(--r-sm); font-size: 13px; font-weight: 700; cursor: pointer; }
+  .btn-print:hover { background: #334155; }
+
+  @media print {
+    body { background: #fff; padding: 0; max-width: none; }
+    .no-print { display: none !important; }
+    .ec-print-area { border: none; padding: 0; }
+    .ec-ledger { font-size: 11px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <div class="page-title">거래처 원장</div>
+  <div class="page-sub">납품처별 출고/입금 내역 및 미수금 잔액 (관리자 전용)</div>
+</div>
+
+<div class="nav-btns">
+  <a href="./index.html" class="nav-btn"><i class="fas fa-arrow-left"></i> 발주앱</a>
+  <a href="./settlement.html" class="nav-btn"><i class="fas fa-receipt"></i> 정산</a>
+  <a href="./customer-ledger.html" class="nav-btn active"><i class="fas fa-book"></i> 거래처 원장</a>
+  <a href="./index.html#orders" class="nav-btn"><i class="fas fa-file-invoice"></i> 거래명세서</a>
+</div>
+
+<!-- 거래처 목록 화면 -->
+<div id="view-list">
+  <div class="data-card">
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>납품처</th>
+            <th class="num">총 발주 건수</th>
+            <th class="num">총 출고금액</th>
+            <th class="num">총 입금액</th>
+            <th class="center">상세 보기</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-customers">
+          <!-- JS로 채움 -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- 거래처 원장 상세 화면 (이카운트 거래명세서 형식) -->
+<div id="view-detail" class="hidden">
+  <div class="no-print" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+    <button class="btn-back" onclick="goBackToList()"><i class="fas fa-arrow-left"></i> 거래처 목록</button>
+    <button class="btn-add-payment" onclick="openPaymentModal()"><i class="fas fa-plus"></i> 입금 등록</button>
+    <button class="btn-print" onclick="window.print()"><i class="fas fa-print"></i> 인쇄</button>
+  </div>
+
+  <!-- 기간 필터 + 납품처 검색 -->
+  <div class="ec-filter-bar no-print">
+    <div class="fld">
+      <label>시작일</label>
+      <input type="date" id="ec-start-date"/>
+    </div>
+    <div class="fld">
+      <label>종료일</label>
+      <input type="date" id="ec-end-date"/>
+    </div>
+    <button class="btn-search" onclick="applyDateRange()" style="background:var(--primary);color:#fff;border:none;padding:9px 20px;border-radius:var(--r-sm);font-size:13px;font-weight:700;cursor:pointer">조회</button>
+    <div class="spacer"></div>
+    <div class="fld" style="min-width:220px">
+      <label>납품처 검색</label>
+      <input type="text" id="ec-customer-search" list="ec-customer-list" placeholder="납품처명 입력" oninput="handleCustomerSearch()" style="padding:7px 10px;border:1px solid var(--border);border-radius:var(--r-sm);font-size:13px"/>
+      <datalist id="ec-customer-list"></datalist>
+    </div>
+  </div>
+
+  <!-- 이카운트 거래명세서 인쇄 영역 -->
+  <div class="ec-print-area" id="ec-print-area">
+    <div class="ec-doc-title">
+      <span id="ec-doc-customer-name">—</span> 관리대장<span class="ec-doc-title-sub">(거래명세서별)</span>
+    </div>
+
+    <div class="ec-meta">
+      <div class="ec-meta-left">회사명 : 루마네시스템 / 담당 : </div>
+      <div class="ec-meta-right" id="ec-doc-period">—</div>
+    </div>
+
+    <!-- 거래처 정보 헤더 (개인정보 저장 안 함 — 빈 칸) -->
+    <table class="ec-info-table">
+      <tbody>
+        <tr>
+          <th>사업자등록번호</th><td id="ec-info-bizno">&nbsp;</td>
+          <th>대표자</th><td id="ec-info-ceo">&nbsp;</td>
+        </tr>
+        <tr>
+          <th>여신한도</th><td id="ec-info-credit">0</td>
+          <th>전화</th><td id="ec-info-tel">(모바일 : )</td>
+        </tr>
+        <tr>
+          <th>Email</th><td id="ec-info-email">&nbsp;</td>
+          <th>Fax</th><td id="ec-info-fax">&nbsp;</td>
+        </tr>
+        <tr>
+          <th>주 소</th><td colspan="3" id="ec-info-addr">&nbsp;</td>
+        </tr>
+        <tr>
+          <th>적 요</th><td colspan="3" id="ec-info-memo">&nbsp;</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- 판매/수금내역 -->
+    <div class="ec-ledger-title">판매/수금내역</div>
+    <table class="ec-ledger">
+      <thead>
+        <tr>
+          <th style="width:100px">일자</th>
+          <th>적요</th>
+          <th class="num" style="width:110px">판매</th>
+          <th class="num" style="width:110px">수금</th>
+          <th class="num" style="width:110px">잔액</th>
+        </tr>
+      </thead>
+      <tbody id="tbody-ledger">
+        <!-- JS로 채움 -->
+      </tbody>
+    </table>
+
+    <div class="ec-print-footer" id="ec-print-time">—</div>
+  </div>
+</div>
+
+<!-- 입금 등록 모달 -->
+<div class="modal-overlay" id="payment-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title">입금 등록</div>
+      <button class="modal-close" onclick="closePaymentModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <label>
+        입금일
+        <input type="date" id="payment-date"/>
+      </label>
+      <label>
+        입금 금액
+        <input type="number" id="payment-amount" placeholder="0" min="0"/>
+      </label>
+      <label>
+        메모 (선택)
+        <textarea id="payment-memo" rows="2" placeholder="예: 6월 1차 정산, 어음"></textarea>
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-back" onclick="closePaymentModal()">취소</button>
+      <button class="btn-add-payment" onclick="savePayment()"><i class="fas fa-check"></i> 저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- 원장 모듈 (AGENTS.md 정신: 도메인별 폴더, 단일 책임 분리) -->
+<script src="./js/shared/format.js"></script>
+<script src="./js/features/ledger/types.js"></script>
+<script src="./js/features/ledger/utils.js"></script>
+<script src="./js/features/ledger/validate.js"></script>
+<script src="./js/features/ledger/query.js"></script>
+<script src="./js/features/ledger/render.js"></script>
+
+<!-- onclick 핸들러 호환 어댑터 (기존 HTML 그대로 사용) -->
+<script>
+  // 모달 저장 버튼 → handleSavePayment
+  function savePayment() { return handleSavePayment(); }
+  // 삭제 버튼 → handleDeletePayment (위 render.js의 handleDeletePayment 호출)
+</script>
+</body>
+</html>

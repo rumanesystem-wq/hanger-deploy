@@ -96,12 +96,12 @@
   <div><dt>앱 이름</dt><dd>발주허브 (https://hanger-deploy.web.app)</dd></div>
   <div><dt>업종</dt><dd>시스템행거(옷장 가구 시스템) 발주·재고 관리</dd></div>
   <div><dt>기술 스택</dt><dd>HTML/CSS/JS, Firebase (Firestore, Functions, Auth, Hosting)</dd></div>
-  <div><dt>현재 사용자</dt><dd>관리자 + 발주자(설치 기사) 다수</dd></div>
+  <div><dt>현재 사용자</dt><dd>관리자 + 발주자(납품처) 다수</dd></div>
 </div>
 
 <h2>1. 앱이 하는 일</h2>
 
-<p>가구 설치 기사들이 현장에서 부족한 자재를 본사에 발주 요청 → 관리자가 확인 → 출고 처리. 그 과정에서 재고 자동 차감 + 이카운트 ERP 자동 연동(판매전표 생성)을 함.</p>
+<p>발주자(납품처)들이 현장에서 부족한 자재를 본사에 발주 요청 → 관리자가 확인 → 출고 처리. 그 과정에서 재고 자동 차감 + 이카운트 ERP 자동 연동(판매전표 생성)을 함.</p>
 
 <h3>주요 화면</h3>
 <ul>
@@ -128,7 +128,7 @@
 <tr><td><code>status</code></td><td>string</td><td>발주대기 / 발주확정 / 출고준비 / 출고완료 / 취소 / 보관 / 임시저장</td></tr>
 <tr><td><code>orderDate</code></td><td>string</td><td>발주일 (YYYY-MM-DD)</td></tr>
 <tr><td><code>shipDate</code></td><td>string</td><td>출고예정일</td></tr>
-<tr><td><code>deliveryTo</code></td><td>string</td><td>납품처 (설치 기사 이름 또는 회사명)</td></tr>
+<tr><td><code>deliveryTo</code></td><td>string</td><td>납품처 (이름 또는 회사명)</td></tr>
 <tr><td><code>address</code></td><td>string</td><td>시공 주소</td></tr>
 <tr><td><code>warehouse</code></td><td>string</td><td>출고 창고 (시흥 / 평택)</td></tr>
 <tr><td><code>createdBy</code></td><td>string</td><td>발주자 계정 ID</td></tr>
@@ -206,7 +206,7 @@
 <tr><td><code>id</code></td><td>로그인 아이디</td></tr>
 <tr><td><code>name</code></td><td>이름</td></tr>
 <tr><td><code>email</code></td><td>이메일 (Firebase Auth용)</td></tr>
-<tr><td><code>role</code></td><td><code>admin</code> (관리자) 또는 <code>orderer</code> (발주자/기사)</td></tr>
+<tr><td><code>role</code></td><td><code>admin</code> (관리자) 또는 <code>orderer</code> (발주자/납품처)</td></tr>
 <tr><td><code>deliveryName</code></td><td>납품처 이름 (발주자만)</td></tr>
 <tr><td><code>empCd</code></td><td>이카운트 사원코드 (출고확정자 매핑용)</td></tr>
 <tr><td><code>bizCd</code></td><td>이카운트 거래처코드 (발주자 매핑용)</td></tr>
@@ -244,7 +244,7 @@
 <h3>주요 집계 차원</h3>
 <ul>
   <li><strong>기간별</strong>: 일/주/월/연 단위</li>
-  <li><strong>발주자별</strong> (기사별/거래처별)</li>
+  <li><strong>납품처별</strong> (납품처별)</li>
   <li><strong>창고별</strong> (시흥/평택)</li>
   <li><strong>품목별</strong></li>
   <li><strong>카테고리별</strong> (상부자재/서랍장/선반 등)</li>
@@ -268,7 +268,7 @@
 <tr><td><code>orderNum</code> (발주번호)</td><td><strong>식별자. 클릭 시 발주서 상세로 이동</strong></td></tr>
 <tr><td><code>orderDate</code> (발주일)</td><td>발주 접수 날짜</td></tr>
 <tr><td><code>shipDate</code> (출고일)</td><td>출고 완료 날짜 (정산 기준일 후보)</td></tr>
-<tr><td><code>deliveryTo</code> (납품처/기사)</td><td>거래처/기사 이름</td></tr>
+<tr><td><code>deliveryTo</code> (납품처)</td><td>납품처 이름</td></tr>
 <tr><td><code>warehouse</code> (창고)</td><td>시흥 / 평택</td></tr>
 <tr><td><code>status</code> (상태)</td><td>출고완료 / 발주확정 등</td></tr>
 <tr><td><code>totalAmount</code> (합계)</td><td>공급가 + 부가세</td></tr>
@@ -280,7 +280,7 @@
 <table>
 <thead><tr><th>대상</th><th>정산 기준</th></tr></thead>
 <tbody>
-<tr><td>기사별 정산</td><td>출고완료된 발주서 합계 (월 단위)</td></tr>
+<tr><td>납품처별 정산</td><td>출고완료된 발주서 합계 (월 단위)</td></tr>
 <tr><td>VAT 신고</td><td>월별 공급가액 / 부가세 합계</td></tr>
 <tr><td>재고 회계</td><td>월말 시흥/평택 재고 가액</td></tr>
 <tr><td>매출 분석</td><td>카테고리별·색상별·기간별</td></tr>
