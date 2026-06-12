@@ -1316,7 +1316,6 @@ function _renderLedgerPanelHTML(){
                   <th>납품처</th>
                   <th class="num">총 발주 건수</th>
                   <th class="num">총 출고금액</th>
-                  <th class="num">총 입금액</th>
                   <th class="center">상세 보기</th>
                 </tr>
               </thead>

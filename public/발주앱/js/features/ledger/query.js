@@ -124,20 +124,26 @@ let LEDGER_MOCK_PAYMENTS = [
 
 /**
  * 전체 출고완료 발주서 조회
- * (추후 firebase.firestore().collection('hanger_orders').where('status','==','출고완료').get())
+ * 발주앱 메인 통합 환경: DB.get 메모리 캐시 사용 (syncFromServer 후)
+ * 폴백 환경: 빈 배열
  * @returns {Promise<Order[]>}
  */
 async function fetchAllCompletedOrders() {
-  return LEDGER_MOCK_ORDERS.filter(o => o.status === '출고완료');
+  const allOrders = (typeof DB !== 'undefined' && typeof DB.get === 'function')
+    ? DB.get('orders', [])
+    : [];
+  // 출고완료 + 발주확정(=UI '출고확정') 둘 다 매출 인식 (운영 워크플로우)
+  return allOrders.filter(o => o && (o.status === '출고완료' || o.status === '발주확정'));
 }
 
 /**
  * 전체 입금 내역 조회
- * (추후 firebase.firestore().collection('hanger_payments').get())
+ * 입금 기능 미사용 결정 (사용자) — 항상 빈 배열 반환
+ * (옛 LEDGER_MOCK_PAYMENTS는 보관 — 추후 입금 기능 추가 시 복구 가능)
  * @returns {Promise<Payment[]>}
  */
 async function fetchAllPayments() {
-  return [...LEDGER_MOCK_PAYMENTS];
+  return [];
 }
 
 /**

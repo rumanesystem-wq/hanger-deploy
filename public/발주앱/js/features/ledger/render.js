@@ -117,7 +117,6 @@ async function renderCustomerList() {
         <td><strong>${escapeHtml(s.name)}</strong></td>
         <td class="num">${s.orderCount}건</td>
         <td class="num">${fmtMoney(s.totalOut)}</td>
-        <td class="num" style="color:#15803d">${fmtMoney(s.totalIn)}</td>
         <td class="center"><button class="btn-view" onclick="event.stopPropagation(); showDetailView('${escapeHtml(s.name)}')">▶ 원장 보기</button></td>
       </tr>
     `);
@@ -293,11 +292,15 @@ function renderOrderHeaderRow(ev, seq, balance) {
  * 품목 상세 행 (들여쓰기, 분홍색)
  */
 function renderItemRow(item) {
+  if (!item || (!item.name && !item.color)) return ''; // 빈 데이터 skip (재고 이동 기록 등)
+  const name = item.name || '';
+  const qty = Number(item.qty) || 0;
+  const unitPrice = Number(item.unitPrice) || 0;
   const colorPart = item.color ? ` [${escapeHtml(item.color)}]` : '';
-  const lineAmount = Math.round(item.qty * item.unitPrice * 1.1); // 부가세 포함
+  const lineAmount = Math.round(qty * unitPrice * 1.1); // 부가세 포함
   return `<tr class="ec-row-item">
     <td></td>
-    <td>${escapeHtml(item.name)}${colorPart} / ${item.qty} * ${fmtMoney(item.unitPrice)}</td>
+    <td>${escapeHtml(name)}${colorPart} / ${qty} * ${fmtMoney(unitPrice)}</td>
     <td class="num">${fmtMoney(lineAmount)}</td>
     <td class="num"></td>
     <td class="num"></td>
@@ -405,7 +408,8 @@ function buildTimelineEvents(orders, payments, invoiceMap) {
       amount: supply,
       amountWithVat: withVat,
       hasInvoice: !!inv,
-      items: inv && Array.isArray(inv.items) && inv.items.length ? inv.items : (o.items || [])
+      // 거래명세서가 있을 때만 품목 표시 (발주서의 items는 재고 이동 기록이라 품목 정보 아님)
+      items: inv && Array.isArray(inv.items) && inv.items.length ? inv.items : []
     });
   });
   payments.forEach(p => {

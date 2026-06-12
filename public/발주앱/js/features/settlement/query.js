@@ -36,16 +36,16 @@ const MOCK_ORDERS = [
  * @returns {Promise<Order[]>}
  */
 async function fetchCompletedOrders(filter) {
-  // Mock 데이터에서 필터링 (실제 배포 시 Firestore 쿼리로 교체)
-  // 예시:
-  //   await firebase.firestore().collection('hanger_orders')
-  //     .where('status', '==', '출고완료')
-  //     .where('shipDate', '>=', filter.range.startDate)
-  //     .where('shipDate', '<=', filter.range.endDate)
-  //     .get()
-  return MOCK_ORDERS.filter(o => {
-    if (o.status !== '출고완료') return false;
-    const dateField = o.shipDate || '';
+  // 발주앱 메인 통합 환경: DB.get으로 메모리 캐시(syncFromServer 후)에서 즉시 반환
+  // _FS 없는 환경(없을 일은 거의 없음)에선 빈 배열
+  const allOrders = (typeof DB !== 'undefined' && typeof DB.get === 'function')
+    ? DB.get('orders', [])
+    : [];
+  return allOrders.filter(o => {
+    if (!o) return false;
+    // 출고완료 + 발주확정(=UI '출고확정') 둘 다 매출 인식 (운영 워크플로우)
+    if (o.status !== '출고완료' && o.status !== '발주확정') return false;
+    const dateField = o.shipDate || o.orderDate || '';
     if (!dateField || dateField < filter.range.startDate || dateField > filter.range.endDate) return false;
     if (filter.ordererSearch && !(o.deliveryTo || '').includes(filter.ordererSearch)) return false;
     if (filter.warehouse && o.warehouse !== filter.warehouse) return false;

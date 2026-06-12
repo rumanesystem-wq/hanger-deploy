@@ -87,7 +87,7 @@ function buildLedgerEvents(orders, payments, invoiceMap) {
  * @returns {CustomerStats}
  */
 function calcCustomerStats(name, allOrders, allPayments, invoiceMap) {
-  const orders = allOrders.filter(o => o.deliveryTo === name && o.status === '출고완료');
+  const orders = allOrders.filter(o => o.deliveryTo === name && (o.status === '출고완료' || o.status === '발주확정'));
   const payments = allPayments.filter(p => p.customer === name);
   const totalOut = orders.reduce((s, o) => s + effectiveAmount(o, invoiceMap), 0);
   const totalIn = payments.reduce((s, p) => s + (p.amount || 0), 0);
@@ -109,7 +109,7 @@ function calcCustomerStats(name, allOrders, allPayments, invoiceMap) {
  * @returns {CustomerSummary[]}
  */
 function listCustomersSummary(allOrders, allPayments, invoiceMap) {
-  const completedOrders = allOrders.filter(o => o.status === '출고완료');
+  const completedOrders = allOrders.filter(o => o.status === '출고완료' || o.status === '발주확정');
   const names = [...new Set(completedOrders.map(o => o.deliveryTo).filter(Boolean))];
 
   return names.map(name => {
