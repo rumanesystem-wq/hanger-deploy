@@ -1344,9 +1344,9 @@ function _renderLedgerPanelHTML(){
           </div>
         </div>
         <div class="ec-print-area" id="ec-print-area">
-          <div class="ec-doc-title"><span id="ec-doc-customer-name">—</span> 관리대장<span class="ec-doc-title-sub">(거래명세서별)</span></div>
+          <div class="ec-doc-title"><span id="ec-doc-customer-name">—</span> 관리대장</div>
           <div class="ec-meta">
-            <div class="ec-meta-left">회사명 : 루마네시스템 / 담당 : </div>
+            <div class="ec-meta-left">회사명 : 루마네시스템</div>
             <div class="ec-meta-right" id="ec-doc-period">—</div>
           </div>
           <table class="ec-info-table">

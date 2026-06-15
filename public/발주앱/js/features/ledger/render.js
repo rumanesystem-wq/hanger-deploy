@@ -353,14 +353,13 @@ function calcCarryOver(stats, startDate) {
   if (!startDate) return 0;
   const invoiceMap = stats._invoiceMap;
   let carry = 0;
+  // A.1: 거래명세서 있는 발주서만 이월잔액 계산
   (stats.orders || []).forEach(o => {
     const dateField = o.shipDate || o.orderDate || '';
     if (dateField && dateField < startDate) {
       const inv = invoiceMap && invoiceMap[o.orderNum];
-      const amt = inv && typeof inv.totalAmount === 'number'
-        ? inv.totalAmount
-        : (o.totalAmount || (o.totalSupply || 0) * 1.1);
-      carry += amt;
+      if (!inv || typeof inv.totalAmount !== 'number') return; // 거래명세서 없으면 매출 인식 안 함
+      carry += inv.totalAmount;
     }
   });
   (stats.payments || []).forEach(p => {
@@ -394,11 +393,12 @@ function filterPaymentsInRange(payments, range) {
  */
 function buildTimelineEvents(orders, payments, invoiceMap) {
   const events = [];
+  // A.1: 거래명세서 있는 발주서만 events 생성 (없으면 원장에 표시 안 함)
   orders.forEach(o => {
-    // 거래명세서가 있으면 그 totalSupply/totalVat/totalAmount 우선
     const inv = invoiceMap && invoiceMap[o.orderNum];
-    const supply = inv && typeof inv.totalSupply === 'number' ? inv.totalSupply : (o.totalSupply || 0);
-    const withVat = inv && typeof inv.totalAmount === 'number' ? inv.totalAmount : (o.totalAmount || Math.round(supply * 1.1));
+    if (!inv) return;
+    const supply = typeof inv.totalSupply === 'number' ? inv.totalSupply : (o.totalSupply || 0);
+    const withVat = typeof inv.totalAmount === 'number' ? inv.totalAmount : (o.totalAmount || Math.round(supply * 1.1));
     events.push({
       type: 'out',
       date: o.shipDate || o.orderDate || '',
@@ -407,9 +407,8 @@ function buildTimelineEvents(orders, payments, invoiceMap) {
       warehouse: o.warehouse || '',
       amount: supply,
       amountWithVat: withVat,
-      hasInvoice: !!inv,
-      // 거래명세서가 있을 때만 품목 표시 (발주서의 items는 재고 이동 기록이라 품목 정보 아님)
-      items: inv && Array.isArray(inv.items) && inv.items.length ? inv.items : []
+      hasInvoice: true,
+      items: Array.isArray(inv.items) && inv.items.length ? inv.items : []
     });
   });
   payments.forEach(p => {

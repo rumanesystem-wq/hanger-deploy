@@ -106,8 +106,7 @@ function buildInvoiceHTML(invoice) {
       <table class="ci-receiver-tbl">
         <tbody>
           <tr><td class="ci-receiver-name"><span contenteditable="true" data-field="recv-name" class="invoice-editable">${escHtml(invoice.deliveryTo || '')}</span> <span class="ci-gwiing">貴 中</span></td></tr>
-          <tr><td class="ci-receiver-addr"><span contenteditable="true" data-field="recv-addr" class="invoice-editable">${escHtml(invoice.address || '')}</span></td></tr>
-          <tr><td class="ci-receiver-order"><span class="ci-row-label">발주번호</span> <span contenteditable="true" data-field="recv-order" class="invoice-editable">${escHtml(invoice.orderNum || '')}</span></td></tr>
+          <tr><td class="ci-receiver-addr"><span class="ci-row-label">시공주소</span> <span contenteditable="true" data-field="recv-addr" class="invoice-editable">${escHtml(invoice.address || '')}</span></td></tr>
           <tr><td class="ci-receiver-tel"><span class="ci-tel-icon">☎</span> <span contenteditable="true" data-field="recv-tel" class="invoice-editable">${escHtml(invoice.receiverTel || '')}</span></td></tr>
         </tbody>
       </table>
@@ -116,8 +115,8 @@ function buildInvoiceHTML(invoice) {
       <table class="ci-supplier-tbl">
         <tbody>
           <tr>
-            <td class="ci-sup-side" rowspan="4">공<br>급<br>자</td>
-            <th>일련번호</th><td class="ci-sup-val">${escHtml(serialDisplay)}</td>
+            <td class="ci-sup-side" rowspan="5">공<br>급<br>자</td>
+            <th>발주번호</th><td class="ci-sup-val">${escHtml(invoice.orderNum || '')}</td>
             <th>TEL</th><td class="ci-sup-val">${escHtml(SUPPLIER.tel)}</td>
           </tr>
           <tr>
@@ -129,6 +128,9 @@ function buildInvoiceHTML(invoice) {
           </tr>
           <tr>
             <th>주소</th><td class="ci-sup-val" colspan="3">${escHtml(SUPPLIER.address)}</td>
+          </tr>
+          <tr>
+            <th>담당자</th><td class="ci-sup-val" colspan="3">${escHtml(invoice.issuerName || '')}</td>
           </tr>
         </tbody>
       </table>

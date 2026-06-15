@@ -136,6 +136,7 @@ function orderToInvoice(order) {
     totalAmount,
     createdAt:  new Date().toISOString(),
     createdBy:  (window.currentUser && window.currentUser.id) || '',
+    issuerName: (window.currentUser && window.currentUser.name) || '',
     serial:     ''
   };
 }
