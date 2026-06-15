@@ -75,12 +75,22 @@ function generateSerial(date, existingSerials) {
 function orderToInvoice(order) {
   const items = [];
 
+  // 가격표에서 단가 조회 (fallback용)
+  const priceTable = (typeof DB !== 'undefined' && typeof DB.get === 'function')
+    ? DB.get('price_settings', [])
+    : [];
+  const priceOf = (name) => {
+    if (!name) return 0;
+    const p = priceTable.find(x => x && x.name === name);
+    return p ? (p.price || 0) : 0;
+  };
+
   // 상부 자재
   (order.upperMaterials || []).forEach(m => {
     if (!m.qty || m.qty <= 0) return;
     const spec = m.color || '';
     const qty  = m.qty;
-    const unitPrice = m.unitPrice || 0;
+    const unitPrice = m.unitPrice || priceOf(m.name) || 0;
     const supply = Math.floor(qty * unitPrice);
     const vat    = Math.round(supply * 0.1);
     items.push({ name: m.name || '', spec, qty, unitPrice, supply, vat });
@@ -92,7 +102,7 @@ function orderToInvoice(order) {
       if (!e.qty || e.qty <= 0) return;
       const spec = [e.color || '', e.size || '', e.width ? (e.width + '×' + e.height) : ''].filter(Boolean).join(' ');
       const qty  = e.qty;
-      const unitPrice = e.unitPrice || 0;
+      const unitPrice = e.unitPrice || priceOf(si.name) || 0;
       const supply = Math.floor(qty * unitPrice);
       const vat    = Math.round(supply * 0.1);
       items.push({ name: si.name || '', spec, qty, unitPrice, supply, vat });
@@ -102,17 +112,22 @@ function orderToInvoice(order) {
   // 서랍/옵션 — order.items는 재고 이동 기록이라 폴백에서 제외 (호환성 fix)
   (order.drawerItems || []).forEach(oi => {
     if (!oi.requiredQty || oi.requiredQty <= 0) return;
+    const name = oi.itemName || oi.displayName || '';
     const spec = oi.color || '';
     const qty  = oi.requiredQty;
-    const unitPrice = oi.unitPrice || 0;
+    const unitPrice = oi.unitPrice || priceOf(name) || 0;
     const supply = Math.floor(qty * unitPrice);
     const vat    = Math.round(supply * 0.1);
-    items.push({ name: oi.itemName || oi.displayName || '', spec, qty, unitPrice, supply, vat });
+    items.push({ name, spec, qty, unitPrice, supply, vat });
   });
 
-  // 옷봉
+  // 옷봉 2400 (가격표에서 조회)
   if (order.rod2400Required > 0) {
-    items.push({ name: '옷봉 2400', spec: '', qty: order.rod2400Required, unitPrice: 0, supply: 0, vat: 0 });
+    const qty = order.rod2400Required;
+    const unitPrice = priceOf('옷봉 2400');
+    const supply = Math.floor(qty * unitPrice);
+    const vat    = Math.round(supply * 0.1);
+    items.push({ name: '옷봉 2400', spec: '', qty, unitPrice, supply, vat });
   }
 
   // items가 없으면 단일 행 fallback
