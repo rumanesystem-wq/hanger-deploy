@@ -130,7 +130,7 @@ function buildInvoiceHTML(invoice) {
             <th>주소</th><td class="ci-sup-val" colspan="3">${escHtml(SUPPLIER.address)}</td>
           </tr>
           <tr>
-            <th>담당자</th><td class="ci-sup-val" colspan="3">${escHtml(invoice.issuerName || '')}</td>
+            <th>담당자</th><td class="ci-sup-val" colspan="3">${escHtml(invoice.issuerName || (typeof currentUser !== 'undefined' && currentUser && currentUser.name) || '')}</td>
           </tr>
         </tbody>
       </table>
