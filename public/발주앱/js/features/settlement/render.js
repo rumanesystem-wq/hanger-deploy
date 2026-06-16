@@ -207,7 +207,7 @@ function renderCustomerDetailTable(orders) {
           </tr>
         </thead>
         <tbody>
-          ${orders.map(o => renderOrderRow(o)).join('')}
+          ${[...orders].sort((a,b)=>{const da=a.orderDate||a.shipDate||'';const db=b.orderDate||b.shipDate||'';return db.localeCompare(da);}).map(o => renderOrderRow(o)).join('')}
         </tbody>
       </table>
     </div>
