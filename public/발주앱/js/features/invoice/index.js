@@ -14,12 +14,21 @@ async function _openFromOrder(order) {
       console.warn('[Invoice] openFromOrder: missing orderNum', order);
       return;
     }
-    // 중복 저장 방지: 같은 발주번호의 거래명세서가 이미 있으면 그걸 재사용
+    // 관리자 여부 — 발주자는 새 invoice 생성 불가 (읽기 전용)
+    const _isAdminUser = (typeof isAdmin === 'function') && isAdmin();
+    // 활성 invoice 찾기 (cancelled 제외)
     const existing = await getInvoicesByOrderNum(order.orderNum);
-    if (existing && existing.length > 0) {
-      const latest = existing[existing.length - 1];
+    const active = (existing || []).filter(i => i && !i.cancelled);
+    if (active.length > 0) {
+      const latest = active[active.length - 1];
       openInvoiceModal(latest, 'view');
       _setupInvoiceModalButtons(latest);
+      if (!_isAdminUser) _applyReadonlyMode();
+      return;
+    }
+    // 발주자가 호출했고 invoice가 없으면 신규 생성 금지 (관리자 흐름 보호)
+    if (!_isAdminUser) {
+      if (typeof toast === 'function') toast('아직 거래명세서가 발급되지 않았습니다. 관리자에게 문의하세요.', 'warning');
       return;
     }
     const draft = orderToInvoice(order);
@@ -128,6 +137,29 @@ function _setupInvoiceModalButtons(invoice) {
 function _closeInvoiceModal() {
   const modal = document.getElementById('invoiceModal');
   if (modal) modal.style.display = 'none';
+}
+
+/**
+ * 발주자(관리자 아님) 모달 진입 시 읽기 전용 처리
+ * - 모든 contenteditable 비활성화
+ * - 행 추가/삭제 버튼 숨김
+ * - 저장 버튼 숨김
+ * - PDF/인쇄/닫기는 유지
+ */
+function _applyReadonlyMode() {
+  const modal = document.getElementById('invoiceModal');
+  if (!modal) return;
+  modal.querySelectorAll('[contenteditable]').forEach(el => {
+    el.setAttribute('contenteditable', 'false');
+    el.classList.remove('invoice-editable');
+    el.style.background = 'transparent';
+    el.style.cursor = 'default';
+  });
+  modal.querySelectorAll('.invoice-row-del, .invoice-add-row-btn, .invoice-add-row-wrap').forEach(el => {
+    el.style.display = 'none';
+  });
+  const btnSave = document.getElementById('invoiceBtnSave');
+  if (btnSave) btnSave.style.display = 'none';
 }
 
 async function _listInvoices(orderNum) {
