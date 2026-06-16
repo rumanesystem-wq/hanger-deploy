@@ -32,6 +32,13 @@ async function _openFromOrder(order) {
       return;
     }
     const draft = orderToInvoice(order);
+    const zeroItems = findZeroPriceItems(draft);
+    if (zeroItems.length > 0) {
+      const msg = '단가 0원 항목이 있어 거래명세서를 발급할 수 없습니다.\n→ ' + zeroItems.join(', ') + '\n\n가격표를 먼저 확인해주세요.';
+      if (typeof toast === 'function') toast(msg, 'error');
+      else alert(msg);
+      return;
+    }
     const dateKey = (draft.shipDate || '').replace(/-/g, '');
     const existingSerials = await getInvoicesByDate(dateKey);
     draft.serial = generateSerial(draft.shipDate || '', existingSerials);
@@ -186,6 +193,14 @@ async function _autoCreateForOrder(order) {
       return { created: false, reason: '이미 활성 invoice 있음' };
     }
     const draft = orderToInvoice(order);
+    const zeroItems = findZeroPriceItems(draft);
+    if (zeroItems.length > 0) {
+      if (typeof toast === 'function') {
+        toast('⚠ 거래명세서 자동발급 보류: 단가 0원 항목 → ' + zeroItems.join(', '), 'warning');
+      }
+      console.warn('[Invoice] autoCreate skip (zero-price):', draft.orderNum, zeroItems);
+      return { created: false, reason: '단가 0원 항목 있음: ' + zeroItems.join(', ') };
+    }
     const dateKey = (draft.shipDate || '').replace(/-/g, '');
     const existingSerials = await getInvoicesByDate(dateKey);
     draft.serial = generateSerial(draft.shipDate || '', existingSerials);
