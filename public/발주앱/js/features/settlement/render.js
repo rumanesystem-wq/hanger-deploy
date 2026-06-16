@@ -229,7 +229,7 @@ function renderOrderRow(o) {
       <td class="center" style="font-size:12px">${fmtShortDate(o.orderDate)}</td>
       <td class="num">${fmtMoney(o.totalSupply)}</td>
       <td class="num"><strong>${fmtMoney(o.totalAmount)}</strong></td>
-      <td class="center"><button class="btn-invoice" onclick="openInvoiceFromSettlement(${o.id})"><i class="fas fa-file-invoice"></i> 거래명세서</button></td>
+      <td class="center" style="white-space:nowrap"><button class="btn-invoice" onclick="openInvoiceFromSettlement(${o.id})"><i class="fas fa-file-invoice"></i> 거래명세서</button> <button class="btn-invoice-send" onclick="toggleInvoiceSendFromSettlement('${escapeHtml(o.orderNum)}', this)" title="발주자에게 전송 / 전송 취소" style="margin-left:4px;padding:4px 8px;font-size:12px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:4px;cursor:pointer;font-weight:700"><i class="fas fa-paper-plane"></i> 전송</button></td>
       <td class="center"><button class="btn-edit" onclick="startInlineEdit(${o.id})"><i class="fas fa-edit"></i> 수정</button></td>
       <td class="center"><button class="btn-link" onclick="goToOrder('${escapeHtml(o.orderNum)}')"><i class="fas fa-external-link-alt"></i> 이동</button></td>
     </tr>
@@ -375,6 +375,45 @@ async function openInvoiceFromSettlement(orderId) {
     return;
   }
   await window.LumaneInvoice.openFromOrder(order);
+}
+
+/**
+ * 발주자 전송 토글 — 현재 상태 페치 후 반전
+ * 버튼 라벨/색을 갱신해서 시각적 피드백
+ * @param {string} orderNum
+ * @param {HTMLElement} btn
+ */
+async function toggleInvoiceSendFromSettlement(orderNum, btn) {
+  if (!window.LumaneInvoice || typeof window.LumaneInvoice.setSentByOrderNum !== 'function') {
+    if (typeof toast === 'function') toast('거래명세서 모듈 로드 실패.', 'error');
+    return;
+  }
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try {
+    const list = await window.LumaneInvoice.list(orderNum);
+    const active = (list || []).filter(i => i && !i.cancelled);
+    if (active.length === 0) {
+      if (typeof toast === 'function') toast('발급된 거래명세서가 없습니다. 먼저 발급해주세요.', 'warning');
+      return;
+    }
+    const latest = active[active.length - 1];
+    const nextSent = !latest.sentToCustomer;
+    const confirmMsg = nextSent
+      ? '발주자에게 거래명세서를 전송하시겠습니까?'
+      : '전송을 취소하시겠습니까? (발주자가 더 이상 볼 수 없습니다)';
+    if (!confirm(confirmMsg)) return;
+    const r = await window.LumaneInvoice.setSentByOrderNum(orderNum, nextSent);
+    if (r.updated > 0) {
+      btn.innerHTML = nextSent
+        ? '<i class="fas fa-check-circle"></i> 전송됨'
+        : '<i class="fas fa-paper-plane"></i> 전송';
+      btn.style.background = nextSent ? '#16a34a' : '#fff';
+      btn.style.color = nextSent ? '#fff' : '#16a34a';
+    }
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function exportExcel() {

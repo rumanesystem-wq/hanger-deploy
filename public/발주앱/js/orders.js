@@ -671,6 +671,11 @@ function renderOrders(){
   if(orders.length===0){
     rows='<div class="empty"><i class="fas fa-file-invoice"></i><p>등록된 발주서가 없습니다.</p>'+(isAdmin()?'':'<button class="btn btn-primary" style="margin-top:12px" id="empty-order-btn">첫 번째 발주서 등록</button>')+'</div>';
   }else{
+    // 발주자 거래명세서 버튼 표시용: 전송된(sentToCustomer=true) 활성 invoice만 모음
+    const _sentInvOrderNums=new Set();
+    (typeof DB!=='undefined'&&typeof DB.get==='function'?DB.get('invoices',[]):[]).forEach(i=>{
+      if(i&&!i.cancelled&&i.sentToCustomer&&i.orderNum)_sentInvOrderNums.add(i.orderNum);
+    });
     rows=`<div class="table-wrap"><table><thead><tr><th>납품처</th><th>시공주소</th><th>발주번호</th><th>발주일</th><th>출고일</th><th class="td-center">상태</th><th class="td-center">등록일</th>${orderListSubTab==='cancelled'?'<th>취소 사유</th>':''}${(isAdmin()||orderListSubTab==='cancelled')?'<th class="td-center">관리</th>':''}</tr></thead><tbody>
     ${orders.map(o=>{
       const dTo=o.deliveryTo||o.siteName||'-';
@@ -682,8 +687,9 @@ function renderOrders(){
       const cancelBtn=isAdmin()&&orderListSubTab==='active'?`<button class="btn btn-ghost btn-xs order-cancel-btn" data-order-id="${o.id}" style="color:var(--danger);white-space:nowrap"><i class="fas fa-ban"></i> 발주 취소</button>`:'';
       const uncancelBtn=orderListSubTab==='cancelled'&&(isAdmin()||(currentUser&&o.createdBy===currentUser.id))?`<button class="btn btn-ghost btn-xs order-uncancel-btn" data-order-id="${o.id}" style="color:#16a34a;white-space:nowrap"><i class="fas fa-rotate-left"></i> 취소 되돌리기</button>`:'';
       const reorderBtn=`<button class="btn btn-outline btn-xs reorder-btn" data-order-id="${o.id}" title="이 발주서로 재발주" style="border:1.5px solid #0ea5e9;color:#0369a1;font-weight:700;white-space:nowrap"><i class="fas fa-rotate-right"></i> 재발주</button>`;
-      // 거래명세서 버튼 (관리자 또는 본인 발주서 + 발주확정/출고완료 이상, 발주자는 읽기 전용)
-      const _canSeeInv=(isAdmin()||(currentUser&&o.createdBy===currentUser.id))&&(o.status==='출고완료'||o.status==='발주확정');
+      // 거래명세서 버튼 — 관리자는 항상, 발주자는 sentToCustomer=true 인 경우만
+      const _statusOK=(o.status==='출고완료'||o.status==='발주확정');
+      const _canSeeInv=_statusOK && (isAdmin() || (currentUser&&o.createdBy===currentUser.id && _sentInvOrderNums.has(o.orderNum)));
       const invoiceBtn=_canSeeInv?`<button class="btn btn-outline btn-xs invoice-btn" data-order-id="${o.id}" style="border:1.5px solid #7c3aed;color:#7c3aed;font-weight:700;white-space:nowrap"><i class="fas fa-file-invoice"></i> 거래명세서</button>`:'';
       const cancelReasonCell=orderListSubTab==='cancelled'?`<td class="td-muted" style="font-size:12px;color:#dc2626;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${o.cancelReason||''}">${o.cancelReason||'-'}</td>`:'';
       return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer" title="클릭하여 상세 보기"><td class="td-name">${dTo}</td><td class="td-muted" style="font-size:12px">${addr}</td><td style="font-size:12px;font-weight:600;color:#0f172a">${o.orderNum||('#'+o.id)}${lockBadge}</td><td class="td-muted">${fmt(o.orderDate)}</td><td class="td-muted">${o.shipDate?fmt(o.shipDate):'-'}</td><td class="td-center">${statusBadge}</td><td class="td-center td-muted">${fmt(o.createdAt)}</td>${cancelReasonCell}<td class="td-center">${cancelBtn} ${uncancelBtn} ${reorderBtn} ${invoiceBtn}</td></tr>`;
@@ -1234,7 +1240,11 @@ function openOrderDetail(orderId){
     const existingInvBtn=document.getElementById('detail-invoice-btn');
     if(existingInvBtn)existingInvBtn.remove();
     const _isOwner=currentUser&&order.createdBy===currentUser.id;
-    if((isAdmin()||_isOwner)&&(order.status==='출고완료'||order.status==='발주확정')){
+    // 발주자에게는 sentToCustomer=true 인 활성 invoice가 있을 때만 노출
+    const _hasSentInv=(typeof DB!=='undefined'&&typeof DB.get==='function'?DB.get('invoices',[]):[])
+      .some(i=>i&&!i.cancelled&&i.sentToCustomer&&i.orderNum===order.orderNum);
+    const _canSeeInvDetail=(order.status==='출고완료'||order.status==='발주확정')&&(isAdmin()||(_isOwner&&_hasSentInv));
+    if(_canSeeInvDetail){
       const leftBtns=document.querySelector('#order-detail-modal .modal-footer > div');
       if(leftBtns){
         const invBtn=document.createElement('button');

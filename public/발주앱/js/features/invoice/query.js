@@ -158,6 +158,34 @@ async function cancelInvoiceByOrderNum(orderNum) {
 }
 
 /**
+ * 발주자 전송 상태 토글 — 해당 orderNum의 활성 invoice의 sentToCustomer 갱신
+ * 5중 안전망 동일 적용
+ * @param {string} orderNum
+ * @param {boolean} sent
+ * @returns {Promise<number>} 갱신된 invoice 수
+ */
+async function setInvoiceSent(orderNum, sent) {
+  if (!window._FS) throw new Error('[Invoice] _FS 미초기화');
+  if (!orderNum) return 0;
+  let list = await _safeFetchInvoiceList();
+  if (list === null) return 0;
+  const beforeLen = list.length;
+  let changed = 0;
+  const newList = list.map(inv => {
+    if (inv && inv.orderNum === orderNum && !inv.cancelled) {
+      changed++;
+      return { ...inv, sentToCustomer: !!sent, sentAt: sent ? new Date().toISOString() : null };
+    }
+    return inv;
+  });
+  if (changed === 0) return 0;
+  if (newList.length !== beforeLen) throw new Error('[Invoice] setSent: 길이 변경 — 저장 중단');
+  await _verifyBeforeSave({ length: beforeLen });
+  await window._FS.set(INVOICE_DOC_KEY, newList);
+  return changed;
+}
+
+/**
  * 특정 날짜의 거래명세서 시리얼 목록 반환 (일련번호 생성용)
  * @param {string} yyyymmdd - 예: "20260612"
  * @returns {Promise<string[]>}

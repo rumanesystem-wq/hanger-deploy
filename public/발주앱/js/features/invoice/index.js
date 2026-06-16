@@ -21,6 +21,11 @@ async function _openFromOrder(order) {
     const active = (existing || []).filter(i => i && !i.cancelled);
     if (active.length > 0) {
       const latest = active[active.length - 1];
+      // 발주자가 호출했는데 아직 전송 안 됨 → 차단
+      if (!_isAdminUser && !latest.sentToCustomer) {
+        if (typeof toast === 'function') toast('아직 거래명세서가 전송되지 않았습니다. 관리자에게 문의하세요.', 'warning');
+        return;
+      }
       openInvoiceModal(latest, 'view');
       _setupInvoiceModalButtons(latest);
       if (!_isAdminUser) _applyReadonlyMode();
@@ -240,12 +245,37 @@ async function _cancelByOrderNum(orderNum) {
   }
 }
 
+/**
+ * 발주자 전송 상태 토글 — 관리자가 정산 페이지에서 호출
+ * @param {string} orderNum
+ * @param {boolean} sent
+ * @returns {Promise<{updated:number}>}
+ */
+async function _setSentByOrderNum(orderNum, sent) {
+  try {
+    const count = await setInvoiceSent(orderNum, sent);
+    if (typeof toast === 'function') {
+      if (count > 0) {
+        toast(sent ? '거래명세서가 발주자에게 전송되었습니다.' : '전송이 취소되었습니다.', 'success');
+      } else {
+        toast('발급된 거래명세서가 없습니다. 먼저 발급해주세요.', 'warning');
+      }
+    }
+    return { updated: count };
+  } catch (e) {
+    console.error('[Invoice] setSentByOrderNum 실패:', e && e.message);
+    if (typeof toast === 'function') toast('전송 상태 변경 실패: ' + (e && e.message), 'error');
+    return { updated: 0 };
+  }
+}
+
 window.LumaneInvoice = {
   openFromOrder:     _openFromOrder,
   openFromSaved:     _openFromSaved,
   list:              _listInvoices,
   autoCreateForOrder: _autoCreateForOrder,
-  cancelByOrderNum:  _cancelByOrderNum
+  cancelByOrderNum:  _cancelByOrderNum,
+  setSentByOrderNum: _setSentByOrderNum
 };
 
 (function () {

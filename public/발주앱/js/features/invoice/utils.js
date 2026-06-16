@@ -185,6 +185,7 @@ function orderToInvoice(order) {
     createdAt:  new Date().toISOString(),
     createdBy:  (window.currentUser && window.currentUser.id) || '',
     issuerName: (typeof currentUser !== 'undefined' && currentUser && currentUser.name) || '',
-    serial:     ''
+    serial:     '',
+    sentToCustomer: false
   };
 }
