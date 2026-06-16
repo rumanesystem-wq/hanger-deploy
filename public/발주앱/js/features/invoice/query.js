@@ -27,18 +27,18 @@ async function _safeFetchInvoiceList() {
 
 /**
  * 저장 직전 운영 DB 재검증 — 동시 수정·sync 깨짐 감지
- * 우리가 가진 list보다 운영 list가 더 크면 → 다른 호출이 데이터 추가했음 → 저장 중단
- * @param {Array} ourList - 저장 직전 우리가 갖고 있는 list
+ * 우리가 가진 length보다 운영 list가 더 크면 → 다른 호출이 데이터 추가했음 → 저장 중단
+ * @param {{length:number}} known - 저장 직전 우리가 갖고 있던 길이 정보
  * @returns {Promise<void>} 안전하면 그냥 끝, 위험하면 throw
  */
-async function _verifyBeforeSave(ourList) {
+async function _verifyBeforeSave({ length: knownLength }) {
   const verify = await window._FS.get(INVOICE_DOC_KEY);
   if (verify === null || verify === undefined) return; // 신규
   if (!Array.isArray(verify)) {
     throw new Error('[Invoice] 재검증 형식 불일치 — 저장 중단');
   }
-  if (verify.length > ourList.length) {
-    throw new Error(`[Invoice] 동시 수정 감지 (DB ${verify.length}건 > 우리 ${ourList.length}건) — 저장 중단, 새로고침 후 재시도`);
+  if (verify.length > knownLength) {
+    throw new Error(`[Invoice] 동시 수정 감지 (DB ${verify.length}건 > 우리 ${knownLength}건) — 저장 중단, 새로고침 후 재시도`);
   }
 }
 

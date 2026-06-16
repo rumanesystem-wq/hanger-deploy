@@ -229,7 +229,17 @@ function renderOrderRow(o) {
       <td class="center" style="font-size:12px">${fmtShortDate(o.orderDate)}</td>
       <td class="num">${fmtMoney(o.totalSupply)}</td>
       <td class="num"><strong>${fmtMoney(o.totalAmount)}</strong></td>
-      <td class="center" style="white-space:nowrap"><button class="btn-invoice" onclick="openInvoiceFromSettlement(${o.id})"><i class="fas fa-file-invoice"></i> 거래명세서</button> <button class="btn-invoice-send" onclick="toggleInvoiceSendFromSettlement('${escapeHtml(o.orderNum)}', this)" title="발주자에게 전송 / 전송 취소" style="margin-left:4px;padding:4px 8px;font-size:12px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:4px;cursor:pointer;font-weight:700"><i class="fas fa-paper-plane"></i> 전송</button></td>
+      <td class="center" style="white-space:nowrap"><button class="btn-invoice" onclick="openInvoiceFromSettlement(${o.id})"><i class="fas fa-file-invoice"></i> 거래명세서</button> ${(()=>{
+        // M4 fix: 초기 라벨에 sentToCustomer 상태 반영
+        const _inv=(typeof DB!=='undefined'&&typeof DB.get==='function'?DB.get('invoices',[]):[])
+          .filter(i=>i&&!i.cancelled&&i.orderNum===o.orderNum);
+        const _sent=_inv.length>0&&_inv[_inv.length-1].sentToCustomer;
+        const _label=_sent?'<i class="fas fa-check-circle"></i> 전송됨':'<i class="fas fa-paper-plane"></i> 전송';
+        const _style=_sent
+          ?'margin-left:4px;padding:4px 8px;font-size:12px;border:1px solid #16a34a;background:#16a34a;color:#fff;border-radius:4px;cursor:pointer;font-weight:700'
+          :'margin-left:4px;padding:4px 8px;font-size:12px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:4px;cursor:pointer;font-weight:700';
+        return `<button class="btn-invoice-send" onclick="toggleInvoiceSendFromSettlement('${escapeHtml(o.orderNum)}', this)" title="발주자에게 전송 / 전송 취소" style="${_style}">${_label}</button>`;
+      })()}</td>
       <td class="center"><button class="btn-edit" onclick="startInlineEdit(${o.id})"><i class="fas fa-edit"></i> 수정</button></td>
       <td class="center"><button class="btn-link" onclick="goToOrder('${escapeHtml(o.orderNum)}')"><i class="fas fa-external-link-alt"></i> 이동</button></td>
     </tr>
@@ -384,11 +394,19 @@ async function openInvoiceFromSettlement(orderId) {
  * @param {HTMLElement} btn
  */
 async function toggleInvoiceSendFromSettlement(orderNum, btn) {
+  // H1 fix: 관리자 권한 가드 — 발주자가 콘솔에서 호출해 전송 상태 조작하는 것 차단
+  if (typeof isAdmin !== 'function' || !isAdmin()) {
+    if (typeof toast === 'function') toast('권한이 없습니다.', 'error');
+    return;
+  }
   if (!window.LumaneInvoice || typeof window.LumaneInvoice.setSentByOrderNum !== 'function') {
     if (typeof toast === 'function') toast('거래명세서 모듈 로드 실패.', 'error');
     return;
   }
+  // H3 fix: 전역 inflight 가드 — 빠른 더블클릭으로 sentToCustomer 두 번 토글되는 race 방지
+  if (window._invoiceSendInflight) return;
   if (btn.disabled) return;
+  window._invoiceSendInflight = true;
   btn.disabled = true;
   try {
     const list = await window.LumaneInvoice.list(orderNum);
@@ -412,6 +430,7 @@ async function toggleInvoiceSendFromSettlement(orderNum, btn) {
       btn.style.color = nextSent ? '#fff' : '#16a34a';
     }
   } finally {
+    window._invoiceSendInflight = false;
     btn.disabled = false;
   }
 }

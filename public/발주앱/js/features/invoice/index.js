@@ -20,14 +20,18 @@ async function _openFromOrder(order) {
     const existing = await getInvoicesByOrderNum(order.orderNum);
     const active = (existing || []).filter(i => i && !i.cancelled);
     if (active.length > 0) {
-      const latest = active[active.length - 1];
-      // 발주자가 호출했는데 아직 전송 안 됨 → 차단
-      if (!_isAdminUser && !latest.sentToCustomer) {
-        if (typeof toast === 'function') toast('아직 거래명세서가 전송되지 않았습니다. 관리자에게 문의하세요.', 'warning');
-        return;
+      // M2 fix: 발주자는 active 중 sentToCustomer=true 인 최신 건 노출 (관리자는 가장 최신)
+      let target = active[active.length - 1];
+      if (!_isAdminUser) {
+        const sentList = active.filter(i => i.sentToCustomer);
+        if (sentList.length === 0) {
+          if (typeof toast === 'function') toast('아직 거래명세서가 전송되지 않았습니다. 관리자에게 문의하세요.', 'warning');
+          return;
+        }
+        target = sentList[sentList.length - 1];
       }
-      openInvoiceModal(latest, 'view');
-      _setupInvoiceModalButtons(latest);
+      openInvoiceModal(target, 'view');
+      _setupInvoiceModalButtons(target);
       if (!_isAdminUser) _applyReadonlyMode();
       return;
     }
@@ -51,7 +55,7 @@ async function _openFromOrder(order) {
     openInvoiceModal(saved, 'preview');
     _setupInvoiceModalButtons(saved);
   } catch (e) {
-    console.error('[Invoice] openFromOrder 실패:', e && e.message);
+    console.error('[Invoice] openFromOrder 실패:', e && e.message, e && e.stack);
     if (typeof toast === 'function') toast('거래명세서 생성 중 오류가 발생했습니다.', 'error');
   } finally {
     window._invoiceOpenInFlight = false;
@@ -68,8 +72,17 @@ function _safeFileName(name) {
 }
 
 function _openFromSaved(invoice) {
+  // H2 fix: 발주자 우회 차단 — 미전송/취소 invoice는 발주자가 열 수 없음
+  const _isAdminUser = (typeof isAdmin === 'function') && isAdmin();
+  if (!_isAdminUser) {
+    if (!invoice || invoice.cancelled || !invoice.sentToCustomer) {
+      if (typeof toast === 'function') toast('아직 전송되지 않은 거래명세서입니다.', 'warning');
+      return;
+    }
+  }
   openInvoiceModal(invoice, 'view');
   _setupInvoiceModalButtons(invoice);
+  if (!_isAdminUser) _applyReadonlyMode();
 }
 
 // 모달 footer에 저장 버튼 동적 추가 (1회만)
@@ -110,7 +123,7 @@ function _setupInvoiceModalButtons(invoice) {
         // 저장된 객체를 기준으로 핸들러 재바인딩 (다음 저장도 최신본 사용)
         invoice = collected;
       } catch (e) {
-        console.error('[Invoice] 저장 실패:', e && e.message);
+        console.error('[Invoice] 저장 실패:', e && e.message, e && e.stack);
         if (typeof toast === 'function') toast('저장 중 오류가 발생했습니다.', 'error');
         else alert('저장 중 오류가 발생했습니다.');
       } finally {
@@ -130,7 +143,7 @@ function _setupInvoiceModalButtons(invoice) {
       try {
         await downloadInvoicePDF(content, filename);
       } catch (e) {
-        console.error('[Invoice] PDF 생성 실패:', e && e.message);
+        console.error('[Invoice] PDF 생성 실패:', e && e.message, e && e.stack);
         if (typeof toast === 'function') toast('PDF 생성 중 오류가 발생했습니다.', 'error');
       } finally {
         btnPdf.disabled = false;
@@ -215,7 +228,7 @@ async function _autoCreateForOrder(order) {
     }
     return { created: true };
   } catch (e) {
-    console.error('[Invoice] autoCreateForOrder 실패:', e && e.message);
+    console.error('[Invoice] autoCreateForOrder 실패:', e && e.message, e && e.stack);
     if (typeof toast === 'function') {
       toast('거래명세서 자동 발급 실패: ' + (e && e.message), 'error');
     }
@@ -237,7 +250,7 @@ async function _cancelByOrderNum(orderNum) {
     }
     return { cancelled: count };
   } catch (e) {
-    console.error('[Invoice] cancelByOrderNum 실패:', e && e.message);
+    console.error('[Invoice] cancelByOrderNum 실패:', e && e.message, e && e.stack);
     if (typeof toast === 'function') {
       toast('거래명세서 취소 실패: ' + (e && e.message), 'error');
     }
@@ -263,7 +276,7 @@ async function _setSentByOrderNum(orderNum, sent) {
     }
     return { updated: count };
   } catch (e) {
-    console.error('[Invoice] setSentByOrderNum 실패:', e && e.message);
+    console.error('[Invoice] setSentByOrderNum 실패:', e && e.message, e && e.stack);
     if (typeof toast === 'function') toast('전송 상태 변경 실패: ' + (e && e.message), 'error');
     return { updated: 0 };
   }

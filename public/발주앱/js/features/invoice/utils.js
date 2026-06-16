@@ -163,9 +163,9 @@ function orderToInvoice(order) {
     items.push({ name: '옷봉 2400', spec: '', qty, unitPrice: r.unitPrice, supply, vat, priceUnknown: r.priceUnknown });
   }
 
-  // items가 없으면 단일 행 fallback
+  // items가 없으면 단일 행 fallback (order.totalSupply 기반, priceUnknown=false로 정상 통과 의도)
   if (items.length === 0) {
-    items.push({ name: order.deliveryTo || '-', spec: '', qty: 1, unitPrice: order.totalSupply || 0, supply: order.totalSupply || 0, vat: order.totalVat || 0 });
+    items.push({ name: order.deliveryTo || '-', spec: '', qty: 1, unitPrice: order.totalSupply || 0, supply: order.totalSupply || 0, vat: order.totalVat || 0, priceUnknown: false });
   }
 
   const totalSupply = items.reduce((s, i) => s + i.supply, 0);
