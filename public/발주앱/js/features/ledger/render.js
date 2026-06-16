@@ -150,6 +150,19 @@ async function renderCustomerDetail() {
     : '전체 기간';
   document.getElementById('ec-doc-period').textContent = periodText;
 
+  // 거래처 정보 박스 — accounts에서 deliveryName 매칭으로 이메일 자동 표시
+  // 한 거래처에 발주자 여러 명 있을 수 있어 첫 번째 매칭만 사용
+  try {
+    const accounts = (typeof DB !== 'undefined' && typeof DB.get === 'function')
+      ? DB.get('accounts', [])
+      : [];
+    const matched = accounts.find(a => a && a.deliveryName === currentCustomer && a.email);
+    const emailEl = document.getElementById('ec-info-email');
+    if (emailEl) emailEl.textContent = (matched && matched.email) || ' ';
+  } catch (e) {
+    console.warn('[ledger] email 매칭 실패:', e && e.message);
+  }
+
   // 본문: 이월잔액 → 거래 행 → 월별 계 → 누계
   renderEcountLedgerBody(stats, dateRange);
 
