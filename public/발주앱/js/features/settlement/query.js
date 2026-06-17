@@ -62,7 +62,21 @@ async function fetchCompletedOrders(filter) {
  * @returns {Promise<void>}
  */
 async function updateOrder(orderId, patch) {
-  const target = MOCK_ORDERS.find(o => o.id === orderId);
+  // Codex 3차 보강 (Low): 실제 DB 우선 — DB.get('orders')에서 찾아 patch 후 DB.set
+  // DB.set이 stale 캐시 차단 + hanger_orders 단건 듀얼 라이트까지 처리
+  if (typeof DB !== 'undefined' && typeof DB.get === 'function' && typeof DB.set === 'function') {
+    const orders = DB.get('orders', []);
+    const idx = orders.findIndex(o => o && o.id === orderId);
+    if (idx >= 0) {
+      const updated = { ...orders[idx], ...patch, updatedAt: new Date().toISOString() };
+      const newArr = [...orders];
+      newArr[idx] = updated;
+      await DB.set('orders', newArr);
+      return;
+    }
+  }
+  // fallback: 옛 mock 데이터에만 있는 경우
+  const target = (typeof MOCK_ORDERS !== 'undefined') ? MOCK_ORDERS.find(o => o.id === orderId) : null;
   if (!target) throw new Error('발주서를 찾을 수 없습니다: id=' + orderId);
   Object.assign(target, patch);
 }

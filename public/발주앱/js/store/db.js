@@ -179,6 +179,19 @@ window._mergeById = _mergeById;
 // 서버=진실. getAll 성공 시 서버값 채택. 서버 미수신 시에만 로컬 폴백(읽기).
 // 로컬→서버 역업로드 전면 폐지(다중PC 섞임 차단). 로컬 sh_* 삭제 0(안전망).
 // (B) _GUARD 키 한정: 서버가 빈값/기존의 절반 미만이면 그 키만 로컬 유지(+경고). 역업로드 여전히 0.
+// Codex 3차 보강: 로그인 성공 후 인증 상태로 데이터 재로드 (중복 방지 플래그)
+// 비로그인 부트에서 syncFromServer 실패해도(rules 차단), 인증 성공 후 한 번 보장
+async function _postLoginResync(){
+  if(window._postLoginResynced) return;
+  window._postLoginResynced=true;
+  try{
+    await syncFromServer();
+  }catch(e){
+    console.warn('[_postLoginResync 실패]', e&&e.message);
+  }
+}
+window._postLoginResync=_postLoginResync;
+
 async function syncFromServer(){
   if(!window._FS){
     console.warn('[Firestore] 미초기화 → 로컬 폴백으로 계속합니다.');
@@ -387,6 +400,10 @@ async function doLogin(){
     }
     return;
   }
+
+  // Codex 3차 보강: 인증 상태로 서버 데이터 재로드 (비로그인 부트에서 read 차단됐을 가능성)
+  // 중복 방지: _postLoginResynced 플래그
+  await _postLoginResync();
 
   // ── Auth 성공 후: 이메일만 가진 임시 found 면 실제 계정(id/role/name) 재조회 ──
   if(found&&!found.id&&found.email){

@@ -209,7 +209,19 @@ function _applyReadonlyMode() {
 }
 
 async function _listInvoices(orderNum) {
-  return getInvoicesByOrderNum(orderNum);
+  // Codex 3차 보강: 권한 체크 — 관리자 외에는 본인 발주서 + sentToCustomer만 노출
+  const all = await getInvoicesByOrderNum(orderNum);
+  const _isAdminUser = (typeof isAdmin === 'function') && isAdmin();
+  if (_isAdminUser) return all;
+  try {
+    const _curId = (typeof currentUser !== 'undefined' && currentUser && currentUser.id) || '';
+    const orders = (typeof DB !== 'undefined' && typeof DB.get === 'function') ? DB.get('orders', []) : [];
+    const order = orders.find(o => o && o.orderNum === orderNum);
+    if (!_curId || !order || order.createdBy !== _curId) return [];
+    return (all || []).filter(i => i && !i.cancelled && i.sentToCustomer);
+  } catch (_e) {
+    return [];
+  }
 }
 
 /**

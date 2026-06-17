@@ -60,6 +60,8 @@ function getDateRange(mode, value) {
  * @returns {Object<string, CustomerStats>}
  */
 function groupByCustomer(orders) {
+  // Codex 3차 보강 (Medium-2): 활성 invoice 우선 — calcSummary와 일관성
+  const invMap = _buildInvoiceMapForSettlement();
   /** @type {Object<string, CustomerStats>} */
   const grouped = {};
   orders.forEach(o => {
@@ -67,10 +69,14 @@ function groupByCustomer(orders) {
     if (!grouped[key]) {
       grouped[key] = { orders: [], totalSupply: 0, totalVat: 0, totalAmount: 0 };
     }
+    const inv = invMap[o.orderNum];
+    const sup = inv ? (inv.totalSupply || 0) : (o.totalSupply || 0);
+    const vat = inv ? (inv.totalVat || 0)    : (o.totalVat || 0);
+    const amt = inv ? (inv.totalAmount || 0) : (o.totalAmount || 0);
     grouped[key].orders.push(o);
-    grouped[key].totalSupply += o.totalSupply || 0;
-    grouped[key].totalVat += o.totalVat || 0;
-    grouped[key].totalAmount += o.totalAmount || 0;
+    grouped[key].totalSupply += sup;
+    grouped[key].totalVat += vat;
+    grouped[key].totalAmount += amt;
   });
   return grouped;
 }
@@ -132,6 +138,8 @@ function _buildInvoiceMapForSettlement() {
  * @returns {Array<{date:string, count:number, total:number}>}
  */
 function aggregateByDay(orders) {
+  // Codex 3차 보강 (Medium-2): 활성 invoice 우선
+  const invMap = _buildInvoiceMapForSettlement();
   /** @type {Object<string, {count:number, total:number}>} */
   const daily = {};
   orders.forEach(o => {
@@ -139,7 +147,8 @@ function aggregateByDay(orders) {
     if (!k) return;
     if (!daily[k]) daily[k] = { count: 0, total: 0 };
     daily[k].count++;
-    daily[k].total += o.totalAmount || 0;
+    const inv = invMap[o.orderNum];
+    daily[k].total += inv ? (inv.totalAmount || 0) : (o.totalAmount || 0);
   });
   return Object.keys(daily).sort().map(date => ({
     date,

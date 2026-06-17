@@ -2424,6 +2424,8 @@ async function _bootSequence(){
       if(_authRestored) return; _authRestored=true;
       if(fbUser){
         try{
+          // Codex 3차 보강: 자동 복원 시점에 인증된 상태로 데이터 다시 받음 (중복 방지 플래그)
+          if(typeof window._postLoginResync==='function') await window._postLoginResync();
           const accs=DB.get('accounts',[]);
           let acc=fbUser.email?accs.find(a=>a.email===fbUser.email):null;
           if(acc){
