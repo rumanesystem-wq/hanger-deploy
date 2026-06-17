@@ -34,7 +34,15 @@ const DB={
             window._FS.get('orders'),
             new Promise((_,rj)=>setTimeout(()=>rj(new Error('TIMEOUT')),3000))
           ]);
-          const serverArr=Array.isArray(server)?server:[];
+          // Codex 보강 (Critical-1): _FS.get 실패가 null로 삼켜질 때 stale 저장 차단
+          // 운영에선 hanger_data/orders 문서가 항상 존재 → null/undefined는 실패로 간주
+          if (server === null || server === undefined) {
+            throw new Error('[안전망] orders 서버 재조회 실패(null) — fail-closed, 저장 차단');
+          }
+          if (!Array.isArray(server)) {
+            throw new Error('[안전망] orders 서버 응답 비배열 — fail-closed, 저장 차단');
+          }
+          const serverArr=server;
           const merged=_mergeById(serverArr, v);
           const result=self._setInternal(k, merged);
           // ── (Phase 1 듀얼 라이트 20260611) 변경된 발주서만 hanger_orders/{orderNum}에도 단건 저장 ──
@@ -141,9 +149,12 @@ function _mergeById(local, remote){
     const localItem=result.get(remoteItem.id);
     if(!localItem){ result.set(remoteItem.id, remoteItem); return; }
     // (핫픽스 C 20260611) updatedAt 비교 — 더 최신값을 base로 채택, 옛값에서 ERP/필드 보강
+    // Codex 보강 (Critical-2): updatedAt 동률/누락 시 첫 번째 인자(local) 우선
+    // orders 호출 흐름: _mergeById(서버, 호출자) — 서버를 local로 전달
+    //   → 동률/누락 시 서버(local) 우선 = stale 호출자 배열이 서버를 못 덮음
     const lu=localItem.updatedAt||'';
     const ru=remoteItem.updatedAt||'';
-    const localIsNewer=lu && (!ru || lu>ru);
+    const localIsNewer = !ru || lu >= ru;
     const base = localIsNewer ? localItem : remoteItem;
     const other = localIsNewer ? remoteItem : localItem;
     const merged={...base};
