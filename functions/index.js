@@ -198,51 +198,58 @@ async function notifySlackOrdersDiff(result) {
   }
 }
 
-exports.dailyOrdersDiffCheck = onSchedule(
-  { schedule: "0 3 * * *", timeZone: "Asia/Seoul", region: "asia-northeast3" },
-  async () => {
-    try {
-      const db = admin.firestore();
-      const oldDoc = await db.collection("hanger_data").doc("orders").get();
-      const oldArr = oldDoc.exists ? (oldDoc.data().value || []) : [];
-      const oldIds = new Set(oldArr.filter(o => o && o.id != null).map(o => o.id));
+// 검사 로직 — daily + hourly 양쪽에서 호출
+async function _runOrdersDiffCheck(triggerLabel) {
+  try {
+    const db = admin.firestore();
+    const oldDoc = await db.collection("hanger_data").doc("orders").get();
+    const oldArr = oldDoc.exists ? (oldDoc.data().value || []) : [];
+    const oldIds = new Set(oldArr.filter(o => o && o.id != null).map(o => o.id));
 
-      const newSnap = await db.collection("hanger_orders").get();
-      const newIds = new Set();
-      newSnap.docs.forEach(d => {
-        const data = d.data();
-        if (data && data.id != null) newIds.add(data.id);
-      });
+    const newSnap = await db.collection("hanger_orders").get();
+    const newIds = new Set();
+    newSnap.docs.forEach(d => {
+      const data = d.data();
+      if (data && data.id != null) newIds.add(data.id);
+    });
 
-      const onlyOld = [...oldIds].filter(id => !newIds.has(id));
-      const onlyNew = [...newIds].filter(id => !oldIds.has(id));
-      const now = new Date().toISOString();
-      const result = {
-        oldCount: oldArr.length,
-        newCount: newSnap.size,
-        oldIds: oldIds.size,
-        newIds: newIds.size,
-        onlyOldCount: onlyOld.length,
-        onlyNewCount: onlyNew.length,
-        onlyOld: onlyOld.slice(0, 20),
-        onlyNew: onlyNew.slice(0, 20),
-        checkedAt: now
-      };
+    const onlyOld = [...oldIds].filter(id => !newIds.has(id));
+    const onlyNew = [...newIds].filter(id => !oldIds.has(id));
+    const now = new Date().toISOString();
+    const result = {
+      oldCount: oldArr.length,
+      newCount: newSnap.size,
+      oldIds: oldIds.size,
+      newIds: newIds.size,
+      onlyOldCount: onlyOld.length,
+      onlyNewCount: onlyNew.length,
+      onlyOld: onlyOld.slice(0, 20),
+      onlyNew: onlyNew.slice(0, 20),
+      checkedAt: now,
+      trigger: triggerLabel
+    };
 
-      await db.collection("hanger_data").doc("orders_diff_monitor").set({
-        value: result,
-        updatedAt: now
-      });
+    await db.collection("hanger_data").doc("orders_diff_monitor").set({
+      value: result,
+      updatedAt: now
+    });
 
-      if (onlyOld.length > 0 || onlyNew.length > 0) {
-        logger.warn(`[차집합 검증] ⚠️ 불일치 감지: 옛전용 ${onlyOld.length}건, 새전용 ${onlyNew.length}건`);
-        await notifySlackOrdersDiff(result);
-      } else {
-        logger.info(`[차집합 검증] 정상: 옛 ${result.oldCount}건 == 새 ${result.newCount}건 (id 일치)`);
-      }
-    } catch (e) {
-      logger.error("[dailyOrdersDiffCheck] 오류:", e.message);
+    if (onlyOld.length > 0 || onlyNew.length > 0) {
+      logger.warn(`[차집합 검증 ${triggerLabel}] ⚠️ 불일치 감지: 옛전용 ${onlyOld.length}건, 새전용 ${onlyNew.length}건`);
+      await notifySlackOrdersDiff(result);
+    } else {
+      logger.info(`[차집합 검증 ${triggerLabel}] 정상: 옛 ${result.oldCount}건 == 새 ${result.newCount}건 (id 일치)`);
     }
+  } catch (e) {
+    logger.error(`[ordersDiffCheck ${triggerLabel}] 오류:`, e.message);
   }
+}
+
+// 영업 시간 매시 30분 (08:30, 09:30, ..., 17:30) — 즉시 감지용
+// 차이 발견 시에만 슬랙 알림 (정상이면 조용)
+// 새벽 검사는 제거 — 자다 깰 일 없음
+exports.hourlyOrdersDiffCheck = onSchedule(
+  { schedule: "30 8-17 * * *", timeZone: "Asia/Seoul", region: "asia-northeast3" },
+  async () => _runOrdersDiffCheck("hourly")
 );
 
