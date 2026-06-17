@@ -2381,6 +2381,9 @@ document.addEventListener('keydown',e=>{
 // ── 앱 시작 (인증 게이트 → Firestore 동기화 → 초기화 → 인증세션 복원) ─────────
 let _booted=false; let _authRestored=false;
 function attachWatchers(){
+  // Codex 4차 보강: 중복 부착 방지 (rules read 제한 시 비로그인 시점 onSnapshot 차단)
+  if(window._watchersAttached) return;
+  window._watchersAttached = true;
   if(window._FS && typeof window._FS.watchPriceSettings === 'function'){
     window._FS.watchPriceSettings(()=>{
       if(currentView==='price-settings') renderPriceSettings();
@@ -2412,7 +2415,8 @@ async function _bootSequence(){
   }finally{
     window._booted=true;
   }
-  attachWatchers();
+  // Codex 4차 보강: attachWatchers 호출은 _postLoginResync 성공 후로 이동
+  // (rules read 제한 시 비로그인 부트에서 onSnapshot 권한 거부 차단)
 }
 (function startApp(){
   if(window._fbAuth&&typeof window._fbAuth.onAuthStateChanged==='function'){

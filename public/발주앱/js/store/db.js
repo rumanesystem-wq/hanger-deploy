@@ -181,14 +181,25 @@ window._mergeById = _mergeById;
 // (B) _GUARD 키 한정: 서버가 빈값/기존의 절반 미만이면 그 키만 로컬 유지(+경고). 역업로드 여전히 0.
 // Codex 3차 보강: 로그인 성공 후 인증 상태로 데이터 재로드 (중복 방지 플래그)
 // 비로그인 부트에서 syncFromServer 실패해도(rules 차단), 인증 성공 후 한 번 보장
+// Codex 4차 보강:
+//   - 플래그를 성공 후에 set (실패 시 다음 호출이 재시도)
+//   - 동시 호출 race: inflight Promise 캐싱으로 직렬화
+//   - 성공 후 attachWatchers 호출 (인증 후 onSnapshot 부착 → rules read 제한 대비)
 async function _postLoginResync(){
   if(window._postLoginResynced) return;
-  window._postLoginResynced=true;
-  try{
-    await syncFromServer();
-  }catch(e){
-    console.warn('[_postLoginResync 실패]', e&&e.message);
-  }
+  if(window._postLoginResyncInflight) return window._postLoginResyncInflight;
+  window._postLoginResyncInflight = (async()=>{
+    try{
+      await syncFromServer();
+      window._postLoginResynced = true;   // 성공 후에만 플래그
+      if(typeof attachWatchers === 'function') attachWatchers();
+    }catch(e){
+      console.warn('[_postLoginResync 실패]', e&&e.message);
+    }finally{
+      window._postLoginResyncInflight = null;
+    }
+  })();
+  return window._postLoginResyncInflight;
 }
 window._postLoginResync=_postLoginResync;
 
