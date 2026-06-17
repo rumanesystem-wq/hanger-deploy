@@ -12,7 +12,8 @@ const _IDB={ save(){}, loadAll(){return Promise.resolve([]);} };
 //                          set 시 절대 줄어들지 않도록 병합 후 모든 저장소에 동기화
 const DB={
   // 발주서가 사라지면 안 되는 키 목록
-  _GUARD:new Set(['orders','purchase_requests','accounts','logs','session']),
+  // H3 보강 (Codex): invoices도 통째 덮어쓰기 방어 대상에 포함
+  _GUARD:new Set(['orders','purchase_requests','accounts','logs','session','invoices']),
 
   get(k,d=[]){
     try{
@@ -533,7 +534,8 @@ function showApp(){
   renderNav();
   const _savedView=(typeof getUserPref==='function')?getUserPref('lastView',''):'';
   const _hashView=location.hash.slice(1);
-  const _ADMIN_VIEWS=new Set(['items','inventory','price-settings','accounts','purchase-requests','logs','shortage-view']);
+  // M1 보강 (Codex): settlement 추가 — 발주자 lastView 복구 시 정산 페이지 차단
+  const _ADMIN_VIEWS=new Set(['items','inventory','price-settings','accounts','purchase-requests','logs','shortage-view','settlement']);
   const _raw=_hashView||_savedView||'dashboard';
   const _restoreView=(!isAdmin()&&_ADMIN_VIEWS.has(_raw))?'dashboard':_raw;
   navigate(_restoreView,{addHistory:false});

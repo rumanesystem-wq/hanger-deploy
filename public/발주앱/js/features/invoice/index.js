@@ -16,6 +16,14 @@ async function _openFromOrder(order) {
     }
     // 관리자 여부 — 발주자는 새 invoice 생성 불가 (읽기 전용)
     const _isAdminUser = (typeof isAdmin === 'function') && isAdmin();
+    // C1 보강 (Codex): 발주자는 본인 발주서만 접근 — 다른 발주자 명세서 콘솔 우회 차단
+    if (!_isAdminUser) {
+      const _curId = (typeof currentUser !== 'undefined' && currentUser && currentUser.id) || '';
+      if (!_curId || order.createdBy !== _curId) {
+        if (typeof toast === 'function') toast('본인이 등록한 발주서만 거래명세서를 조회할 수 있습니다.', 'warning');
+        return;
+      }
+    }
     // 활성 invoice 찾기 (cancelled 제외)
     const existing = await getInvoicesByOrderNum(order.orderNum);
     const active = (existing || []).filter(i => i && !i.cancelled);
@@ -43,7 +51,7 @@ async function _openFromOrder(order) {
     const draft = orderToInvoice(order);
     const zeroItems = findZeroPriceItems(draft);
     if (zeroItems.length > 0) {
-      const msg = '단가 0원 항목이 있어 거래명세서를 발급할 수 없습니다.\n→ ' + zeroItems.join(', ') + '\n\n가격표를 먼저 확인해주세요.';
+      const msg = '단가 미등록 항목이 있어 거래명세서를 발급할 수 없습니다.\n→ ' + zeroItems.join(', ') + '\n\n가격표에 등록 후 다시 시도해주세요.';
       if (typeof toast === 'function') toast(msg, 'error');
       else alert(msg);
       return;
@@ -77,6 +85,19 @@ function _openFromSaved(invoice) {
   if (!_isAdminUser) {
     if (!invoice || invoice.cancelled || !invoice.sentToCustomer) {
       if (typeof toast === 'function') toast('아직 전송되지 않은 거래명세서입니다.', 'warning');
+      return;
+    }
+    // C1 보강 (Codex): 발주자는 본인 발주서의 invoice만 열람 가능
+    try {
+      const _curId = (typeof currentUser !== 'undefined' && currentUser && currentUser.id) || '';
+      const orders = (typeof DB !== 'undefined' && typeof DB.get === 'function') ? DB.get('orders', []) : [];
+      const order = orders.find(o => o && o.orderNum === invoice.orderNum);
+      if (!_curId || !order || order.createdBy !== _curId) {
+        if (typeof toast === 'function') toast('본인이 등록한 발주서만 거래명세서를 조회할 수 있습니다.', 'warning');
+        return;
+      }
+    } catch (_e) {
+      if (typeof toast === 'function') toast('권한 확인 중 오류가 발생했습니다.', 'error');
       return;
     }
   }
@@ -204,6 +225,12 @@ async function _autoCreateForOrder(order) {
     if (!order || !order.orderNum) {
       return { created: false, reason: 'orderNum 없음' };
     }
+    // C2 보강 (Codex): 관리자 외 자동발급 트리거 차단
+    // 정상 호출은 발주확정(toggleOrderLock) — 관리자만 가능. 콘솔 우회 방어.
+    if (typeof isAdmin !== 'function' || !isAdmin()) {
+      console.warn('[Invoice] autoCreateForOrder: 권한 없음 — 차단');
+      return { created: false, reason: '권한 없음' };
+    }
     // 활성 invoice 이미 있으면 skip (cancelled는 무시 — 새로 발급)
     const existing = await getInvoicesByOrderNum(order.orderNum);
     const active = (existing || []).filter(i => i && !i.cancelled);
@@ -214,7 +241,7 @@ async function _autoCreateForOrder(order) {
     const zeroItems = findZeroPriceItems(draft);
     if (zeroItems.length > 0) {
       if (typeof toast === 'function') {
-        toast('⚠ 거래명세서 자동발급 보류: 단가 0원 항목 → ' + zeroItems.join(', '), 'warning');
+        toast('⚠ 거래명세서 자동발급 보류: 단가 미등록 항목 → ' + zeroItems.join(', '), 'warning');
       }
       console.warn('[Invoice] autoCreate skip (zero-price):', draft.orderNum, zeroItems);
       return { created: false, reason: '단가 0원 항목 있음: ' + zeroItems.join(', ') };
@@ -244,6 +271,11 @@ async function _autoCreateForOrder(order) {
  */
 async function _cancelByOrderNum(orderNum) {
   try {
+    // C2 보강 (Codex): 관리자 외 호출 차단
+    if (typeof isAdmin !== 'function' || !isAdmin()) {
+      console.warn('[Invoice] cancelByOrderNum: 권한 없음 — 차단');
+      return { cancelled: 0, reason: '권한 없음' };
+    }
     const count = await cancelInvoiceByOrderNum(orderNum);
     if (count > 0 && typeof toast === 'function') {
       toast('거래명세서 ' + count + '건 취소되었습니다.', 'warning');
@@ -266,6 +298,11 @@ async function _cancelByOrderNum(orderNum) {
  */
 async function _setSentByOrderNum(orderNum, sent) {
   try {
+    // C2 보강 (Codex): 관리자 외 호출 차단 (콘솔 우회 방지)
+    if (typeof isAdmin !== 'function' || !isAdmin()) {
+      if (typeof toast === 'function') toast('권한이 없습니다.', 'error');
+      return { updated: 0, reason: '권한 없음' };
+    }
     const count = await setInvoiceSent(orderNum, sent);
     if (typeof toast === 'function') {
       if (count > 0) {

@@ -138,9 +138,11 @@ function orderToInvoice(order) {
   const itemsMaster = (typeof DB !== 'undefined' && typeof DB.get === 'function')
     ? DB.get('items', [])
     : [];
+  // M2 보강 (Codex): 옛 발주서 itemId가 문자열일 수도 있어 String 비교
   const nameOfItemId = (id) => {
     if (id == null) return '';
-    const it = itemsMaster.find(x => x && x.id === id);
+    const sId = String(id);
+    const it = itemsMaster.find(x => x && String(x.id) === sId);
     return it ? (it.name || '') : '';
   };
   (order.drawerItems || []).forEach(oi => {

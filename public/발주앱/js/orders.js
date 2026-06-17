@@ -690,8 +690,11 @@ function renderOrders(){
     });
     rows=`<div class="table-wrap"><table><thead><tr><th>납품처</th><th>시공주소</th><th>발주번호</th><th>발주일</th><th>출고일</th><th class="td-center">상태</th><th class="td-center">등록일</th>${orderListSubTab==='cancelled'?'<th>취소 사유</th>':''}${(isAdmin()||orderListSubTab==='cancelled')?'<th class="td-center">관리</th>':''}</tr></thead><tbody>
     ${orders.map(o=>{
-      const dTo=o.deliveryTo||o.siteName||'-';
-      const addr=o.address||o.customerName||'-';
+      // H5 보강 (Codex): 납품처/주소/orderNum escape — 저장된 XSS 차단
+      const _e=(typeof escapeHtml==='function'?escapeHtml:(s=>String(s||'')));
+      const dTo=_e(o.deliveryTo||o.siteName||'-');
+      const addr=_e(o.address||o.customerName||'-');
+      const orderNumEsc=_e(o.orderNum||('#'+o.id));
       const statusBadge=orderStatusBadge(o.status);
       const lockBadge=o.isLocked
         ?'<span class="badge badge-locked" style="margin-left:4px"><i class="fas fa-lock"></i></span>'
@@ -706,7 +709,7 @@ function renderOrders(){
       // M1 fix: escapeHtml로 XSS 차단 (title 속성 + 텍스트 노드 양쪽)
       const _esc=(typeof escapeHtml==='function'?escapeHtml:(s=>String(s||'')));
       const cancelReasonCell=orderListSubTab==='cancelled'?`<td class="td-muted" style="font-size:12px;color:#dc2626;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(o.cancelReason||'')}">${_esc(o.cancelReason||'-')}</td>`:'';
-      return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer" title="클릭하여 상세 보기"><td class="td-name">${dTo}</td><td class="td-muted" style="font-size:12px">${addr}</td><td style="font-size:12px;font-weight:600;color:#0f172a">${o.orderNum||('#'+o.id)}${lockBadge}</td><td class="td-muted">${fmt(o.orderDate)}</td><td class="td-muted">${o.shipDate?fmt(o.shipDate):'-'}</td><td class="td-center">${statusBadge}</td><td class="td-center td-muted">${fmt(o.createdAt)}</td>${cancelReasonCell}<td class="td-center">${cancelBtn} ${uncancelBtn} ${reorderBtn} ${invoiceBtn}</td></tr>`;
+      return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer" title="클릭하여 상세 보기"><td class="td-name">${dTo}</td><td class="td-muted" style="font-size:12px">${addr}</td><td style="font-size:12px;font-weight:600;color:#0f172a">${orderNumEsc}${lockBadge}</td><td class="td-muted">${fmt(o.orderDate)}</td><td class="td-muted">${o.shipDate?fmt(o.shipDate):'-'}</td><td class="td-center">${statusBadge}</td><td class="td-center td-muted">${fmt(o.createdAt)}</td>${cancelReasonCell}<td class="td-center">${cancelBtn} ${uncancelBtn} ${reorderBtn} ${invoiceBtn}</td></tr>`;
     }).join('')}</tbody></table></div>`;
   }
   // 지역 드롭다운: 모든 발주서의 주소에서 첫 단어(시/도) 추출
@@ -1261,7 +1264,17 @@ function openOrderDetail(orderId){
       window._invoicesFetchInflight=true;
       window._FS.get('invoices').then(a=>{
         window._invoicesFetchInflight=false;
-        if(Array.isArray(a)&&a.length>0&&typeof DB.set==='function'){DB.set('invoices',a);}
+        if(Array.isArray(a)&&a.length>0&&typeof DB.set==='function'){
+          DB.set('invoices',a);
+          // L3 보강 (Codex): 현재 상세 모달이 열려있고 같은 발주서면 버튼 재렌더
+          try{
+            const _modalOpen=document.getElementById('order-detail-modal');
+            if(_modalOpen&&_modalOpen.offsetParent!==null&&typeof openOrderDetail==='function'){
+              const _isStillSame=document.getElementById('detail-order-num')?.textContent===order.orderNum;
+              if(_isStillSame)openOrderDetail(order.id);
+            }
+          }catch(_e){}
+        }
       }).catch(()=>{window._invoicesFetchInflight=false;});
     }
     const _hasSentInv=_invList.some(i=>i&&!i.cancelled&&i.sentToCustomer&&i.orderNum===order.orderNum);

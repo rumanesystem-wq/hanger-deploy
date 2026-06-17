@@ -229,7 +229,7 @@ function renderOrderRow(o) {
       <td class="center" style="font-size:12px">${fmtShortDate(o.orderDate)}</td>
       <td class="num">${fmtMoney(o.totalSupply)}</td>
       <td class="num"><strong>${fmtMoney(o.totalAmount)}</strong></td>
-      <td class="center" style="white-space:nowrap"><button class="btn-invoice" onclick="openInvoiceFromSettlement(${o.id})"><i class="fas fa-file-invoice"></i> 거래명세서</button> ${(()=>{
+      <td class="center" style="white-space:nowrap"><button class="btn-invoice" data-action="open-invoice" data-order-id="${o.id}"><i class="fas fa-file-invoice"></i> 거래명세서</button> ${(()=>{
         // M4 fix: 초기 라벨에 sentToCustomer 상태 반영
         const _inv=(typeof DB!=='undefined'&&typeof DB.get==='function'?DB.get('invoices',[]):[])
           .filter(i=>i&&!i.cancelled&&i.orderNum===o.orderNum);
@@ -238,12 +238,33 @@ function renderOrderRow(o) {
         const _style=_sent
           ?'margin-left:4px;padding:4px 8px;font-size:12px;border:1px solid #16a34a;background:#16a34a;color:#fff;border-radius:4px;cursor:pointer;font-weight:700'
           :'margin-left:4px;padding:4px 8px;font-size:12px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:4px;cursor:pointer;font-weight:700';
-        return `<button class="btn-invoice-send" onclick="toggleInvoiceSendFromSettlement('${escapeHtml(o.orderNum)}', this)" title="발주자에게 전송 / 전송 취소" style="${_style}">${_label}</button>`;
+        // H4 보강 (Codex): inline onclick 제거 — data-* + 이벤트 위임 사용
+        return `<button class="btn-invoice-send" data-action="toggle-send" data-order-num="${escapeHtml(o.orderNum)}" title="발주자에게 전송 / 전송 취소" style="${_style}">${_label}</button>`;
       })()}</td>
-      <td class="center"><button class="btn-edit" onclick="startInlineEdit(${o.id})"><i class="fas fa-edit"></i> 수정</button></td>
-      <td class="center"><button class="btn-link" onclick="goToOrder('${escapeHtml(o.orderNum)}')"><i class="fas fa-external-link-alt"></i> 이동</button></td>
+      <td class="center"><button class="btn-edit" data-action="inline-edit" data-order-id="${o.id}"><i class="fas fa-edit"></i> 수정</button></td>
+      <td class="center"><button class="btn-link" data-action="goto-order" data-order-num="${escapeHtml(o.orderNum)}"><i class="fas fa-external-link-alt"></i> 이동</button></td>
     </tr>
   `;
+}
+
+// H4 보강 (Codex): 이벤트 위임 — inline onclick 제거 대체
+// 한 번만 등록 (중복 방지)
+if (typeof document !== 'undefined' && !document._settlementBtnDelegated) {
+  document._settlementBtnDelegated = true;
+  document.addEventListener('click', function(e) {
+    const btn = e.target && e.target.closest && e.target.closest('button[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    if (action === 'open-invoice' && typeof openInvoiceFromSettlement === 'function') {
+      openInvoiceFromSettlement(Number(btn.dataset.orderId));
+    } else if (action === 'toggle-send' && typeof toggleInvoiceSendFromSettlement === 'function') {
+      toggleInvoiceSendFromSettlement(btn.dataset.orderNum, btn);
+    } else if (action === 'inline-edit' && typeof startInlineEdit === 'function') {
+      startInlineEdit(Number(btn.dataset.orderId));
+    } else if (action === 'goto-order' && typeof goToOrder === 'function') {
+      goToOrder(btn.dataset.orderNum);
+    }
+  });
 }
 
 // ============================================================
@@ -255,8 +276,14 @@ function renderOrderRow(o) {
  * @returns {void}
  */
 function startInlineEdit(orderId) {
-  // Mock 데이터에서 원본 가져오기 (실제로는 query.js의 캐시·재요청 사용)
-  const order = MOCK_ORDERS.find(o => o.id === orderId);
+  // L2 보강 (Codex): 실제 DB 우선 조회 (mock fallback은 보조)
+  let order = null;
+  if (typeof DB !== 'undefined' && typeof DB.get === 'function') {
+    order = DB.get('orders', []).find(o => o && o.id === orderId);
+  }
+  if (!order && typeof MOCK_ORDERS !== 'undefined') {
+    order = MOCK_ORDERS.find(o => o.id === orderId);
+  }
   if (!order) return;
   const row = document.getElementById('order-row-' + orderId);
   if (!row) return;

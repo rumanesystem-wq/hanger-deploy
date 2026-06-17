@@ -253,3 +253,80 @@ exports.hourlyOrdersDiffCheck = onSchedule(
   async () => _runOrdersDiffCheck("hourly")
 );
 
+// M3 보강 (Codex): invoices 무결성 검사
+// - id 중복 / orderNum 없음 / 같은 orderNum 활성 invoice 다중 / 고아 invoice 검출
+async function _runInvoicesIntegrityCheck(triggerLabel) {
+  try {
+    const db = admin.firestore();
+    const invDoc = await db.collection("hanger_data").doc("invoices").get();
+    const arr = invDoc.exists ? (invDoc.data().value || []) : [];
+    const ordDoc = await db.collection("hanger_data").doc("orders").get();
+    const orders = ordDoc.exists ? (ordDoc.data().value || []) : [];
+    const orderNums = new Set(orders.map(o => o && o.orderNum).filter(Boolean));
+
+    const idCount = {};
+    const activeByOrderNum = {};
+    const noOrderNum = [];
+    const orphan = []; // invoice.orderNum이 orders에 없음
+
+    arr.forEach(inv => {
+      if (!inv) return;
+      if (inv.id) idCount[inv.id] = (idCount[inv.id] || 0) + 1;
+      if (!inv.orderNum) { noOrderNum.push(inv.id || '(no id)'); return; }
+      if (!inv.cancelled) {
+        activeByOrderNum[inv.orderNum] = (activeByOrderNum[inv.orderNum] || 0) + 1;
+      }
+      if (!orderNums.has(inv.orderNum)) orphan.push(inv.orderNum);
+    });
+
+    const dupIds = Object.entries(idCount).filter(([, c]) => c > 1).map(([id, c]) => id + '×' + c);
+    const multiActive = Object.entries(activeByOrderNum).filter(([, c]) => c > 1).map(([n, c]) => n + '×' + c);
+
+    const now = new Date().toISOString();
+    const result = {
+      total: arr.length,
+      dupIdsCount: dupIds.length,
+      dupIds: dupIds.slice(0, 20),
+      noOrderNumCount: noOrderNum.length,
+      noOrderNum: noOrderNum.slice(0, 20),
+      multiActiveCount: multiActive.length,
+      multiActive: multiActive.slice(0, 20),
+      orphanCount: orphan.length,
+      orphan: [...new Set(orphan)].slice(0, 20),
+      checkedAt: now,
+      trigger: triggerLabel
+    };
+
+    await db.collection("hanger_data").doc("invoices_diff_monitor").set({
+      value: result,
+      updatedAt: now
+    });
+
+    const anyIssue = dupIds.length || noOrderNum.length || multiActive.length || orphan.length;
+    if (anyIssue) {
+      logger.warn(`[invoices 검증 ${triggerLabel}] ⚠️ 이슈 감지`, result);
+      const url = process.env.SLACK_WEBHOOK_URL;
+      if (url) {
+        const lines = [
+          `⚠️ *거래명세서 무결성 이슈* (${now})`,
+          `• 총 invoice: ${arr.length}건`,
+          `• id 중복: ${dupIds.length}건${dupIds.length ? ` → ${dupIds.slice(0, 5).join(', ')}` : ''}`,
+          `• orderNum 누락: ${noOrderNum.length}건`,
+          `• 동일 orderNum 활성 invoice 다중: ${multiActive.length}건${multiActive.length ? ` → ${multiActive.slice(0, 5).join(', ')}` : ''}`,
+          `• 고아 invoice (orders에 없음): ${orphan.length}건`
+        ];
+        try { await axios.post(url, { text: lines.join("\n") }, { timeout: 10000 }); } catch (e) { logger.error("[invoices 슬랙] 발송 실패:", e.message); }
+      }
+    } else {
+      logger.info(`[invoices 검증 ${triggerLabel}] 정상: ${arr.length}건`);
+    }
+  } catch (e) {
+    logger.error(`[invoicesIntegrityCheck ${triggerLabel}] 오류:`, e.message);
+  }
+}
+
+exports.hourlyInvoicesIntegrityCheck = onSchedule(
+  { schedule: "30 8-17 * * *", timeZone: "Asia/Seoul", region: "asia-northeast3" },
+  async () => _runInvoicesIntegrityCheck("hourly")
+);
+

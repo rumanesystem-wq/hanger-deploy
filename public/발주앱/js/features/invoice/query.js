@@ -6,6 +6,31 @@
 
 const INVOICE_DOC_KEY = 'invoices';
 
+// H1 보강 (Codex): 같은 탭 직렬화 mutex — 두 호출이 같은 list 베이스로 작업하는 race 차단
+let _invoiceWriteChain = Promise.resolve();
+function _withInvoiceLock(fn) {
+  const prev = _invoiceWriteChain;
+  let release;
+  _invoiceWriteChain = new Promise(r => { release = r; });
+  return prev.then(fn).finally(release);
+}
+
+// H1 보강: set 직전 최신 list와 id 기준 union 병합 (다른 탭 추가본 보존)
+async function _unionWithLatest(myList) {
+  try {
+    const latest = await window._FS.get(INVOICE_DOC_KEY);
+    if (!Array.isArray(latest)) return myList;
+    const byId = new Map();
+    // 최신 서버 데이터를 base로
+    latest.forEach(inv => { if (inv && inv.id) byId.set(inv.id, inv); });
+    // 내 list의 변경사항으로 덮어쓰기 (내 수정 보존)
+    myList.forEach(inv => { if (inv && inv.id) byId.set(inv.id, inv); });
+    return [...byId.values()];
+  } catch (_e) {
+    return myList;
+  }
+}
+
 /**
  * 안전 fetch + 가드: invoices 통째 덮어쓰기 시나리오 차단
  *   1. _FS.get이 null/undefined 반환 시 throw (저장 중단)
@@ -52,29 +77,37 @@ async function _verifyBeforeSave({ length: knownLength }) {
  * @returns {Promise<Invoice>}
  */
 async function saveInvoice(invoice) {
-  let list = await _safeFetchInvoiceList();
-  // 처음 (null) 케이스: 빈 배열로 시작 — 단, 이 경우 운영 invoices가 정말 0건이어야 함
-  // recheck로 확인
-  if (list === null) {
-    const recheck = await window._FS.get(INVOICE_DOC_KEY);
-    if (recheck === null || recheck === undefined) {
-      list = []; // 진짜 신규
-    } else if (Array.isArray(recheck)) {
-      list = recheck; // 사이에 누가 만든 거 사용
-    } else {
-      throw new Error('[Invoice] recheck 형식 불일치 — 저장 중단');
+  return _withInvoiceLock(async () => {
+    let list = await _safeFetchInvoiceList();
+    if (list === null) {
+      const recheck = await window._FS.get(INVOICE_DOC_KEY);
+      if (recheck === null || recheck === undefined) list = [];
+      else if (Array.isArray(recheck)) list = recheck;
+      else throw new Error('[Invoice] recheck 형식 불일치 — 저장 중단');
     }
-  }
-  const beforeLen = list.length;
-  const saved = { ...invoice, id: 'inv_' + Date.now() };
-  list.push(saved);
-  if (list.length !== beforeLen + 1) {
-    throw new Error('[Invoice] push 후 길이 불일치 — 저장 중단');
-  }
-  // 저장 직전 운영 DB 재검증 (동시 수정 차단)
-  await _verifyBeforeSave({ length: beforeLen });
-  await window._FS.set(INVOICE_DOC_KEY, list);
-  return saved;
+    const beforeLen = list.length;
+    const saved = { ...invoice, id: 'inv_' + Date.now() };
+    // L4 보강 (Codex): serial 충돌 시 자동 재발급 (다른 탭 동시 발급 race)
+    if (saved.serial) {
+      const prefix = String(saved.serial).split(' ')[0];
+      if (prefix) {
+        const sameDay = list.filter(i => i && typeof i.serial === 'string' && i.serial.startsWith(prefix));
+        if (sameDay.some(i => i.serial === saved.serial)) {
+          saved.serial = prefix + ' -' + (sameDay.length + 1);
+        }
+      }
+    }
+    list.push(saved);
+    if (list.length !== beforeLen + 1) {
+      throw new Error('[Invoice] push 후 길이 불일치 — 저장 중단');
+    }
+    // 저장 직전 운영 DB 재검증
+    await _verifyBeforeSave({ length: beforeLen });
+    // H1 보강 (Codex): 다른 탭 추가본 보존 — id union 병합 후 set
+    const finalList = await _unionWithLatest(list);
+    await window._FS.set(INVOICE_DOC_KEY, finalList);
+    return saved;
+  });
 }
 
 /**
@@ -98,35 +131,29 @@ async function getInvoicesByOrderNum(orderNum) {
  */
 async function updateInvoice(invoice) {
   if (!invoice || !invoice.id) throw new Error('[Invoice] update: id 없음');
-  let list = await _safeFetchInvoiceList();
-  if (list === null) {
-    const recheck = await window._FS.get(INVOICE_DOC_KEY);
-    if (recheck === null || recheck === undefined) {
-      list = [];
-    } else if (Array.isArray(recheck)) {
-      list = recheck;
+  return _withInvoiceLock(async () => {
+    let list = await _safeFetchInvoiceList();
+    if (list === null) {
+      const recheck = await window._FS.get(INVOICE_DOC_KEY);
+      if (recheck === null || recheck === undefined) list = [];
+      else if (Array.isArray(recheck)) list = recheck;
+      else throw new Error('[Invoice] recheck 형식 불일치 — 저장 중단');
+    }
+    const beforeLen = list.length;
+    const idx = list.findIndex(inv => inv && inv.id === invoice.id);
+    if (idx < 0) {
+      list.push(invoice);
+      if (list.length !== beforeLen + 1) throw new Error('[Invoice] push 후 길이 불일치 — 저장 중단');
     } else {
-      throw new Error('[Invoice] recheck 형식 불일치 — 저장 중단');
+      list[idx] = invoice;
+      if (list.length !== beforeLen) throw new Error('[Invoice] 교체 후 길이 변화 — 저장 중단');
     }
-  }
-  const beforeLen = list.length;
-  const idx = list.findIndex(inv => inv && inv.id === invoice.id);
-  if (idx < 0) {
-    // 기존에 없으면 push (신규로 취급)
-    list.push(invoice);
-    if (list.length !== beforeLen + 1) {
-      throw new Error('[Invoice] push 후 길이 불일치 — 저장 중단');
-    }
-  } else {
-    list[idx] = invoice;
-    if (list.length !== beforeLen) {
-      throw new Error('[Invoice] 교체 후 길이 변화 — 저장 중단');
-    }
-  }
-  // 저장 직전 운영 DB 재검증
-  await _verifyBeforeSave({ length: beforeLen });
-  await window._FS.set(INVOICE_DOC_KEY, list);
-  return invoice;
+    await _verifyBeforeSave({ length: beforeLen });
+    // H1 보강: id union 병합
+    const finalList = await _unionWithLatest(list);
+    await window._FS.set(INVOICE_DOC_KEY, finalList);
+    return invoice;
+  });
 }
 
 /**
@@ -139,22 +166,26 @@ async function updateInvoice(invoice) {
 async function cancelInvoiceByOrderNum(orderNum) {
   if (!window._FS) throw new Error('[Invoice] _FS 미초기화');
   if (!orderNum) return 0;
-  let list = await _safeFetchInvoiceList();
-  if (list === null) return 0;
-  const beforeLen = list.length;
-  let changed = 0;
-  const newList = list.map(inv => {
-    if (inv && inv.orderNum === orderNum && !inv.cancelled) {
-      changed++;
-      return { ...inv, cancelled: true, cancelledAt: new Date().toISOString() };
-    }
-    return inv;
+  return _withInvoiceLock(async () => {
+    let list = await _safeFetchInvoiceList();
+    if (list === null) return 0;
+    const beforeLen = list.length;
+    let changed = 0;
+    const newList = list.map(inv => {
+      if (inv && inv.orderNum === orderNum && !inv.cancelled) {
+        changed++;
+        return { ...inv, cancelled: true, cancelledAt: new Date().toISOString() };
+      }
+      return inv;
+    });
+    if (changed === 0) return 0;
+    if (newList.length !== beforeLen) throw new Error('[Invoice] cancel: 길이 변경 — 저장 중단');
+    await _verifyBeforeSave({ length: beforeLen });
+    // H1 보강: id union 병합
+    const finalList = await _unionWithLatest(newList);
+    await window._FS.set(INVOICE_DOC_KEY, finalList);
+    return changed;
   });
-  if (changed === 0) return 0;
-  if (newList.length !== beforeLen) throw new Error('[Invoice] cancel: 길이 변경 — 저장 중단');
-  await _verifyBeforeSave({ length: beforeLen });
-  await window._FS.set(INVOICE_DOC_KEY, newList);
-  return changed;
 }
 
 /**
@@ -167,22 +198,26 @@ async function cancelInvoiceByOrderNum(orderNum) {
 async function setInvoiceSent(orderNum, sent) {
   if (!window._FS) throw new Error('[Invoice] _FS 미초기화');
   if (!orderNum) return 0;
-  let list = await _safeFetchInvoiceList();
-  if (list === null) return 0;
-  const beforeLen = list.length;
-  let changed = 0;
-  const newList = list.map(inv => {
-    if (inv && inv.orderNum === orderNum && !inv.cancelled) {
-      changed++;
-      return { ...inv, sentToCustomer: !!sent, sentAt: sent ? new Date().toISOString() : null };
-    }
-    return inv;
+  return _withInvoiceLock(async () => {
+    let list = await _safeFetchInvoiceList();
+    if (list === null) return 0;
+    const beforeLen = list.length;
+    let changed = 0;
+    const newList = list.map(inv => {
+      if (inv && inv.orderNum === orderNum && !inv.cancelled) {
+        changed++;
+        return { ...inv, sentToCustomer: !!sent, sentAt: sent ? new Date().toISOString() : null };
+      }
+      return inv;
+    });
+    if (changed === 0) return 0;
+    if (newList.length !== beforeLen) throw new Error('[Invoice] setSent: 길이 변경 — 저장 중단');
+    await _verifyBeforeSave({ length: beforeLen });
+    // H1 보강: id union 병합
+    const finalList = await _unionWithLatest(newList);
+    await window._FS.set(INVOICE_DOC_KEY, finalList);
+    return changed;
   });
-  if (changed === 0) return 0;
-  if (newList.length !== beforeLen) throw new Error('[Invoice] setSent: 길이 변경 — 저장 중단');
-  await _verifyBeforeSave({ length: beforeLen });
-  await window._FS.set(INVOICE_DOC_KEY, newList);
-  return changed;
 }
 
 /**

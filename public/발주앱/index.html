@@ -150,7 +150,11 @@
         async set(key, value) {
           try {
             await db.collection('hanger_data').doc(key).set({ value, updatedAt: new Date().toISOString() });
-          } catch(e) { console.warn('[Firestore set 실패]', key, e.message); }
+          } catch(e) {
+            // H2 보강 (Codex): 실패 시 throw — 호출자가 성공으로 오인 차단
+            console.error('[Firestore set 실패]', key, e.message);
+            throw new Error('[Firestore set 실패] '+key+': '+(e&&e.message));
+          }
         },
         async get(key) {
           try {

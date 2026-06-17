@@ -81,12 +81,49 @@ function groupByCustomer(orders) {
  * @returns {SettlementSummary}
  */
 function calcSummary(orders) {
+  // M4 보강 (Codex): 활성 invoice가 있으면 invoice 금액 우선 (수기 수정 반영)
+  const invMap = _buildInvoiceMapForSettlement();
+  const eff = (o) => {
+    const inv = invMap[o.orderNum];
+    if (inv) {
+      return {
+        supply: inv.totalSupply || 0,
+        vat: inv.totalVat || 0,
+        amount: inv.totalAmount || 0
+      };
+    }
+    return {
+      supply: o.totalSupply || 0,
+      vat: o.totalVat || 0,
+      amount: o.totalAmount || 0
+    };
+  };
   return {
     count: orders.length,
-    totalSupply: orders.reduce((s, o) => s + (o.totalSupply || 0), 0),
-    totalVat: orders.reduce((s, o) => s + (o.totalVat || 0), 0),
-    totalAmount: orders.reduce((s, o) => s + (o.totalAmount || 0), 0)
+    totalSupply: orders.reduce((s, o) => s + eff(o).supply, 0),
+    totalVat:    orders.reduce((s, o) => s + eff(o).vat, 0),
+    totalAmount: orders.reduce((s, o) => s + eff(o).amount, 0)
   };
+}
+
+// M4 보강: 활성 invoice 맵 (orderNum → 최신 활성 invoice)
+function _buildInvoiceMapForSettlement() {
+  try {
+    const invoices = (typeof DB !== 'undefined' && typeof DB.get === 'function')
+      ? DB.get('invoices', [])
+      : [];
+    const map = {};
+    invoices.forEach(inv => {
+      if (!inv || inv.cancelled || !inv.orderNum) return;
+      const prev = map[inv.orderNum];
+      if (!prev || (inv.createdAt || '') > (prev.createdAt || '')) {
+        map[inv.orderNum] = inv;
+      }
+    });
+    return map;
+  } catch (_e) {
+    return {};
+  }
 }
 
 /**

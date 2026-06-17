@@ -112,15 +112,31 @@ async function renderCustomerList() {
   tbody.innerHTML = '';
 
   filtered.forEach(s => {
+    // H4 보강 (Codex): inline onclick 제거 — data-* + 이벤트 위임
     tbody.insertAdjacentHTML('beforeend', `
-      <tr class="paid" onclick="showDetailView('${escapeHtml(s.name)}')">
+      <tr class="paid" data-ledger-customer="${escapeHtml(s.name)}">
         <td><strong>${escapeHtml(s.name)}</strong></td>
         <td class="num">${s.orderCount}건</td>
         <td class="num">${fmtMoney(s.totalOut)}</td>
-        <td class="center"><button class="btn-view" onclick="event.stopPropagation(); showDetailView('${escapeHtml(s.name)}')">▶ 원장 보기</button></td>
+        <td class="center"><button class="btn-view" data-ledger-customer="${escapeHtml(s.name)}">▶ 원장 보기</button></td>
       </tr>
     `);
   });
+
+  // 이벤트 위임 1회 등록
+  if (!tbody._ledgerDelegated) {
+    tbody._ledgerDelegated = true;
+    tbody.addEventListener('click', function(e) {
+      const btn = e.target && e.target.closest && e.target.closest('button.btn-view[data-ledger-customer]');
+      if (btn) {
+        e.stopPropagation();
+        if (typeof showDetailView === 'function') showDetailView(btn.dataset.ledgerCustomer);
+        return;
+      }
+      const tr = e.target && e.target.closest && e.target.closest('tr.paid[data-ledger-customer]');
+      if (tr && typeof showDetailView === 'function') showDetailView(tr.dataset.ledgerCustomer);
+    });
+  }
 }
 
 // ============================================================
