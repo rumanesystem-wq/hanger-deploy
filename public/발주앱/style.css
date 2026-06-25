@@ -1,6 +1,6 @@
 :root{--primary:#1e40af;--primary-light:#3b82f6;--primary-bg:#eff6ff;--success:#15803d;--success-bg:#f0fdf4;--warning:#b45309;--warning-bg:#fffbeb;--danger:#b91c1c;--danger-bg:#fef2f2;--bg:#f1f5f9;--card:#ffffff;--border:#e2e8f0;--text:#0f172a;--text-2:#475569;--text-3:#94a3b8;--nav-w:220px;--nav-bg:#0f172a;--r:10px;--r-sm:6px;--sh:0 1px 3px rgba(0,0,0,.08);--sh-md:0 4px 12px rgba(0,0,0,.1)}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;font-family:"Pretendard",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.6}
+html,body{height:100%;font-family:"Pretendard",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.6;-webkit-text-size-adjust:100%;-moz-text-size-adjust:100%;-ms-text-size-adjust:100%;text-size-adjust:100%}
 a{color:var(--primary);text-decoration:none}
 input,select,textarea,button{font-family:inherit;font-size:14px}
 button{cursor:pointer}
@@ -173,57 +173,71 @@ tbody tr:last-child td{border-bottom:none}
   .order-row{
     display:flex!important;
     align-items:center;
-    gap:8px;
-    padding:10px 14px;
+    gap:6px;
+    padding:10px 10px;
     border-bottom:1px solid #f1f5f9;
     cursor:pointer;
     background:#fff;
+    overflow:hidden;
   }
   .order-row:active{background:#f0f7ff!important}
   .order-row:hover td{background:transparent!important}
   .order-row td{display:none!important}
 
-  /* ── 발주서 목록 전용 (2줄 그리드 / columns: 납품처, 시공주소, 발주번호, 발주일, 출고일, 상태, 등록일) ── */
+  /* ── 발주서 목록 전용 (3행 그리드: 정보 2행 + 액션 1행) ── */
   .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row{
     display:grid!important;
-    grid-template-columns:auto 1fr auto;
-    grid-template-rows:auto auto;
-    column-gap:8px;row-gap:6px;
+    grid-template-columns:minmax(0,auto) minmax(0,1fr) minmax(0,auto);
+    grid-template-rows:auto auto auto;
+    column-gap:6px;row-gap:4px;
     align-items:center;justify-items:start;
+    width:100%;max-width:100%;overflow:hidden;
   }
   /* 1줄: 이름 | 발주번호 | 상태(우측) */
   .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:nth-child(1){
     display:block!important;
     grid-column:1;grid-row:1;min-width:0;
-    font-size:15px;font-weight:800;color:#111827;
+    font-size:14px;font-weight:800;color:#111827;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   }
   .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:nth-child(3){
     display:block!important;
-    grid-column:2;grid-row:1;
-    font-size:12px;font-weight:600;color:#0f172a;
-    white-space:nowrap;
+    grid-column:2;grid-row:1;min-width:0;
+    font-size:11px;font-weight:600;color:#0f172a;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   }
   .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:nth-child(6){
     display:block!important;
-    grid-column:3;grid-row:1;justify-self:end;
+    grid-column:3;grid-row:1;justify-self:end;min-width:0;
+    font-size:10px;
   }
   /* 2줄: 발주일 | 주소 | 발주 취소 + 재발주(우측) */
   .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:nth-child(4){
     display:block!important;
-    grid-column:1;grid-row:2;
-    font-size:12px;color:#111827;
+    grid-column:1;grid-row:2;min-width:0;
+    font-size:11px;color:#111827;
     white-space:nowrap;
   }
   .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:nth-child(2){
     display:block!important;
-    grid-column:2;grid-row:2;
-    font-size:12px;color:#111827;
+    grid-column:2/-1;grid-row:2;
+    font-size:11px;color:#111827;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;
   }
+  /* 액션 셀(취소/재발주/거래명세서) → 별도 row 3, 전체 너비, 우측 정렬 */
   .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:last-child{
-    display:block!important;
-    grid-column:3;grid-row:2;justify-self:end;
+    display:flex!important;
+    grid-column:1/-1;grid-row:3;
+    justify-content:flex-end;align-items:center;
+    flex-wrap:wrap;gap:4px;
+    margin-top:4px;padding-top:6px!important;
+    border-top:1px solid #f1f5f9;
+    font-size:10px;
+  }
+  /* 상태 뱃지 + 액션 버튼 컴팩트 */
+  .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:nth-child(6) .badge,
+  .card .table-wrap table:not(.dash-recent-tbl):not(.dash-ship-tbl) .order-row td:last-child .btn{
+    font-size:10px!important;padding:3px 8px!important;white-space:nowrap;
   }
 
   /* ── 대시보드 최근 발주 (columns: 납품처, 발주번호/발주일, 상태, 재고) ── */
@@ -243,14 +257,17 @@ tbody tr:last-child td{border-bottom:none}
   }
 
   /* ── 오늘 출고 목록 (columns: 납품처+서브, 시공주소, 발주자, 출고창고, 상태) ── */
-  .dash-ship-tbl .order-row{padding:10px 14px;align-items:center;}
+  .dash-ship-tbl .order-row{padding:10px 14px;align-items:center;gap:6px;overflow:hidden;}
   .dash-ship-tbl .order-row td:nth-child(1){
-    display:flex!important;flex-direction:column;flex:1;min-width:0;
+    display:flex!important;flex-direction:column;flex:1 1 0;min-width:0;max-width:100%;
     font-size:14px;font-weight:700;color:#111827;
     overflow:hidden;
   }
-  .dash-ship-tbl .order-row td:nth-child(4){display:block!important;flex-shrink:0;}
-  .dash-ship-tbl .order-row td:nth-child(5){display:block!important;flex-shrink:0;}
+  .dash-ship-tbl .order-row td:nth-child(1) > *{min-width:0;max-width:100%;}
+  .dash-ship-tbl .order-row td:nth-child(4){display:block!important;flex-shrink:0;font-size:10px;}
+  .dash-ship-tbl .order-row td:nth-child(5){display:block!important;flex-shrink:0;font-size:10px;}
+  .dash-ship-tbl .order-row td:nth-child(4) .badge,
+  .dash-ship-tbl .order-row td:nth-child(5) .badge{font-size:10px!important;padding:3px 6px!important;}
 }
 
 /* 오늘 출고 목록 서브텍스트 (모바일에서만 보임) */

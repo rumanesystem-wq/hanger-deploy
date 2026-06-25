@@ -7,6 +7,11 @@
       "hosting": {
         "hanger": ["hanger-deploy"]
       }
+    },
+    "demo-hanger": {
+      "hosting": {
+        "hanger": ["hanger-deploy"]
+      }
     }
   }
 }

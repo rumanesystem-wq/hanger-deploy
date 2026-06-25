@@ -1,0 +1,25 @@
+services:
+  hanger-emu:
+    image: andreysenov/firebase-tools:latest
+    container_name: hanger-emu
+    working_dir: /home/node
+    user: node
+    ports:
+      - "5050:5050"   # hosting
+      - "8080:8080"   # firestore
+      - "9099:9099"   # auth
+      - "4000:4000"   # UI
+      - "4400:4400"   # hub
+      - "9150:9150"   # firestore ws
+    volumes:
+      - .:/home/node:rw
+    environment:
+      - FIREBASE_PROJECT=tooktakproject
+    # 운영 projectId 그대로 사용 — emulator라 운영 Firebase 연결 0
+    # firebase-config의 projectId와 일치해야 앱이 데이터 찾음
+    command: >
+      firebase emulators:start
+      --only firestore,auth,hosting
+      --project tooktakproject
+      --import=./emu-seed
+      --export-on-exit

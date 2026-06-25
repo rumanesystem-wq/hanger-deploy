@@ -117,7 +117,7 @@ async function renderCustomerList() {
       <tr class="paid" data-ledger-customer="${escapeHtml(s.name)}">
         <td><strong>${escapeHtml(s.name)}</strong></td>
         <td class="num">${s.orderCount}건</td>
-        <td class="num">${fmtMoney(s.totalOut)}</td>
+        <td class="num" data-count="${s.orderCount}">${fmtMoney(s.totalOut)}</td>
         <td class="center"><button class="btn-view" data-ledger-customer="${escapeHtml(s.name)}">▶ 원장 보기</button></td>
       </tr>
     `);
@@ -135,6 +135,31 @@ async function renderCustomerList() {
       }
       const tr = e.target && e.target.closest && e.target.closest('tr.paid[data-ledger-customer]');
       if (tr && typeof showDetailView === 'function') showDetailView(tr.dataset.ledgerCustomer);
+    });
+  }
+
+  // 거래처 실시간 검색 (1회 등록)
+  const searchInput = document.getElementById('ledger-search');
+  if (searchInput && !searchInput._ledgerSearchBound) {
+    searchInput._ledgerSearchBound = true;
+    let _t = null;
+    searchInput.addEventListener('input', function(e) {
+      clearTimeout(_t);
+      _t = setTimeout(() => {
+        const q = String(e.target.value || '').trim().toLowerCase();
+        tbody.querySelectorAll('tr.paid').forEach(r => {
+          const name = (r.dataset.ledgerCustomer || '').toLowerCase();
+          r.style.display = (!q || name.includes(q)) ? '' : 'none';
+        });
+      }, 150);
+    });
+  }
+  // R6 보강: 목록 재진입 시 검색어가 있으면 필터 즉시 재적용 (UX 유지)
+  if (searchInput && searchInput.value && searchInput.value.trim()) {
+    const q = searchInput.value.trim().toLowerCase();
+    tbody.querySelectorAll('tr.paid').forEach(r => {
+      const name = (r.dataset.ledgerCustomer || '').toLowerCase();
+      r.style.display = name.includes(q) ? '' : 'none';
     });
   }
 }

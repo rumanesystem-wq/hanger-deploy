@@ -137,14 +137,59 @@
     try {
       const app = firebase.initializeApp(firebaseConfig, 'hanger');
       const db  = app.firestore();
-      db.enablePersistence({synchronizeTabs:true}).catch(e=>console.warn('[Firestore persistence 실패]',e&&e.code));
+      // 로컬 에뮬레이터 자동 감지 — localhost/127.0.0.1 일 때만 활성
+      // 운영(hanger-deploy.web.app)에선 이 분기 안 탐 → 운영 그대로
+      const _isLocalEmu = (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+      if (_isLocalEmu) {
+        try {
+          db.useEmulator('localhost', 8080);
+          console.warn('🔧 [LOCAL EMULATOR MODE] Firestore: localhost:8080 (운영 DB 안 씁니다)');
+        } catch(e) { console.error('[Emulator] Firestore 연결 실패:', e.message); }
+      } else {
+        console.log('☁️ [PRODUCTION MODE] 운영 Firestore 사용');
+      }
+      // persistence는 emulator 모드에선 skip (호환 문제 회피)
+      if (!_isLocalEmu) {
+        db.enablePersistence({synchronizeTabs:true}).catch(e=>console.warn('[Firestore persistence 실패]',e&&e.code));
+      }
 
       // Firebase Functions 초기화 (이카운트 연동 제거 후 핵심 함수만 유지)
       const fnApp = app.functions('asia-northeast3');
-      window._FN = {
-        getEmailById:           fnApp.httpsCallable('getEmailById'),
-        getNextIds:             fnApp.httpsCallable('getNextIds')
-      };
+      if (_isLocalEmu) {
+        // emulator 모드: 운영 Cloud Function 호출 차단 + Firestore 직접 mock
+        // 운영(_isLocalEmu=false)에선 이 분기 안 탐 → 영향 0
+        window._FN = {
+          getNextIds: async (req) => {
+            const counts = (req && req.data && req.data.counts) || {};
+            const ids = {};
+            for (const [key, n] of Object.entries(counts)) {
+              const ref = db.collection('hanger_data').doc('_seq_' + key);
+              await db.runTransaction(async (tx) => {
+                const snap = await tx.get(ref);
+                const cur = (snap.exists && snap.data().value) || 0;
+                const arr = [];
+                for (let i = 1; i <= n; i++) arr.push(cur + i);
+                ids[key] = arr;
+                tx.set(ref, { value: cur + n });
+              });
+            }
+            return { data: { success: true, ids } };
+          },
+          getEmailById: async (req) => {
+            const id = req && req.data && req.data.id;
+            const snap = await db.collection('hanger_data').doc('accounts').get();
+            const accounts = (snap.exists && snap.data().value) || [];
+            const acc = accounts.find(a => a && a.id === id);
+            return { data: { email: acc ? acc.email : null } };
+          }
+        };
+        console.warn('🔧 [LOCAL EMULATOR MODE] Functions mock (Firestore 직접 채번/조회)');
+      } else {
+        window._FN = {
+          getEmailById:           fnApp.httpsCallable('getEmailById'),
+          getNextIds:             fnApp.httpsCallable('getNextIds')
+        };
+      }
 
       window._FS = {
         async set(key, value) {
@@ -233,6 +278,13 @@
       // Firebase Auth 초기화
       try {
         window._fbAuth = app.auth();
+        // 로컬 에뮬레이터 모드면 Auth도 emulator로
+        if (_isLocalEmu) {
+          try {
+            window._fbAuth.useEmulator('http://localhost:9099', { disableWarnings: true });
+            console.warn('🔧 [LOCAL EMULATOR MODE] Auth: localhost:9099');
+          } catch(e) { console.error('[Emulator] Auth 연결 실패:', e.message); }
+        }
         console.log('[Auth] 초기화 완료');
       } catch(e) { console.warn('[Auth] 초기화 실패', e.message); }
 
@@ -242,7 +294,7 @@
 </script>
 <link rel="stylesheet" href="style.css?v=4">
 <!-- 거래명세서: Pretendard 폰트 -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" integrity="sha384-uGEvnSEpW2nM9xJFsrxrwakwrk9QdDTQIBJh0hVMu90OaVyMAMpAK1rIn0/Kh1/k" crossorigin="anonymous"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" integrity="sha384-ei/b2Mz3F5J8nqTvpKS89CkzDCuD7Tc+/F+OsaPUKItzHgLNKnGq3rjtYq/B7RnO" crossorigin="anonymous"/>
 <!-- 거래명세서: jsPDF + html2canvas (SRI 적용 — 공급망 공격 방어) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
@@ -1059,4 +1111,6 @@ _syncOffline();
   },200);
 })();
 </script>
+<!-- QA 위젯 (로컬 emulator 전용, 운영에서 자체 분기로 비활성) -->
+<script src="qa-widget.js"></script>
 </html>

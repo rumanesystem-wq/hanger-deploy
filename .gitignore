@@ -1,6 +1,11 @@
 node_modules/
 functions/node_modules/
 .firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+auth-debug.log
+functions-debug.log
 .claude/
 public/.claude/
 public/발주앱/firebase-config.js
@@ -12,3 +17,13 @@ functions/.env
 .fuse_hidden*
 .gstack/
 .ai-backups/
+emu-seed/
+.dev-output/
+firebase-export-*/
+functions/recover-output.json
+functions/ecount-products.json
+functions/ecount-products.txt
+.config/
+.vercel/
+test-results/
+playwright-report/

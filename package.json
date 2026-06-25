@@ -1,0 +1,11 @@
+{
+  "name": "hanger-deploy",
+  "private": true,
+  "description": "발주허브 — E2E/로컬 테스트 도구 (앱 자체는 public/발주앱 정적 호스팅)",
+  "scripts": {
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1"
+  }
+}

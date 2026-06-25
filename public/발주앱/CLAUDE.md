@@ -9,7 +9,9 @@
 
 ## 에이전트 팀 구성
 
-이 프로젝트는 5개의 전문 에이전트로 구성된 팀을 사용합니다.
+이 프로젝트는 여러 팀의 전문 에이전트를 사용합니다. (team-orchestrator가 조율)
+
+**디버깅팀 (코드 검사·진단)**
 
 | 에이전트 | 역할 |
 |---------|------|
@@ -17,7 +19,35 @@
 | `html-css-js-reviewer` | HTML/CSS/JS 코드 품질 검토 |
 | `web-security-auditor` | 보안 취약점 검사 |
 | `code-bug-fixer` | 버그 탐지 및 수정 |
-| `frontend-test-validator` | 테스트 검증 |
+| `frontend-test-validator` | 프론트 동작 검증 |
+
+**테스트팀 (테스트 설계·작성·실행 + 적대적 탐색)**
+
+| 에이전트 | 역할 |
+|---------|------|
+| `test-designer` | 테스트 시나리오·케이스 설계 |
+| `integration-test-writer` | 통합 테스트 작성 (에뮬레이터 방식) |
+| `test-runner` | 테스트 실행·진단 |
+| `adversarial-tester` | **"어떻게든 깨뜨리기"** — 숨은 버그·엣지 탐색 |
+
+> ⚠️ **디버깅팀만 부르지 말 것.** 버그 탐지·검증은 **디버깅팀(코드 읽기) + 테스트팀(돌려보기·적대적)** 을 함께 쓴다.
+
+---
+
+## 🐛 버그 탐지 / 테스트 (오늘 업데이트 검증)
+
+이 프로젝트는 **버그 탐지 파이프라인**이 깔려 있다 (자세히: `functions/TESTING.md`).
+
+- **테스트 환경**: Firebase 에뮬레이터(docker `hanger-emu`, localhost). 운영 절대 X.
+- **functions 통합 테스트**: 에뮬레이터 켠 상태 `cd functions && npm test` (테스트 전용 `tooktak-test`로 격리)
+- **프론트 E2E**: `npm run test:e2e` (Playwright, localhost:5050)
+- **트리거 발화**:
+  - "오늘 바꾼 거 버그 탐지해줘" → 디버깅팀 + adversarial-tester
+  - "적대적으로 테스트해줘" → adversarial-tester
+  - "○○ 흐름 E2E 짜줘" → E2E spec (범위는 사용자가 정함)
+  - "자동 검증해줘" → 사람 QA 직전까지 자동 게이트 (③검증→④테스트→⑤회귀→⑥최종)
+- **버그→테스트 규칙**: 사람 QA·운영에서 버그 발견 시 → 재현 테스트부터(RED) → 고침(GREEN) → 회귀로 박제
+- 🔴 `firestore.rules`·`firebase.json`·`.firebaserc`·`functions/.env`·`firebase-config.js` 는 임의 수정·실행 금지
 
 ---
 

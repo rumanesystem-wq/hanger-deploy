@@ -753,7 +753,10 @@ function renderOrders(){
         </div>
         <div>
           <label style="${labelStyle}">업체명</label>
-          <input class="form-input" placeholder="업체명 검색" id="order-search-input" value="${orderFilterSite}" style="width:100%"/>
+          <div style="display:flex;gap:6px">
+            <input class="form-input" placeholder="업체명 입력 후 🔍 또는 Enter" id="order-search-input" value="${orderFilterSite}" style="flex:1;min-width:0"/>
+            <button type="button" id="order-search-btn" class="btn btn-primary" style="padding:0 14px;white-space:nowrap"><i class="fas fa-search"></i></button>
+          </div>
         </div>
         <div>
           <label style="${labelStyle}">지역</label>
@@ -801,7 +804,23 @@ function renderOrders(){
   if(!isAdmin()){const nb2=document.getElementById('new-order-btn');if(nb2)nb2.addEventListener('click',openOrderModal);}
   const orderNumInput=document.getElementById('order-filter-num');
   if(orderNumInput)orderNumInput.addEventListener('input',e=>{orderFilterNum=e.target.value;renderOrders();});
-  document.getElementById('order-search-input').addEventListener('input',e=>{orderFilterSite=e.target.value;renderOrders();});
+  // 한글 IME 호환: 자동 검색 제거 → Enter 또는 blur(포커스 잃을 때) 검색
+  (function(){
+    const _si = document.getElementById('order-search-input');
+    if (!_si) return;
+    _si.placeholder = '업체명 입력 후 Enter';
+    const _commit = () => {
+      if (orderFilterSite === _si.value) return;
+      orderFilterSite = _si.value;
+      renderOrders();
+      const ni = document.getElementById('order-search-input');
+      if (ni) { ni.focus(); const p = ni.value.length; try { ni.setSelectionRange(p, p); } catch(_) {} }
+    };
+    _si.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); _commit(); } });
+    _si.addEventListener('blur', _commit);
+    const _btn = document.getElementById('order-search-btn');
+    if (_btn) _btn.addEventListener('click', _commit);
+  })();
   document.getElementById('order-filter-region').addEventListener('change',e=>{orderFilterRegion=e.target.value;renderOrders();});
   document.getElementById('order-filter-from').addEventListener('change',e=>{orderFilterDateFrom=e.target.value;renderOrders();});
   document.getElementById('order-filter-to').addEventListener('change',e=>{orderFilterDateTo=e.target.value;renderOrders();});

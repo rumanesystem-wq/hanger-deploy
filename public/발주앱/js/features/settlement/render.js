@@ -190,26 +190,40 @@ function renderCustomerTable(grouped, totalSummary) {
  * @returns {string} HTML 문자열
  */
 function renderCustomerDetailTable(orders) {
+  const PAGE_SIZE = 10;
+  const sorted = [...orders].sort((a,b)=>{
+    const da=a.orderDate||a.shipDate||'';
+    const db=b.orderDate||b.shipDate||'';
+    return db.localeCompare(da);
+  });
+  const rowsHTML = sorted.map((o, i) => {
+    const row = renderOrderRow(o);
+    // 11번째부터는 hidden-row 클래스 추가 (모바일에서만 숨김)
+    return i >= PAGE_SIZE ? row.replace('<tr ', '<tr class="hidden-row" ') : row;
+  }).join('');
+  const hasMore = sorted.length > PAGE_SIZE;
+  const remaining = sorted.length - PAGE_SIZE;
   return `
-    <div style="padding:12px 16px;background:#fafafa">
-      <table style="background:#fff;border:1px solid var(--border);border-radius:6px">
+    <div class="detail-table-wrap" style="padding:12px 16px;background:#fafafa">
+      <table class="detail-table" data-total="${sorted.length}" data-visible="${PAGE_SIZE}" data-page-size="${PAGE_SIZE}" style="background:#fff;border:1px solid var(--border);border-radius:6px">
         <thead>
           <tr>
             <th>발주번호</th>
-            <th>시공 주소</th>
-            <th class="center">창고</th>
-            <th class="center">발주일</th>
-            <th class="num">공급가액</th>
+            <th class="col-addr">시공 주소</th>
+            <th class="center col-warehouse">창고</th>
+            <th class="center col-date">발주일</th>
+            <th class="num col-supply">공급가액</th>
             <th class="num">합계</th>
             <th class="center">거래명세서</th>
-            <th class="center">수정</th>
+            <th class="center col-edit">수정</th>
             <th class="center">상세</th>
           </tr>
         </thead>
         <tbody>
-          ${[...orders].sort((a,b)=>{const da=a.orderDate||a.shipDate||'';const db=b.orderDate||b.shipDate||'';return db.localeCompare(da);}).map(o => renderOrderRow(o)).join('')}
+          ${rowsHTML}
         </tbody>
       </table>
+      ${hasMore ? `<button class="detail-load-more" data-action="load-more">+ 더보기 (${remaining}건 남음)</button>` : ''}
     </div>
   `;
 }
@@ -224,10 +238,10 @@ function renderOrderRow(o) {
   return `
     <tr id="order-row-${o.id}">
       <td><code style="background:#eff6ff;color:#1e40af;padding:2px 6px;border-radius:4px;font-weight:700">${escapeHtml(o.orderNum)}</code></td>
-      <td style="font-size:12px;color:var(--text-2)">${escapeHtml(o.address)}</td>
-      <td class="center"><span class="badge ${whClass}">${escapeHtml(o.warehouse)}</span></td>
-      <td class="center" style="font-size:12px">${fmtShortDate(o.orderDate)}</td>
-      <td class="num">${fmtMoney(o.totalSupply)}</td>
+      <td class="col-addr" style="font-size:12px;color:var(--text-2)">${escapeHtml(o.address)}</td>
+      <td class="center col-warehouse"><span class="badge ${whClass}">${escapeHtml(o.warehouse)}</span></td>
+      <td class="center col-date" style="font-size:12px">${fmtShortDate(o.orderDate)}</td>
+      <td class="num col-supply">${fmtMoney(o.totalSupply)}</td>
       <td class="num"><strong>${fmtMoney(o.totalAmount)}</strong></td>
       <td class="center" style="white-space:nowrap"><button class="btn-invoice" data-action="open-invoice" data-order-id="${o.id}"><i class="fas fa-file-invoice"></i> 거래명세서</button> ${(()=>{
         // M4 fix: 초기 라벨에 sentToCustomer 상태 반영
@@ -241,7 +255,7 @@ function renderOrderRow(o) {
         // H4 보강 (Codex): inline onclick 제거 — data-* + 이벤트 위임 사용
         return `<button class="btn-invoice-send" data-action="toggle-send" data-order-num="${escapeHtml(o.orderNum)}" title="발주자에게 전송 / 전송 취소" style="${_style}">${_label}</button>`;
       })()}</td>
-      <td class="center"><button class="btn-edit" data-action="inline-edit" data-order-id="${o.id}"><i class="fas fa-edit"></i> 수정</button></td>
+      <td class="center col-edit"><button class="btn-edit" data-action="inline-edit" data-order-id="${o.id}"><i class="fas fa-edit"></i> 수정</button></td>
       <td class="center"><button class="btn-link" data-action="goto-order" data-order-num="${escapeHtml(o.orderNum)}"><i class="fas fa-external-link-alt"></i> 이동</button></td>
     </tr>
   `;
@@ -263,7 +277,167 @@ if (typeof document !== 'undefined' && !document._settlementBtnDelegated) {
       startInlineEdit(Number(btn.dataset.orderId));
     } else if (action === 'goto-order' && typeof goToOrder === 'function') {
       goToOrder(btn.dataset.orderNum);
+    } else if (action === 'load-more') {
+      // 페이지네이션 — 다음 N건 .hidden-row 제거 (search-hidden 행은 제외)
+      const table = btn.closest('.detail-table-wrap')?.querySelector('.detail-table');
+      if (!table) return;
+      const pageSize = Number(table.dataset.pageSize || 10);
+      const visible = Number(table.dataset.visible || 10);
+      const total = Number(table.dataset.total || 0);
+      const hiddenRows = table.querySelectorAll('tr.hidden-row:not(.search-hidden)');
+      // 다음 pageSize 만큼 보이게
+      for (let i = 0; i < pageSize && i < hiddenRows.length; i++) {
+        hiddenRows[i].classList.remove('hidden-row');
+      }
+      const newVisible = Math.min(visible + pageSize, total);
+      table.dataset.visible = newVisible;
+      const remaining = total - newVisible;
+      if (remaining > 0) {
+        btn.textContent = `+ 더보기 (${remaining}건 남음)`;
+      } else {
+        btn.remove();
+      }
+    } else if (action === 'save-inline' && typeof saveInlineEdit === 'function') {
+      // H4 보강 (Codex): inline onclick 제거 — 이벤트 위임으로 대체
+      saveInlineEdit(Number(btn.dataset.orderId));
+    } else if (action === 'cancel-inline' && typeof loadData === 'function') {
+      loadData();
     }
+  });
+}
+
+// ─── 정렬 토글 (최신순 ↔ 오래된순) ───
+if (typeof document !== 'undefined' && !document._sortToggleDelegated) {
+  document._sortToggleDelegated = true;
+  document.addEventListener('click', function(e) {
+    const btn = e.target && e.target.closest && e.target.closest('#sort-toggle');
+    if (!btn) return;
+    const order = btn.dataset.order === 'desc' ? 'asc' : 'desc';
+    btn.dataset.order = order;
+    btn.innerHTML = order === 'desc'
+      ? '<i class="fas fa-sort-amount-down"></i> 최신순'
+      : '<i class="fas fa-sort-amount-up"></i> 오래된순';
+    // 펼침된 detail-table만 행 순서 뒤집기 + 페이지네이션 리셋
+    // M2 보강: 닫힌 카드(.hidden)는 제외하여 추후 펼칠 때 순서 정합 유지
+    // B2 보강: 검색 활성 상태에선 search-hidden 유지 (정렬은 검색과 직교)
+    const searchInput = document.getElementById('quick-search');
+    const isSearching = !!(searchInput && searchInput.value && searchInput.value.trim());
+    document.querySelectorAll('.detail-table').forEach(table => {
+      const detailContainer = table.closest('.detail-row, [id^="detail-"]');
+      if (detailContainer && detailContainer.classList.contains('hidden')) return;
+      const tbody = table.querySelector('tbody');
+      if (!tbody) return;
+      const rows = Array.from(tbody.children);
+      rows.reverse().forEach(r => tbody.appendChild(r));
+      const pageSize = Number(table.dataset.pageSize || 10);
+      const allRows = Array.from(tbody.children);
+      allRows.forEach((r, i) => {
+        r.classList.remove('hidden-row');
+        if (!isSearching) r.classList.remove('search-hidden');
+        if (i >= pageSize) r.classList.add('hidden-row');
+      });
+      table.dataset.visible = String(Math.min(pageSize, allRows.length));
+      // 더보기 버튼 복원
+      const wrap = table.closest('.detail-table-wrap');
+      let moreBtn = wrap && wrap.querySelector('.detail-load-more');
+      const remaining = allRows.length - pageSize;
+      if (remaining > 0) {
+        if (!moreBtn) {
+          moreBtn = document.createElement('button');
+          moreBtn.className = 'detail-load-more';
+          moreBtn.dataset.action = 'load-more';
+          wrap.appendChild(moreBtn);
+        }
+        moreBtn.textContent = `+ 더보기 (${remaining}건 남음)`;
+      } else if (moreBtn) {
+        moreBtn.remove();
+      }
+    });
+  });
+}
+
+// ─── 빠른 검색 (발주번호/거래처/주소) — 실시간 필터 ───
+if (typeof document !== 'undefined' && !document._quickSearchDelegated) {
+  document._quickSearchDelegated = true;
+  let _searchTimer = null;
+  document.addEventListener('input', function(e) {
+    if (!e.target || e.target.id !== 'quick-search') return;
+    clearTimeout(_searchTimer);
+    _searchTimer = setTimeout(() => _applyQuickSearch(e.target.value), 150);
+  });
+}
+
+function _applyQuickSearch(query) {
+  const q = String(query || '').trim().toLowerCase();
+  const tbody = document.getElementById('tbody-ordererwise');
+  if (!tbody) return;
+  const mainRows = tbody.querySelectorAll('tr.row-main');
+  if (!q) {
+    // 검색어 없음 → 모든 거래처 표시, 모든 펼침 닫음, hidden-row + search-hidden 복원
+    mainRows.forEach(r => {
+      r.style.display = '';
+      const detail = document.getElementById(r.dataset.target);
+      if (detail) detail.classList.add('hidden');
+    });
+    tbody.querySelectorAll('.detail-table tr.search-hidden').forEach(t => t.classList.remove('search-hidden'));
+    // H2 보강: 페이지네이션 hidden-row 재할당 (검색 중 제거된 것 복원)
+    tbody.querySelectorAll('.detail-table').forEach(table => {
+      const tb = table.querySelector('tbody');
+      if (!tb) return;
+      const pageSize = Number(table.dataset.pageSize || 10);
+      const allRows = Array.from(tb.children);
+      allRows.forEach((r, i) => {
+        if (i >= pageSize) r.classList.add('hidden-row');
+      });
+      table.dataset.visible = String(Math.min(pageSize, allRows.length));
+      // B3 보강: 검색 비우면 더보기 버튼 복원
+      const wrap = table.closest('.detail-table-wrap');
+      const moreBtn = wrap && wrap.querySelector('.detail-load-more');
+      if (moreBtn) {
+        const stillHidden = table.querySelectorAll('tr.hidden-row').length;
+        moreBtn.style.display = stillHidden > 0 ? '' : 'none';
+        if (stillHidden > 0) moreBtn.textContent = `+ 더보기 (${stillHidden}건 남음)`;
+      }
+    });
+    return;
+  }
+  mainRows.forEach(r => {
+    const detail = document.getElementById(r.dataset.target);
+    const mainMatch = r.textContent.toLowerCase().includes(q);
+    let detailMatchCount = 0;
+    if (detail) {
+      const orderRows = detail.querySelectorAll('.detail-table tbody tr');
+      orderRows.forEach(or => {
+        const match = or.textContent.toLowerCase().includes(q);
+        if (match) {
+          or.classList.remove('search-hidden');
+          or.classList.remove('hidden-row');  // 페이지네이션 무시
+          detailMatchCount++;
+        } else {
+          or.classList.add('search-hidden');
+        }
+      });
+    }
+    // 거래처 자체 매칭 OR 안에 매칭 발주서 있으면 표시
+    if (mainMatch || detailMatchCount > 0) {
+      r.style.display = '';
+      if (detail) {
+        // 매칭 있으면 자동 펼침
+        if (detailMatchCount > 0) detail.classList.remove('hidden');
+      }
+    } else {
+      r.style.display = 'none';
+      if (detail) detail.classList.add('hidden');
+    }
+  });
+  // B3 보강: 검색 활성 시 더보기 버튼은 표시될 잠재 행 기준으로 표시/숨김
+  document.querySelectorAll('.detail-table-wrap').forEach(wrap => {
+    const table = wrap.querySelector('.detail-table');
+    const moreBtn = wrap.querySelector('.detail-load-more');
+    if (!table || !moreBtn) return;
+    const stillHidden = table.querySelectorAll('tr.hidden-row:not(.search-hidden)').length;
+    moreBtn.style.display = stillHidden > 0 ? '' : 'none';
+    if (stillHidden > 0) moreBtn.textContent = `+ 더보기 (${stillHidden}건 남음)`;
   });
 }
 
@@ -306,8 +480,8 @@ function startInlineEdit(orderId) {
           <label style="flex:1;min-width:200px">시공 주소<input type="text" id="edit-addr-${orderId}" value="${escapeHtml(order.address)}" style="width:100%"/></label>
         </div>
         <div class="inline-edit-actions">
-          <button class="btn-save" onclick="saveInlineEdit(${orderId})"><i class="fas fa-check"></i> 저장</button>
-          <button class="btn-cancel" onclick="loadData()"><i class="fas fa-times"></i> 취소</button>
+          <button class="btn-save" data-action="save-inline" data-order-id="${orderId}"><i class="fas fa-check"></i> 저장</button>
+          <button class="btn-cancel" data-action="cancel-inline"><i class="fas fa-times"></i> 취소</button>
         </div>
       </div>
     </td>

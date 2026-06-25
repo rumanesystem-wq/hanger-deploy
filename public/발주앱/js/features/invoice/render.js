@@ -66,7 +66,10 @@ function _itemRowHTML(item, shipDate) {
  */
 function buildInvoiceHTML(invoice) {
   const items = invoice.items || [];
-  const MIN_ROWS = 13; // 원본 영수증 느낌 — 빈 행 많이
+  // 모바일에선 빈 행 최소화 (세로 길이 축소), 데스크탑은 원본 영수증 느낌 유지
+  // 짤림 0% — Math.max로 items 전부 + 빈 행 1 보장, 부족할 때만 5까지 채움
+  const _isMobile = (typeof window !== 'undefined') && window.innerWidth < 768;
+  const MIN_ROWS = _isMobile ? Math.max(items.length + 1, 5) : 13;
   const rows = [...items];
   while (rows.length < MIN_ROWS) rows.push(null);
 

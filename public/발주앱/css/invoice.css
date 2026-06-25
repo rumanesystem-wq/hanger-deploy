@@ -469,3 +469,15 @@
   #invoiceContent { padding: 0 !important; }
   .invoice-wrap { max-width: none; }
 }
+
+/* 모바일 반응형 — zoom으로 거래명세서 전체 비율 축소 (박스 크기까지 줄임) */
+/* B6 보강: 768px 경계 디바이스(iPad 등) 회전 시 깜빡임 완화 */
+.invoice-wrap { transition: zoom 0s; }
+@media (max-width: 768px) {
+  #invoiceContent { padding: 4px !important; overflow-x: auto; }
+  .invoice-wrap { zoom: 0.65; margin: 0 !important; }
+}
+@media (max-width: 480px) {
+  #invoiceContent { padding: 2px !important; }
+  .invoice-wrap { zoom: 0.5; margin: 0 !important; }
+}

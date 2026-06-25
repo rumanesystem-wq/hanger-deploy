@@ -4,6 +4,70 @@
 // 발주 필요 목록
 let prFilterStatus='',prFilterItem='',prFilterOrderNum='',prFilterDateFrom='',prFilterDateTo='',prSortBy='';
 function renderPurchaseRequests(){
+  // 모바일 카드형 CSS 1회 등록
+  if (!document.getElementById('_pr-mobile-css')) {
+    const s = document.createElement('style');
+    s.id = '_pr-mobile-css';
+    s.textContent = `
+      @media (max-width: 640px) {
+        /* 필터 영역: grid 2컬럼으로 컴팩트 */
+        .pr-filter-bar {
+          display: grid !important;
+          grid-template-columns: 1fr 1fr;
+          gap: 6px !important;
+          padding: 10px;
+          background:#fff;
+          border:1px solid var(--border);
+          border-radius: 10px;
+          margin-bottom: 12px;
+        }
+        .pr-filter-bar > * { max-width: none !important; width: 100% !important; }
+        .pr-filter-bar > input, .pr-filter-bar > select { padding: 8px 10px; font-size: 12px; }
+        .pr-filter-bar > button { grid-column: 1; padding: 8px; font-size: 12px; }
+        .pr-filter-bar > span { grid-column: 2; text-align: right; align-self: center; font-size: 11px; }
+
+        .pr-table-wrap .table-wrap { overflow:visible !important; }
+        .pr-table-wrap table { display:block !important; width:100% !important; }
+        .pr-table-wrap thead { display:none !important; }
+        .pr-table-wrap tbody { display:block !important; }
+        .pr-table-wrap tr.pr-row {
+          display:grid !important;
+          grid-template-columns: 1fr auto;
+          grid-template-rows: auto auto auto auto;
+          column-gap: 8px; row-gap: 4px;
+          padding: 12px 12px;
+          margin-bottom: 8px;
+          background:#fff;
+          border:1px solid var(--border);
+          border-radius: 10px;
+          width:100%; max-width:100%; overflow:hidden;
+        }
+        .pr-table-wrap tr.pr-row td {
+          display:block !important; padding:0 !important; border:none !important; background:transparent !important;
+        }
+        /* Row 1: 품목명(좌) + 상태(우) */
+        .pr-table-wrap tr.pr-row td:nth-child(1) { grid-column:1; grid-row:1; font-size:14px; font-weight:800; }
+        .pr-table-wrap tr.pr-row td:nth-child(8) { grid-column:2; grid-row:1; justify-self:end; }
+        /* Row 2: 구분(좌) + 생성일(우) */
+        .pr-table-wrap tr.pr-row td:nth-child(2) { grid-column:1; grid-row:2; font-size:11px; }
+        .pr-table-wrap tr.pr-row td:nth-child(7) { grid-column:2; grid-row:2; justify-self:end; font-size:11px; color:var(--text-3); }
+        /* Row 3: 현장 전체 너비 */
+        .pr-table-wrap tr.pr-row td:nth-child(3) { grid-column:1/-1; grid-row:3; font-size:12px; }
+        /* Row 4: 부족만 강조, 필요/재고 숨김 (모바일은 핵심만) */
+        .pr-table-wrap tr.pr-row td:nth-child(4),
+        .pr-table-wrap tr.pr-row td:nth-child(5) { display: none !important; }
+        .pr-table-wrap tr.pr-row td:nth-child(6) {
+          grid-column: 1; grid-row: 4;
+          font-size: 13px; font-weight: 800; color: #dc2626;
+        }
+        .pr-table-wrap tr.pr-row td:nth-child(6)::before {
+          content: "부족 "; color: var(--text-3); font-weight: 600; font-size: 11px;
+        }
+        .pr-table-wrap tr.pr-row td:nth-child(9) { grid-column: 2; grid-row: 4; justify-self: end; }
+      }
+    `;
+    document.head.appendChild(s);
+  }
   const allPRs=getPRs();
   let prs=allPRs.filter(p=>{
     if(prFilterStatus&&p.status!==prFilterStatus)return false;
@@ -25,7 +89,7 @@ function renderPurchaseRequests(){
     tableHtml=`<div class="table-wrap"><table><thead><tr><th>품목명</th><th class="td-center">구분</th><th>현장</th><th class="td-center">필요</th><th class="td-center">당시재고</th><th class="td-center">부족</th><th class="td-center">생성일</th><th class="td-center">상태</th><th class="td-center">처리</th></tr></thead><tbody>
     ${prs.map(pr=>{
       const it=getItem(pr.itemId);const ord=getOrders().find(o=>o.id===pr.orderId);
-      return `<tr id="pr-row-${pr.id}"${pr.status==='발주완료'?' style="opacity:.6"':''}>
+      return `<tr class="pr-row" id="pr-row-${pr.id}"${pr.status==='발주완료'?' style="opacity:.6"':''}>
         <td class="td-name">${it?it.name:'?'}</td>
         <td class="td-center">${it?drawerBadge(it):'-'}</td>
         <td><button class="btn btn-ghost btn-xs order-detail-btn" data-order-id="${pr.orderId}" style="padding:2px 0;font-weight:600">${ord?ord.siteName:'?'}</button><p class="td-muted" style="font-size:11px">${ord?ord.customerName:''}</p></td>
@@ -49,7 +113,7 @@ function renderPurchaseRequests(){
       <p style="font-size:13px;color:var(--warning)">대기 중인 발주 요청 <strong>${pending}건</strong>을 일괄 처리합니다.</p>
       <div id="bulk-btn-wrap"><button class="btn btn-success btn-sm" id="bulk-complete-btn"><i class="fas fa-check-double"></i> 전체 발주완료 처리</button></div>
     </div>`:''}
-    <div class="filter-bar" style="flex-wrap:wrap;row-gap:8px">
+    <div class="filter-bar pr-filter-bar" style="flex-wrap:wrap;row-gap:8px">
       <input class="form-input" placeholder="품목명 검색" id="pr-item-search" value="${prFilterItem}" style="max-width:160px"/>
       <input class="form-input" placeholder="발주번호" id="pr-order-num" value="${prFilterOrderNum}" style="max-width:120px"/>
       <select class="form-input" id="pr-status-filter" style="max-width:130px">
@@ -66,7 +130,7 @@ function renderPurchaseRequests(){
       <button class="btn btn-outline btn-xs" onclick="prFilterStatus='';prFilterItem='';prFilterOrderNum='';prFilterDateFrom='';prFilterDateTo='';prSortBy='';renderPurchaseRequests()">초기화</button>
       <span style="font-size:12px;color:var(--text-3)">총 ${prs.length}건</span>
     </div>
-    <div class="card">${tableHtml}</div>`;
+    <div class="card pr-table-wrap">${tableHtml}</div>`;
   document.getElementById('pr-item-search').addEventListener('input',e=>{prFilterItem=e.target.value;renderPurchaseRequests();});
   document.getElementById('pr-order-num').addEventListener('input',e=>{prFilterOrderNum=e.target.value;renderPurchaseRequests();});
   document.getElementById('pr-status-filter').addEventListener('change',e=>{prFilterStatus=e.target.value;renderPurchaseRequests();});
@@ -363,6 +427,78 @@ function renderStockLogs(){
 let invModalState={itemId:null,type:'입고'};
 function renderInventory(filterItemId){
   if(!requireAdmin())return;
+  // 모바일 카드형 CSS 1회 등록
+  if (!document.getElementById('_inv-mobile-css')) {
+    const s = document.createElement('style');
+    s.id = '_inv-mobile-css';
+    s.textContent = `
+      @media (max-width: 640px) {
+        #inv-stock-table { display:block !important; width:100% !important; }
+        #inv-stock-table thead { display:none !important; }
+        #inv-stock-table tbody { display:block !important; }
+        /* 색상별 서브 행 숨김 */
+        #inv-stock-table tr.inv-color-row { display:none !important; }
+        /* 메인 행 → 카드 */
+        #inv-stock-table tr.inv-main-row {
+          display:grid !important;
+          grid-template-columns:1fr auto;
+          grid-template-rows:auto auto auto;
+          gap:6px 8px;
+          padding:12px;
+          margin-bottom:6px;
+          background:#fff;
+          border:1px solid var(--border);
+          border-radius:8px;
+        }
+        #inv-stock-table tr.inv-main-row td { display:block !important; padding:0 !important; border:none !important; }
+        /* Row 1: 품목명(좌) | 합계(우, 큰 글씨) */
+        #inv-stock-table tr.inv-main-row td:nth-child(1) { grid-column:1; grid-row:1; font-size:14px; font-weight:700; }
+        #inv-stock-table tr.inv-main-row td:nth-child(5) { grid-column:2; grid-row:1; justify-self:end; }
+        #inv-stock-table tr.inv-main-row td:nth-child(5)::before { content:"합계 "; color:var(--text-3); font-size:11px; }
+        /* 구분 chip 숨김 (공간 절약) */
+        #inv-stock-table tr.inv-main-row td:nth-child(2) { display:none !important; }
+        /* Row 2: 시흥(좌) | 평택(우) */
+        #inv-stock-table tr.inv-main-row td:nth-child(3) { grid-column:1; grid-row:2; font-size:12px; }
+        #inv-stock-table tr.inv-main-row td:nth-child(3)::before { content:"시흥 "; color:var(--text-3); font-size:11px; }
+        #inv-stock-table tr.inv-main-row td:nth-child(4) { grid-column:2; grid-row:2; justify-self:end; font-size:12px; }
+        #inv-stock-table tr.inv-main-row td:nth-child(4)::before { content:"평택 "; color:var(--text-3); font-size:11px; }
+        /* Row 3: 처리 버튼 */
+        #inv-stock-table tr.inv-main-row td:nth-child(6) { grid-column:1/-1; grid-row:3; margin-top:4px; padding-top:6px !important; border-top:1px solid #f1f5f9; }
+
+        /* 재고 기록 표 — 카드형 */
+        #inv-log-table { display:block !important; width:100% !important; }
+        #inv-log-table thead { display:none !important; }
+        #inv-log-table tbody { display:block !important; }
+        #inv-log-table tr {
+          display:grid !important;
+          grid-template-columns:1fr auto;
+          grid-template-rows:auto auto auto;
+          gap:4px 8px;
+          padding:10px;
+          margin-bottom:6px;
+          background:#fff;
+          border:1px solid var(--border);
+          border-radius:8px;
+        }
+        #inv-log-table tr td { display:block !important; padding:0 !important; border:none !important; white-space:normal !important; }
+        /* Row 1: 품목명(좌, bold) | 수량(우, 큰글씨) */
+        #inv-log-table tr td:nth-child(2) { grid-column:1; grid-row:1; font-size:13px; font-weight:700; }
+        #inv-log-table tr td:nth-child(6) { grid-column:2; grid-row:1; justify-self:end; font-size:16px !important; }
+        /* Row 2: 일시 + chip들 한 줄 */
+        #inv-log-table tr td:nth-child(1) { grid-column:1; grid-row:2; font-size:11px; }
+        #inv-log-table tr td:nth-child(3) { grid-column:1; grid-row:2; justify-self:end; }
+        /* 창고/색상 chip은 모바일 숨김 (정보 과부하) */
+        #inv-log-table tr td:nth-child(4),
+        #inv-log-table tr td:nth-child(5) { display:none !important; }
+        /* Row 3: 변동(좌) | 발주번호(우), 메모 숨김 */
+        #inv-log-table tr td:nth-child(7) { grid-column:1; grid-row:3; font-size:11px; color:var(--text-3); }
+        #inv-log-table tr td:nth-child(7)::before { content:"재고 "; }
+        #inv-log-table tr td:nth-child(8) { grid-column:2; grid-row:3; justify-self:end; font-size:11px; }
+        #inv-log-table tr td:nth-child(9) { display:none !important; }
+      }
+    `;
+    document.head.appendChild(s);
+  }
   const allItems=getItems().filter(i=>i.isActive&&i.category==='서랍장'&&i.drawerType!=='handle');
   // 현재고 표 필터 적용
   let items=allItems;
@@ -386,7 +522,7 @@ function renderInventory(filterItemId){
       const pC=(item.colorStockPyeongtaek||{})[color]||0;
       const tot=sC+pC;
       const cColor=tot===0?'#9ca3af':tot<=3?'#d97706':'var(--text)';
-      return `<tr style="background:#fafafa">
+      return `<tr class="inv-color-row" style="background:#fafafa">
         <td style="padding-left:24px;font-size:12px;color:var(--text-2)">${color}</td>
         <td class="td-center" style="font-size:11px;color:#9ca3af"></td>
         <td class="td-center"><span style="font-size:13px;font-weight:600;color:${sC===0?'#9ca3af':sC<=3?'#d97706':'#1e40af'}">${sC}</span></td>
@@ -395,7 +531,7 @@ function renderInventory(filterItemId){
         <td></td>
       </tr>`;
     }).join('');
-    return `<tr style="${rowBg}">
+    return `<tr class="inv-main-row" style="${rowBg}">
       <td class="td-name">${item.name}</td>
       <td class="td-center">${drawerBadge(item)}</td>
       <td class="td-center"><span class="td-num" style="font-size:14px;font-weight:700;color:${sTotal===0?'#dc2626':sTotal<=3?'#d97706':'#1e40af'}">${sTotal}</span></td>
@@ -542,7 +678,7 @@ function renderInventory(filterItemId){
         <span style="font-size:12px;color:var(--text-3)">총 ${filtered.length}건</span>
       </div>
       ${summaryHtml?`<div style="padding:12px 16px;border-bottom:1px solid var(--border)">${summaryHtml}</div>`:''}
-      ${logRows?`<div class="table-wrap"><table>
+      ${logRows?`<div class="table-wrap"><table id="inv-log-table">
         <thead><tr><th>일시</th><th>품목명</th><th class="td-center">구분</th><th class="td-center">창고</th><th class="td-center">색상</th><th class="td-center">수량</th><th class="td-center">변동</th><th class="td-center">발주</th><th>메모</th></tr></thead>
         <tbody>${logRows}</tbody>
       </table></div>${invPgHtml}`:'<div class="empty"><i class="fas fa-clock-rotate-left"></i><p>기록이 없습니다.</p></div>'}

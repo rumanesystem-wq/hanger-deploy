@@ -351,6 +351,28 @@ function closeSidebar(){
 
 // 대시보드
 function renderDashboard(){
+  // 서랍장 재고 현황 (창고별) 카드 전용 CSS — 헤더 보이게 + 표 강제 펼침
+  if (!document.getElementById('_card-stock-wh-style')) {
+    const s = document.createElement('style');
+    s.id = '_card-stock-wh-style';
+    s.textContent = `
+      /* 모바일 글로벌 변환(display:block, flex tbody) 카드 한정 오버라이드 */
+      .card-stock-wh .table-wrap table { display: table !important; table-layout: fixed !important; width: 100% !important; }
+      .card-stock-wh .table-wrap thead { display: table-header-group !important; }
+      .card-stock-wh .table-wrap tbody { display: table-row-group !important; flex-direction: initial !important; }
+      .card-stock-wh .table-wrap tr { display: table-row !important; }
+      .card-stock-wh .table-wrap th, .card-stock-wh .table-wrap td { display: table-cell !important; font-size: 12px; padding: 8px 6px; vertical-align: middle; }
+      .card-stock-wh .table-wrap th { font-size: 11px; font-weight: 700; }
+      .card-stock-wh .table-wrap .td-name { font-size: 13px; text-align: left; }
+      .card-stock-wh .table-wrap .td-center { text-align: center !important; }
+      /* 컬럼 균등 분배 */
+      .card-stock-wh th:nth-child(1), .card-stock-wh td:nth-child(1) { width: 32% !important; }
+      .card-stock-wh th:nth-child(2), .card-stock-wh td:nth-child(2) { width: 24% !important; }
+      .card-stock-wh th:nth-child(3), .card-stock-wh td:nth-child(3) { width: 22% !important; }
+      .card-stock-wh th:nth-child(4), .card-stock-wh td:nth-child(4) { width: 22% !important; }
+    `;
+    document.head.appendChild(s);
+  }
   const items=getItems().filter(i=>i.isActive);
   const drawerItems=items.filter(i=>i.category==='서랍장'&&i.drawerType!=='handle');
   const orders=getOrders(),prs=getPRs(),logs=getLogs();
@@ -435,7 +457,7 @@ function renderDashboard(){
   }
 
   if(isAdmin()){
-    html+=`<div class="card"><div class="card-header"><h3>서랍장 재고 현황 (창고별)</h3><button class="btn btn-outline btn-sm" data-nav="inventory">전체보기</button></div>
+    html+=`<div class="card card-stock-wh"><div class="card-header"><h3>서랍장 재고 현황 (창고별)</h3><button class="btn btn-outline btn-sm" data-nav="inventory">전체보기</button></div>
     <div class="table-wrap"><table><thead><tr><th>품목명</th><th class="td-center">구분</th><th class="td-center" style="color:#1e40af">시흥</th><th class="td-center" style="color:#065f46">평택</th></tr></thead><tbody>
     ${drawerItems.slice(0,6).map(i=>{const s=i.stockSiheung!==undefined?i.stockSiheung:i.currentStock;const p=i.stockPyeongtaek||0;return`<tr><td class="td-name">${i.name}</td><td class="td-center">${drawerBadge(i)}</td><td class="td-center"><span style="font-weight:700;color:${s===0?'#dc2626':'#1e40af'}">${s}</span></td><td class="td-center"><span style="font-weight:700;color:${p===0?'#dc2626':'#065f46'}">${p}</span></td></tr>`;}).join('')}
     </tbody></table></div></div>`;
@@ -1256,7 +1278,52 @@ function _renderLedgerPanelHTML(){
       .ledger-scope td.center, .ledger-scope th.center { text-align:center; }
       .ledger-scope tr.paid { cursor:pointer; }
       .ledger-scope tr.paid:hover { background:#f0fdf4; }
-      .ledger-scope .btn-view { background:var(--primary); color:#fff; border:none; padding:6px 14px; border-radius:var(--r-sm); font-size:12px; font-weight:700; cursor:pointer; }
+      .ledger-scope .btn-view { background:var(--primary); color:#fff; border:none; padding:6px 14px; border-radius:var(--r-sm); font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap; }
+      /* 모바일: 거래처 행을 카드형으로 (버튼 아래로) */
+      @media (max-width: 768px) {
+        .ledger-scope #tbody-customers tr.paid {
+          display: grid;
+          grid-template-columns: 1fr auto;
+          gap: 6px 12px;
+          padding: 12px 14px;
+          margin-bottom: 10px;
+          background: #fff;
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+        }
+        .ledger-scope #tbody-customers tr.paid td {
+          display: block;
+          padding: 0 !important;
+          border: none !important;
+        }
+        /* 납품처: 좌상단 굵게 */
+        .ledger-scope #tbody-customers tr.paid td:nth-child(1) {
+          grid-column: 1 / -1; grid-row: 1; font-size: 14px; font-weight: 700;
+        }
+        /* 건수 td 자체는 숨김 (가격 셀의 ::after로 표시) */
+        .ledger-scope #tbody-customers tr.paid td:nth-child(2) {
+          display: none;
+        }
+        /* 총 출고금액 + 건수: 좌하단, 좌측 정렬 */
+        .ledger-scope #tbody-customers tr.paid td:nth-child(3) {
+          grid-column: 1; grid-row: 2;
+          font-size: 16px; font-weight: 800; color: #1e40af;
+          text-align: left;
+          display: flex; align-items: baseline; gap: 6px;
+        }
+        .ledger-scope #tbody-customers tr.paid td:nth-child(3)::after {
+          content: "/ " attr(data-count) "건";
+          font-size: 11px; font-weight: 500; color: var(--text-3);
+        }
+        /* 원장 보기 버튼: 우하단 */
+        .ledger-scope #tbody-customers tr.paid td:nth-child(4) {
+          grid-column: 2; grid-row: 2;
+          align-self: center;
+        }
+        /* 거래처 표 헤더 숨김 (카드 안 컬럼이 직관적) */
+        .ledger-scope table thead { display: none; }
+      }
       .ledger-scope .btn-back { background:#fff; color:var(--text-2); border:1px solid var(--border); padding:7px 14px; border-radius:var(--r-sm); font-size:13px; font-weight:600; cursor:pointer; }
       .ledger-scope .btn-add-payment { background:#15803d; color:#fff; border:none; padding:8px 16px; border-radius:var(--r-sm); font-size:13px; font-weight:700; cursor:pointer; }
       .ledger-scope .btn-print { background:#475569; color:#fff; border:none; padding:8px 16px; border-radius:var(--r-sm); font-size:13px; font-weight:700; cursor:pointer; }
@@ -1272,6 +1339,67 @@ function _renderLedgerPanelHTML(){
       .ledger-scope .ec-info-table th, .ledger-scope .ec-info-table td { padding:7px 12px; border:1px solid #cbd5e1; }
       .ledger-scope .ec-info-table th { background:#f8fafc; font-weight:700; color:var(--text-2); width:110px; text-align:left; }
       .ledger-scope .ec-info-table td { color:var(--text); }
+      /* 모바일: 정보표 → 2컬럼 grid */
+      @media (max-width: 768px) {
+        /* 카드 흰 배경 유지 + 표가 카드 안 가득 (흰 영역은 시각적 테두리로만) */
+        .ledger-scope .data-card { padding: 10px !important; margin-bottom: 10px !important; }
+        .ledger-scope .ec-print-area { padding: 10px !important; }
+        .ledger-scope .ec-info-table { display: block; }
+        .ledger-scope .ec-info-table tbody { display: block; }
+        .ledger-scope .ec-info-table tr {
+          display: grid;
+          grid-template-columns: 90px 1fr;
+        }
+        .ledger-scope .ec-info-table th,
+        .ledger-scope .ec-info-table td {
+          display: block; padding: 8px 10px; width: auto !important;
+          word-break: break-all;
+        }
+        /* 판매/수금내역 표: 5컬럼 한 화면에 다 표시 (스크롤 없음) */
+        .ledger-scope .ec-ledger-wrap { overflow-x: hidden; }
+        .ledger-scope .ec-ledger {
+          font-size: 9px; width: 100%; table-layout: fixed;
+        }
+        .ledger-scope .ec-ledger th,
+        .ledger-scope .ec-ledger td {
+          padding: 5px 2px !important; word-break: break-all;
+          width: auto !important;
+          color: #000 !important;
+          font-weight: 600 !important;
+        }
+        /* 헤더: 항상 보임 + 한 줄 + sticky */
+        .ledger-scope .ec-ledger thead { display: table-header-group !important; }
+        .ledger-scope .ec-ledger thead th {
+          display: table-cell !important;
+          white-space: nowrap !important;
+          font-size: 9px !important;
+          padding: 5px 1px !important;
+          position: sticky; top: 0; z-index: 5;
+          background: #f1f5f9 !important;
+          visibility: visible !important;
+        }
+        /* 컬럼 비율: 일자(작게) / 적요(작게 wrap) / 판매/수금/잔액(wrap 허용, 잘림 X) */
+        .ledger-scope .ec-ledger th,
+        .ledger-scope .ec-ledger td {
+          overflow-wrap: anywhere !important;
+          word-break: break-all !important;
+          overflow: visible !important;
+          white-space: normal !important;
+        }
+        .ledger-scope .ec-ledger th:nth-child(1),
+        .ledger-scope .ec-ledger td:nth-child(1) { width: 13% !important; font-size: 7px !important; }
+        .ledger-scope .ec-ledger th:nth-child(2),
+        .ledger-scope .ec-ledger td:nth-child(2) { width: 22% !important; font-size: 7px !important; }
+        .ledger-scope .ec-ledger th:nth-child(3),
+        .ledger-scope .ec-ledger td:nth-child(3) { width: 18% !important; font-size: 8px !important; }
+        .ledger-scope .ec-ledger th:nth-child(4),
+        .ledger-scope .ec-ledger td:nth-child(4) { width: 17% !important; font-size: 8px !important; }
+        .ledger-scope .ec-ledger th:nth-child(5),
+        .ledger-scope .ec-ledger td:nth-child(5) { width: 30% !important; font-size: 8px !important; }
+        /* (L1399-1402 옛 nowrap/76px 강제 제거됨 — 잘림 원인) */
+        .ledger-scope #view-detail h2,
+        .ledger-scope .ec-detail-title { font-size: 18px; }
+      }
       .ledger-scope .ec-ledger-title { background:#e0f2fe; text-align:center; font-weight:800; font-size:13px; padding:7px; border:1px solid #94a3b8; border-bottom:none; }
       .ledger-scope .ec-ledger { width:100%; border-collapse:collapse; font-size:12px; }
       .ledger-scope .ec-ledger th, .ledger-scope .ec-ledger td { border:1px solid #cbd5e1; padding:6px 10px; }
@@ -1308,6 +1436,12 @@ function _renderLedgerPanelHTML(){
     <div class="ledger-scope">
       <!-- 거래처 목록 화면 -->
       <div id="view-list">
+        <div class="filter-card" style="margin-bottom:12px">
+          <div class="fld" style="width:100%">
+            <div class="filter-label">🔍 거래처 검색</div>
+            <input type="text" id="ledger-search" placeholder="거래처명 입력" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:var(--r-sm);font-size:13px"/>
+          </div>
+        </div>
         <div class="data-card">
           <div style="overflow-x:auto">
             <table>
@@ -1359,18 +1493,20 @@ function _renderLedgerPanelHTML(){
             </tbody>
           </table>
           <div class="ec-ledger-title">판매/수금내역</div>
-          <table class="ec-ledger">
-            <thead>
-              <tr>
-                <th style="width:100px">일자</th>
-                <th>적요</th>
-                <th class="num" style="width:110px">판매</th>
-                <th class="num" style="width:110px">수금</th>
-                <th class="num" style="width:110px">잔액</th>
-              </tr>
-            </thead>
-            <tbody id="tbody-ledger"></tbody>
-          </table>
+          <div class="ec-ledger-wrap">
+            <table class="ec-ledger">
+              <thead>
+                <tr>
+                  <th style="width:100px">일자</th>
+                  <th>적요</th>
+                  <th class="num" style="width:110px">판매</th>
+                  <th class="num" style="width:110px">수금</th>
+                  <th class="num" style="width:110px">잔액</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-ledger"></tbody>
+            </table>
+          </div>
           <div class="ec-print-footer" id="ec-print-time">—</div>
         </div>
       </div>
@@ -1445,7 +1581,137 @@ function renderSettlement(){
       .settlement-scope .inline-edit-actions { display: flex; gap: 6px; }
       .settlement-scope .btn-save { background: #15803d; color: #fff; border: none; padding: 6px 14px; border-radius: 4px; font-size: 12px; font-weight: 700; cursor: pointer; }
       .settlement-scope .btn-cancel { background: #fff; color: var(--text-2); border: 1px solid var(--border); padding: 6px 14px; border-radius: 4px; font-size: 12px; cursor: pointer; }
-      .settlement-scope @media (max-width: 900px) { .settlement-scope .summary-grid { grid-template-columns: repeat(2, 1fr); } }
+      @media (max-width: 900px) { .settlement-scope .summary-grid { grid-template-columns: repeat(2, 1fr); } }
+      @media (max-width: 768px) {
+        .settlement-scope { padding: 12px; }
+        .settlement-scope .summary-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+        .settlement-scope .summary-card { padding: 10px 12px; }
+        .settlement-scope .summary-value { font-size: 16px; }
+        .settlement-scope .data-card { padding: 12px; overflow-x: auto; }
+        .settlement-scope table { font-size: 11px; min-width: 100%; }
+        .settlement-scope th, .settlement-scope td { padding: 6px 4px; }
+      }
+      /* 데스크탑: hidden-row 무시 (모두 표시), 더보기 버튼 숨김 */
+      .settlement-scope .detail-load-more { display: none; }
+      /* 빠른 검색: 매칭 안 되는 발주서 즉시 숨김 (데스크탑/모바일 공통) */
+      .settlement-scope .detail-table tr.search-hidden { display: none !important; }
+      /* 액션 버튼 그룹 — 항상 한 줄 유지 */
+      .settlement-scope .filter-actions {
+        display: flex; gap: 6px; flex-wrap: nowrap; align-items: center;
+      }
+      .settlement-scope .filter-actions button { white-space: nowrap; }
+      /* 정렬 토글 버튼 — 고정 너비 (텍스트 변해도 layout shift 없음) */
+      .settlement-scope .btn-sort-toggle {
+        background: #fff; color: #1e40af; border: 1px solid #1e40af;
+        padding: 7px 14px; border-radius: var(--r-sm); font-size: 12px;
+        font-weight: 700; cursor: pointer;
+        min-width: 100px; white-space: nowrap;
+      }
+      .settlement-scope .btn-sort-toggle:hover { background: #eff6ff; }
+
+      @media (max-width: 768px) {
+        /* 외부 표: 부가세만 숨김 (공급가액·합계는 유지) */
+        .settlement-scope #tbody-ordererwise tr > *:nth-child(4),
+        .settlement-scope table thead th:nth-child(4) { display: none; }
+
+        /* ─── 페이지네이션: 모바일에서만 hidden-row 적용 ─── */
+        .settlement-scope .detail-table tr.hidden-row { display: none; }
+        .settlement-scope .detail-load-more {
+          display: block;
+          width: 100%;
+          padding: 12px;
+          margin-top: 8px;
+          background: #fff;
+          border: 1px dashed var(--primary);
+          border-radius: 8px;
+          color: var(--primary);
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+        .settlement-scope .detail-load-more:hover {
+          background: #eff6ff;
+        }
+
+        /* ─── detail-table: 카드형 레이아웃으로 변환 ─── */
+        .settlement-scope .detail-table-wrap { padding: 0; background: transparent; }
+        .settlement-scope .detail-table { display: block; width: 100%; background: transparent; border: none; }
+        .settlement-scope .detail-table thead { display: none; }
+        .settlement-scope .detail-table tbody { display: block; }
+        .settlement-scope .detail-table tr {
+          display: grid;
+          grid-template-columns: 1fr auto;
+          align-items: center;
+          gap: 8px 12px;
+          padding: 14px 14px;
+          margin-bottom: 10px;
+          background: #fff;
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+        }
+        .settlement-scope .detail-table td {
+          display: block;
+          padding: 0 !important;
+          border: none !important;
+          background: transparent;
+        }
+        /* 숨겨야 할 보조 컬럼 (이미 col-* 있음) */
+        .settlement-scope .detail-table .col-addr,
+        .settlement-scope .detail-table .col-warehouse,
+        .settlement-scope .detail-table .col-date,
+        .settlement-scope .detail-table .col-supply,
+        .settlement-scope .detail-table .col-edit { display: none; }
+        /* 발주번호: 좌측 상단 */
+        .settlement-scope .detail-table tr > td:first-child {
+          grid-column: 1; grid-row: 1;
+          font-size: 14px; font-weight: 700;
+        }
+        /* 합계 (num 유일하게 살아있는 것): 우측 상단, 큰 글씨 */
+        .settlement-scope .detail-table .num {
+          grid-column: 2; grid-row: 1;
+          font-size: 17px; font-weight: 800; color: #1e40af;
+          text-align: right;
+        }
+        /* 거래명세서/전송: row 2 전체 너비 (큰 금액에도 버튼 안 뭉개짐) */
+        .settlement-scope .detail-table tr > td:nth-child(7) {
+          grid-column: 1 / -1; grid-row: 2;
+          display: flex; gap: 6px; flex-wrap: nowrap; align-items: center;
+          padding-top: 8px !important;
+          border-top: 1px solid #f1f5f9 !important;
+        }
+        /* 이동(상세) 셀: row 3 별도, 우측 정렬 */
+        .settlement-scope .detail-table tr > td:last-child {
+          grid-column: 1 / -1; grid-row: 3;
+          padding-top: 4px !important;
+          text-align: right;
+        }
+        .settlement-scope .detail-table .btn-invoice,
+        .settlement-scope .detail-table .btn-invoice-send,
+        .settlement-scope .detail-table .btn-link {
+          padding: 6px 10px; font-size: 12px; white-space: nowrap;
+        }
+        /* 거래명세서 셀 안 버튼 그룹 flex-grow 균등 */
+        .settlement-scope .detail-table tr > td:nth-child(7) .btn-invoice,
+        .settlement-scope .detail-table tr > td:nth-child(7) .btn-invoice-send {
+          flex: 1; min-width: 0; text-align: center;
+        }
+        .settlement-scope .detail-table .btn-invoice-send {
+          display: inline-block !important;
+          margin-left: 0 !important;
+          margin-top: 0 !important;
+        }
+      }
+      @media (max-width: 480px) {
+        .settlement-scope { padding: 4px; margin: 0 -8px; }
+        /* 카드 박스 흰 배경 유지 (밋밋함 방지) */
+        .settlement-scope .filter-card { padding: 8px; }
+        .settlement-scope .summary-card { padding: 10px 12px; }
+        .settlement-scope .summary-value { font-size: 15px; }
+        .settlement-scope .summary-label { font-size: 10px; }
+        .settlement-scope table { font-size: 11px; }
+        .settlement-scope th, .settlement-scope td { padding: 14px 6px; }
+      }
       .stl-tabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 2px solid var(--border); }
       .stl-tab { padding: 10px 20px; background: none; border: none; border-bottom: 3px solid transparent; font-size: 14px; font-weight: 700; color: var(--text-3); cursor: pointer; margin-bottom: -2px; }
       .stl-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
@@ -1468,12 +1734,25 @@ function renderSettlement(){
           <button class="period-tab" data-mode="yearly">연도</button>
           <button class="period-tab" data-mode="custom">사용자 지정</button>
         </div>
+        <div class="summary-grid">
+          <div class="summary-card"><div class="summary-label">출고 건수</div><div class="summary-value" id="sum-count">0건</div></div>
+          <div class="summary-card"><div class="summary-label">공급가액</div><div class="summary-value" id="sum-supply">₩0</div></div>
+          <div class="summary-card"><div class="summary-label">부가세</div><div class="summary-value" id="sum-vat">₩0</div></div>
+          <div class="summary-card"><div class="summary-label" style="color:#1e40af">합계</div><div class="summary-value" id="sum-total" style="color:#1e40af">₩0</div></div>
+        </div>
         <div class="filter-card">
           <div class="filter-row">
             <div class="fld" id="date-picker-wrap"></div>
+            <div class="fld" style="flex:1;min-width:200px">
+              <div class="filter-label">🔍 빠른 검색 (발주번호/거래처/주소)</div>
+              <input type="text" id="quick-search" placeholder="입력하면 즉시 필터링" style="width:100%"/>
+            </div>
             <div class="fld">
               <div class="filter-label">납품처 검색</div>
-              <input type="text" id="filter-orderer" placeholder="납품처명 (Enter)" style="width:180px"/>
+              <div style="display:flex;gap:6px;width:180px">
+                <input type="text" id="filter-orderer" placeholder="납품처명" style="flex:1;min-width:0"/>
+                <button type="button" id="filter-orderer-btn" class="btn btn-primary" style="padding:0 12px;white-space:nowrap"><i class="fas fa-search"></i></button>
+              </div>
             </div>
             <div class="fld">
               <div class="filter-label">창고</div>
@@ -1483,16 +1762,12 @@ function renderSettlement(){
                 <option value="평택">평택</option>
               </select>
             </div>
-            <button class="btn-search" onclick="loadData()"><i class="fas fa-search"></i> 조회</button>
-            <div class="spacer"></div>
-            <button class="btn-export" onclick="exportExcel()"><i class="fas fa-file-excel"></i> 엑셀 내보내기</button>
+            <div class="filter-actions">
+              <button class="btn-search" onclick="loadData()"><i class="fas fa-search"></i> 조회</button>
+              <button class="btn-sort-toggle" id="sort-toggle" data-order="desc" type="button"><i class="fas fa-sort-amount-down"></i> 최신순</button>
+              <button class="btn-export" onclick="exportExcel()"><i class="fas fa-file-excel"></i> 엑셀</button>
+            </div>
           </div>
-        </div>
-        <div class="summary-grid">
-          <div class="summary-card"><div class="summary-label">출고 건수</div><div class="summary-value" id="sum-count">0건</div></div>
-          <div class="summary-card"><div class="summary-label">공급가액</div><div class="summary-value" id="sum-supply">₩0</div></div>
-          <div class="summary-card"><div class="summary-label">부가세</div><div class="summary-value" id="sum-vat">₩0</div></div>
-          <div class="summary-card"><div class="summary-label" style="color:#1e40af">합계</div><div class="summary-value" id="sum-total" style="color:#1e40af">₩0</div></div>
         </div>
         <div class="data-card">
           <div class="data-card-head"><div class="data-card-title">납품처별 정산 내역</div></div>
@@ -1551,13 +1826,23 @@ function renderSettlement(){
   // 정산 초기 로드 (settlement 모듈의 init은 단계 2에서, 지금은 직접 호출)
   if(typeof updateDatePicker==='function') updateDatePicker();
   if(typeof loadData==='function') loadData();
+  // B1 보강: 탭 재진입 시 정렬 토글을 기본(desc/최신순)으로 리셋 → dataset과 표 일치
+  const _sortBtn = document.getElementById('sort-toggle');
+  if (_sortBtn) {
+    _sortBtn.dataset.order = 'desc';
+    _sortBtn.innerHTML = '<i class="fas fa-sort-amount-down"></i> 최신순';
+  }
 
-  // 납품처 검색 Enter 핸들러
+  // 납품처 검색 Enter + 🔍 버튼 핸들러
   const ordererInput = document.getElementById('filter-orderer');
   if(ordererInput){
     ordererInput.addEventListener('keydown',e=>{
       if(e.key==='Enter'){ e.preventDefault(); if(typeof loadData==='function') loadData(); }
     });
+  }
+  const ordererBtn = document.getElementById('filter-orderer-btn');
+  if(ordererBtn){
+    ordererBtn.addEventListener('click',()=>{ if(typeof loadData==='function') loadData(); });
   }
 
   // 기간 모드 탭 클릭
@@ -1577,6 +1862,59 @@ let itemFilterCat='',itemFilterActive='';
 
 function renderItems(){
   if(!requireAdmin())return;
+  // 모바일 카드형 CSS 1회 등록
+  if (!document.getElementById('_items-mobile-css')) {
+    const s = document.createElement('style');
+    s.id = '_items-mobile-css';
+    s.textContent = `
+      @media (max-width: 640px) {
+        /* 필터: grid 2컬럼 */
+        .items-filter-bar { display:grid !important; grid-template-columns:1fr 1fr; gap:6px; padding:10px; background:#fff; border:1px solid var(--border); border-radius:10px; }
+        .items-filter-bar > * { max-width:none !important; width:100% !important; }
+        .items-filter-bar > select { padding:8px 10px; font-size:12px; }
+        .items-filter-bar > span { grid-column:1/-1; text-align:center; font-size:11px; color:var(--text-3); }
+
+        /* 표 → 카드형 */
+        .items-tbl-wrap .table-wrap { overflow:visible !important; }
+        .items-tbl-wrap table { display:block !important; width:100% !important; }
+        .items-tbl-wrap thead { display:none !important; }
+        .items-tbl-wrap tbody { display:block !important; }
+        .items-tbl-wrap tr {
+          display:grid !important;
+          grid-template-columns:1fr auto;
+          grid-template-rows:auto auto auto;
+          gap:6px 8px;
+          padding:12px;
+          margin-bottom:6px;
+          background:#fff;
+          border:1px solid var(--border);
+          border-radius:8px;
+        }
+        .items-tbl-wrap tr td {
+          display:block !important; padding:0 !important; border:none !important;
+        }
+        /* 품목명: row 1 좌, 활성 토글: row 1 우 (긴 품목명 wrap 허용) */
+        .items-tbl-wrap tr td:first-child {
+          grid-column:1; grid-row:1; font-size:14px; font-weight:700;
+          min-width:0; word-break:keep-all; line-height:1.3;
+        }
+        .items-tbl-wrap tr td:last-child { grid-column:2; grid-row:1; justify-self:end; align-self:start; flex-shrink:0; }
+
+        /* 서랍장(6컬럼): 구분(2)|현재고(3) row2, 단가(4)|이카운트(5) row3 */
+        .items-tbl-wrap tr.items-drawer td:nth-child(2) { grid-column:1; grid-row:2; }
+        .items-tbl-wrap tr.items-drawer td:nth-child(3) { grid-column:2; grid-row:2; justify-self:end; font-size:12px; }
+        .items-tbl-wrap tr.items-drawer td:nth-child(3)::before { content:"재고 "; color:var(--text-3); font-size:11px; }
+        .items-tbl-wrap tr.items-drawer td:nth-child(4) { grid-column:1; grid-row:3; font-size:13px; font-weight:700; }
+        .items-tbl-wrap tr.items-drawer td:nth-child(5) { grid-column:2; grid-row:3; justify-self:end; }
+
+        /* 비서랍장(5컬럼): 현재고(2) 숨김(보통 '-'), 단가(3) row2 좌, 이카운트(4) row2 우 */
+        .items-tbl-wrap tr.items-other td:nth-child(2) { display:none !important; }
+        .items-tbl-wrap tr.items-other td:nth-child(3) { grid-column:1; grid-row:2; font-size:13px; font-weight:700; }
+        .items-tbl-wrap tr.items-other td:nth-child(4) { grid-column:2; grid-row:2; justify-self:end; }
+      }
+    `;
+    document.head.appendChild(s);
+  }
   let items=getItems().filter(i=>i.drawerType!=='handle'); // 손잡이 항목 제외
   if(itemFilterCat)items=items.filter(i=>i.category===itemFilterCat);
   if(itemFilterActive!=='')items=items.filter(i=>String(i.isActive)===itemFilterActive);
@@ -1600,7 +1938,7 @@ function renderItems(){
               : (item.prodCd ? `<i class="fas fa-check-circle" style="color:#7c3aed;margin-right:3px"></i>${item.prodCd.split(',').length}개 설정됨` : '<i class="fas fa-plus" style="margin-right:3px"></i>코드 설정')}
           </button>`;
       const displayName=PRICE_DISPLAY_LABEL[item.name]||item.name;
-      return `<tr${item.isActive?'':' style="opacity:.5"'}>
+      return `<tr class="${cat==='서랍장'?'items-drawer':'items-other'}"${item.isActive?'':' style="opacity:.5"'}>
         <td class="td-name">${displayName}</td>
         ${cat==='서랍장'?`<td class="td-center">${drawerBadge(item)}</td>`:''}
         <td class="td-center td-num" style="font-weight:700;color:${item.category==='서랍장'&&item.currentStock===0?'#dc2626':'var(--text)'}">${item.category==='서랍장'?item.currentStock:'-'}</td>
@@ -1609,7 +1947,7 @@ function renderItems(){
         <td class="td-center"><button class="toggle-active-btn" data-item-id="${item.id}"  style="width:44px;height:24px;border-radius:12px;border:none;cursor:pointer;background:${item.isActive?'var(--primary-light)':'#e2e8f0'};position:relative;transition:all .2s"><span style="position:absolute;top:3px;${item.isActive?'right:3px':'left:3px'};width:18px;height:18px;border-radius:9px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:all .2s"></span></button></td>
       </tr>`;
     }).join('');
-    catHtml+=`<div class="card" style="margin-bottom:16px">
+    catHtml+=`<div class="card items-tbl-wrap" style="margin-bottom:16px">
       <div class="card-header"><h3>${cat} <span style="font-size:12px;font-weight:400;color:var(--text-3)">${cat==='서랍장'?'(재고 관리 대상)':'(발주 기록만)'}</span></h3><span style="font-size:12px;color:var(--text-3)">${catItems.length}개</span></div>
       <div class="table-wrap"><table>
         <thead><tr><th>품목명</th>${cat==='서랍장'?'<th class="td-center">구분</th>':''}<th class="td-center">현재고</th><th class="td-center">단가</th><th class="td-center" style="min-width:150px">이카운트 품목코드</th><th class="td-center">활성</th></tr></thead>
@@ -1620,7 +1958,7 @@ function renderItems(){
   document.getElementById('content').innerHTML=`
     <div class="section-title">품목 마스터</div>
     <div class="section-sub">전체 품목 목록을 관리합니다. 단가는 단가 관리 페이지에서 수정하세요.</div>
-    <div class="filter-bar">
+    <div class="filter-bar items-filter-bar">
       <select class="form-input" id="item-cat-filter" style="max-width:160px">
         <option value="">전체 카테고리</option>
         <option value="서랍장"${itemFilterCat==='서랍장'?' selected':''}>서랍장</option>
@@ -2120,6 +2458,43 @@ function toggleItemActive(itemId){
 let editAccountId=null;
 function renderAccounts(){
   if(!requireAdmin())return;
+  // 모바일 카드형 CSS 1회 등록
+  if (!document.getElementById('_acc-mobile-css')) {
+    const s = document.createElement('style');
+    s.id = '_acc-mobile-css';
+    s.textContent = `
+      @media (max-width: 640px) {
+        .acc-tbl-wrap .table-wrap { overflow:visible !important; }
+        .acc-tbl-wrap table { display:block !important; width:100% !important; }
+        .acc-tbl-wrap thead { display:none !important; }
+        .acc-tbl-wrap tbody { display:block !important; }
+        .acc-tbl-wrap tr {
+          display:grid !important;
+          grid-template-columns:1fr auto;
+          grid-template-rows:auto auto auto;
+          gap:4px 8px;
+          padding:12px;
+          margin-bottom:6px;
+          background:#fff;
+          border:1px solid var(--border);
+          border-radius:8px;
+        }
+        .acc-tbl-wrap tr td { display:block !important; padding:0 !important; border:none !important; }
+        /* Row 1: 아이디(좌) + 권한 뱃지(우) */
+        .acc-tbl-wrap tr td:nth-child(1) { grid-column:1; grid-row:1; font-size:14px; font-weight:700; }
+        .acc-tbl-wrap tr td:nth-child(3) { grid-column:2; grid-row:1; justify-self:end; }
+        /* Row 2: 이름(좌) + 사원코드(우, 작게) */
+        .acc-tbl-wrap tr td:nth-child(2) { grid-column:1; grid-row:2; font-size:12px; color:var(--text-2); }
+        .acc-tbl-wrap tr td:nth-child(4) { grid-column:2; grid-row:2; justify-self:end; font-size:11px; color:var(--text-3); }
+        .acc-tbl-wrap tr td:nth-child(4)::before { content:"사원 "; }
+        /* 거래처코드는 모바일에서 숨김 (상세 모달에서 보임) */
+        .acc-tbl-wrap tr td:nth-child(5) { display:none !important; }
+        /* Row 3: 수정/삭제 버튼 (우측) */
+        .acc-tbl-wrap tr td:nth-child(6) { grid-column:1/-1; grid-row:3; justify-self:end; margin-top:4px; padding-top:6px !important; border-top:1px solid #f1f5f9; }
+      }
+    `;
+    document.head.appendChild(s);
+  }
   const accounts=DB.get('accounts',[]);
   const rows=accounts.map(acc=>`<tr>
     <td class="td-name">${acc.id}</td>
@@ -2137,7 +2512,7 @@ function renderAccounts(){
       <div><div class="section-title">계정 관리</div><div class="section-sub">관리자 및 발주자 계정을 관리합니다.</div></div>
       <button class="btn btn-primary" id="add-account-btn"><i class="fas fa-plus"></i> 계정 추가</button>
     </div>
-    <div class="card"><div class="table-wrap"><table>
+    <div class="card acc-tbl-wrap"><div class="table-wrap"><table>
       <thead><tr><th>아이디</th><th>이름</th><th class="td-center">권한</th><th class="td-center">사원코드</th><th class="td-center">거래처코드</th><th class="td-center">관리</th></tr></thead>
       <tbody>${rows}</tbody>
     </table></div></div>`;

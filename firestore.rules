@@ -1,13 +1,8 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // hanger_data: 운영 데이터 (orders/accounts/items/inventory/logs 등)
-    // read: 전체 허용 (로그인 시 accounts 매핑 + 앱 데이터 로드)
-    // write: 인증된 사용자만
-    match /hanger_data/{docId} {
-      allow read: if true;
-      allow write: if request.auth != null;
+    match /{document=**} {
+      allow read, write: if true;
     }
   }
 }
