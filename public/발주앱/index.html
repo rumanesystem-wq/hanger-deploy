@@ -294,7 +294,7 @@
 </script>
 <link rel="stylesheet" href="style.css?v=4">
 <!-- 거래명세서: Pretendard 폰트 -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" integrity="sha384-ei/b2Mz3F5J8nqTvpKS89CkzDCuD7Tc+/F+OsaPUKItzHgLNKnGq3rjtYq/B7RnO" crossorigin="anonymous"/>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" crossorigin="anonymous"/>
 <!-- 거래명세서: jsPDF + html2canvas (SRI 적용 — 공급망 공격 방어) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" integrity="sha384-JcnsjUPPylna1s1fvi1u12X5qjY5OL56iySh75FdtrwhO/SWXgMjoVqcKyIIWOLk" crossorigin="anonymous"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
@@ -980,6 +980,11 @@
       <div class="form-group">
         <label>이름 <span class="req">*</span></label>
         <input type="text" class="form-input" id="acc-name" placeholder="이름"/>
+      </div>
+      <div class="form-group" id="acc-delivery-group">
+        <label>납품처 이름</label>
+        <input type="text" class="form-input" id="acc-delivery-name" placeholder="발주자의 회사/납품처명 (비우면 이름으로 자동 채움)"/>
+        <div style="font-size:11px;color:var(--text-3);margin-top:4px">발주서에 표시되는 회사명입니다</div>
       </div>
       <div class="form-group">
         <label>이메일 <span class="req">*</span></label>

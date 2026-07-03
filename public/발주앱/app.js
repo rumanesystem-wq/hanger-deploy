@@ -1956,8 +1956,10 @@ function renderItems(){
     </div>`;
   }
   document.getElementById('content').innerHTML=`
-    <div class="section-title">품목 마스터</div>
-    <div class="section-sub">전체 품목 목록을 관리합니다. 단가는 단가 관리 페이지에서 수정하세요.</div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20px;gap:12px;flex-wrap:wrap">
+      <div><div class="section-title">품목 마스터</div><div class="section-sub">전체 품목 목록을 관리합니다. 단가는 단가 관리 페이지에서 수정하세요.</div></div>
+      <button class="btn btn-primary" id="add-item-btn"><i class="fas fa-plus"></i> 품목 추가</button>
+    </div>
     <div class="filter-bar items-filter-bar">
       <select class="form-input" id="item-cat-filter" style="max-width:160px">
         <option value="">전체 카테고리</option>
@@ -1978,6 +1980,97 @@ function renderItems(){
     </div>${catHtml}`;
   document.getElementById('item-cat-filter').addEventListener('change',e=>{itemFilterCat=e.target.value;renderItems();});
   document.getElementById('item-active-filter').addEventListener('change',e=>{itemFilterActive=e.target.value;renderItems();});
+  // 신규 품목 추가 모달
+  const _addItemBtn=document.getElementById('add-item-btn');
+  if(_addItemBtn){
+    _addItemBtn.addEventListener('click',()=>{
+      const overlay=document.createElement('div');
+      overlay.className='modal-overlay';overlay.style.display='flex';
+      overlay.innerHTML=`
+        <div class="modal" style="max-width:420px;width:92%">
+          <div class="modal-header">
+            <div class="modal-title"><i class="fas fa-plus" style="margin-right:6px"></i>품목 추가 (마스터)</div>
+            <button class="modal-close" onclick="this.closest('.modal-overlay').remove()"><i class="fas fa-times"></i></button>
+          </div>
+          <div class="modal-body" style="display:flex;flex-direction:column;gap:14px;padding:20px">
+            <div>
+              <label class="form-label">품목명 <span style="color:#dc2626">*</span></label>
+              <input id="new-item-name" class="form-input" placeholder="예: 직결볼트" style="width:100%"/>
+            </div>
+            <div>
+              <label class="form-label">카테고리 <span style="color:#dc2626">*</span></label>
+              <select id="new-item-cat" class="form-input" style="width:100%">
+                <option value="옵션">옵션</option>
+                <option value="상부자재">상부자재</option>
+                <option value="선반">선반</option>
+                <option value="코너선반">코너선반</option>
+                <option value="옷봉">옷봉</option>
+                <option value="서비스">서비스</option>
+                <option value="서랍장">서랍장 (재고 관리 대상)</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label">단가 (원)</label>
+              <input id="new-item-price" type="number" class="form-input" placeholder="비워두면 미정" style="width:100%;text-align:right"/>
+            </div>
+            <div>
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+                <input type="checkbox" id="new-item-nocolor" checked/>
+                <span>색상 없음 (색상 선택 X)</span>
+              </label>
+              <div style="font-size:11px;color:var(--text-3);margin-top:4px;padding-left:22px">체크 해제 시 색상별로 관리됩니다 (색상 코드는 나중에 설정)</div>
+            </div>
+            <div style="font-size:11px;color:var(--warning);background:var(--warning-bg);padding:8px 10px;border-radius:6px">
+              ⚠️ 저장 후 기존 발주서/재고/정산 데이터는 영향 없습니다. 신규 발주부터 목록에 나타납니다.
+            </div>
+          </div>
+          <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end;padding:12px 20px">
+            <button class="btn btn-outline btn-sm" onclick="this.closest('.modal-overlay').remove()">취소</button>
+            <button class="btn btn-sm" id="new-item-confirm" style="background:#1e3a5f;color:#fff;font-weight:700">추가</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      document.getElementById('new-item-name').focus();
+      document.getElementById('new-item-confirm').addEventListener('click',()=>{
+        const name=document.getElementById('new-item-name').value.trim();
+        const cat=document.getElementById('new-item-cat').value;
+        const priceStr=document.getElementById('new-item-price').value.trim();
+        const noColor=document.getElementById('new-item-nocolor').checked;
+        if(!name){toast('품목명을 입력해주세요.','error');return;}
+        const price=priceStr===''?null:parseInt(priceStr);
+        if(priceStr!==''&&(isNaN(price)||price<0)){toast('단가는 0 이상의 숫자 또는 빈칸(미정)으로 입력해주세요.','error');return;}
+        // 중복 체크 (items + price_settings)
+        const items=getItems();
+        if(items.find(i=>i.name===name)){toast('이미 같은 이름의 품목이 있습니다.','error');return;}
+        // items 마스터에 push
+        const newId=items.reduce((m,i)=>Math.max(m,i.id||0),0)+1;
+        const newItem={
+          id:newId,
+          name,
+          category:cat,
+          isActive:true,
+          noColor,
+          isCustom:true,
+          currentStock:cat==='서랍장'?0:undefined,
+          stockSiheung:cat==='서랍장'?0:undefined,
+          stockPyeongtaek:cat==='서랍장'?0:undefined,
+        };
+        // undefined 필드 제거 (Firestore 저장 안정성)
+        Object.keys(newItem).forEach(k=>newItem[k]===undefined&&delete newItem[k]);
+        items.push(newItem);
+        DB.set('items',items);
+        // price_settings 동기화
+        const ps=getPriceSettings();
+        if(!ps.find(p=>p.name===name)){
+          ps.push({name,category:cat,price,isCustom:true});
+          DB.set('price_settings',ps);
+        }
+        overlay.remove();
+        toast(`"${name}" 품목이 추가되었습니다.`,'success');
+        renderItems();
+      });
+    });
+  }
   // 단가 저장 버튼 이벤트
   document.querySelectorAll('.item-price-save-btn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
@@ -2536,6 +2629,9 @@ function openAccountModal(accId){
     document.getElementById('acc-emp-cd').value=acc.empCd||'';
     document.getElementById('acc-biz-cd').value=acc.bizCd||'';
     document.getElementById('acc-ecount-fields').style.display='block';
+    // 납품처 필드 (발주자만 표시)
+    document.getElementById('acc-delivery-name').value=acc.deliveryName||'';
+    document.getElementById('acc-delivery-group').style.display=(acc.role==='orderer')?'':'none';
   }else{
     document.getElementById('acc-id').value='';document.getElementById('acc-id').disabled=false;
     document.getElementById('acc-name').value='';
@@ -2548,6 +2644,16 @@ function openAccountModal(accId){
     document.getElementById('acc-emp-cd').value='';
     document.getElementById('acc-biz-cd').value='';
     document.getElementById('acc-ecount-fields').style.display='none';
+    document.getElementById('acc-delivery-name').value='';
+    document.getElementById('acc-delivery-group').style.display='';
+  }
+  // 권한 변경 시 납품처 필드 표시/숨김 (1회 등록)
+  const _roleSel=document.getElementById('acc-role');
+  if(_roleSel && !_roleSel._deliveryToggleBound){
+    _roleSel._deliveryToggleBound=true;
+    _roleSel.addEventListener('change',e=>{
+      document.getElementById('acc-delivery-group').style.display=(e.target.value==='orderer')?'':'none';
+    });
   }
   openModal('account-modal');
 }
@@ -2559,6 +2665,9 @@ async function submitAccount(){
   const role=document.getElementById('acc-role').value;
   const empCd=document.getElementById('acc-emp-cd').value.trim();
   const bizCd=document.getElementById('acc-biz-cd').value.trim();
+  const deliveryNameInput=document.getElementById('acc-delivery-name').value.trim();
+  // 발주자면 입력값 우선, 비어있으면 name으로 자동 채움 (안전망)
+  const deliveryName=(role==='orderer')?(deliveryNameInput||name):'';
   if(!id){toast('아이디를 입력해주세요.','error');return;}
   if(!name){toast('이름을 입력해주세요.','error');return;}
   if(!email){toast('이메일을 입력해주세요.','error');return;}
@@ -2569,7 +2678,7 @@ async function submitAccount(){
     const idx=accounts.findIndex(a=>a.id===editAccountId);if(idx===-1)return;
     accounts[idx].name=name;accounts[idx].role=role;accounts[idx].email=email;
     accounts[idx].empCd=empCd;accounts[idx].bizCd=bizCd;
-    if(role==='orderer')accounts[idx].deliveryName=name;
+    if(role==='orderer')accounts[idx].deliveryName=deliveryName;
     if(pw){
       // 비밀번호 변경 요청 시 재설정 이메일 발송 (관리자는 타 계정 pw를 직접 변경 불가)
       if(window._fbAuth){
@@ -2597,8 +2706,10 @@ async function submitAccount(){
         return;
       }
     }
-    // pw 없이 저장
-    accounts.push({id,name,email,role,empCd,bizCd});
+    // pw 없이 저장 — 발주자는 납품처 필드 입력값 우선, 없으면 name으로 자동 채움
+    const newAcc={id,name,email,role,empCd,bizCd};
+    if(role==='orderer') newAcc.deliveryName=deliveryName;
+    accounts.push(newAcc);
   }
   DB.set('accounts',accounts);closeModal('account-modal');
   toast(isEdit?'계정이 수정되었습니다.':'계정이 추가되었습니다.','success');renderAccounts();

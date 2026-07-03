@@ -298,106 +298,29 @@ function renderUpperTable(){
 }
 
 
-// ── 상부자재 공통색 선택 시: 이카운트 코드 없는 품목 행 비활성화 ──
+// ── [2026-06-29] 이카운트 검증 제거 — 모든 행 항상 활성 유지 ──
 function checkUpperColorCodes(color){
   const tbody=document.getElementById('upper-material-body');
   if(!tbody)return;
-  const allItems=DB.get('items',[]);
-
   tbody.querySelectorAll('tr[data-price-row]').forEach(tr=>{
     const inp=tr.querySelector('.upper-qty');
-    if(!inp)return;
-    const matName=inp.dataset.mat||'';
-
-    // DB 품목 찾기 (aggressiveNormalize fallback 포함)
-    const mappedName=compatUpperName(matName);
-    let dbItem=allItems.find(i=>normalizeName(i.name)===normalizeName(mappedName));
-    if(!dbItem){
-      const agg=aggressiveNormalize(mappedName);
-      dbItem=allItems.find(i=>aggressiveNormalize(i.name)===agg);
-    }
-    if(!dbItem){
-      const agg=aggressiveNormalize(mappedName);
-      dbItem=allItems.find(i=>{
-        const ai=aggressiveNormalize(i.name);
-        return ai.length>=2&&(agg.startsWith(ai)||ai.startsWith(agg));
-      });
-    }
-
-    // 기존 경고 배지 제거
+    if(inp) inp.disabled=false;
+    tr.style.opacity='';
     const oldBadge=tr.querySelector('.upper-no-cd-badge');
-    if(oldBadge)oldBadge.remove();
-
-    // 색상이 없거나, DB 품목 자체가 없으면 판단 불가 → 활성화 유지
-    if(!color||!dbItem){
-      inp.disabled=false;
-      tr.style.opacity='';
-      return;
-    }
-
-    // noColor 품목(스패너 등): prodCd 하나면 OK
-    if(dbItem.noColor){
-      const hasCd=!!(dbItem.prodCd);
-      inp.disabled=!hasCd;
-      tr.style.opacity=hasCd?'':'.45';
-      if(!hasCd) _insertNoCdBadge(tr,'이카운트 코드 미입력');
-      return;
-    }
-
-    // 색상별 코드 확인 — N/A(해당없음)는 코드 없음과 동일 처리
-    const colorKey=resolveColorKey(color);
-    const cd=dbItem.colorProdCdMap&&(dbItem.colorProdCdMap[colorKey]||dbItem.colorProdCdMap[color]);
-    const hasCd=!!(cd&&cd!=='N/A');
-    inp.disabled=!hasCd;
-    tr.style.opacity=hasCd?'':'.45';
-    if(!hasCd) _insertNoCdBadge(tr,color+' 코드 없음');
+    if(oldBadge) oldBadge.remove();
   });
 }
 
-// ── 서랍/옵션 공통색 선택 시: 이카운트 코드 없는 품목 행 비활성화 ──
+// ── [2026-06-29] 이카운트 검증 제거 — 모든 행 항상 활성 유지 ──
 function checkDrawerColorCodes(color){
   const drawerBody=document.getElementById('drawer-body');
   if(!drawerBody)return;
-  const allItems=DB.get('items',[]);
-
   drawerBody.querySelectorAll('tr[data-price-row]').forEach(tr=>{
     const inp=tr.querySelector('.drawer-qty');
-    if(!inp)return;
-    const itemId=parseInt(inp.dataset.itemId);
-    const dbItem=allItems.find(i=>i.id===itemId);
-
-    // 기존 경고 배지 제거
+    if(inp) inp.disabled=false;
+    tr.style.opacity='';
     const oldBadge=tr.querySelector('.upper-no-cd-badge');
-    if(oldBadge)oldBadge.remove();
-
-    // DB 품목 없거나 색상 미선택 → 활성화 유지
-    if(!color||!dbItem){
-      inp.disabled=false;
-      tr.style.opacity='';
-      return;
-    }
-
-    // 개별 색상 선택 품목 (colorOptions 또는 hasColor) → 공통색 체크 제외, 항상 활성
-    if(dbItem.colorOptions&&dbItem.colorOptions.length>0||dbItem.hasColor){
-      inp.disabled=false;
-      tr.style.opacity='';
-      return;
-    }
-
-    // noColor 품목 → 색 무관, 항상 활성화
-    if(dbItem.noColor){inp.disabled=false;tr.style.opacity='';return;}
-
-    // colorProdCdMap 자체가 없으면 코드 미설정 품목 → 비활성화하지 않음
-    const map=dbItem.colorProdCdMap;
-    if(!map||Object.keys(map).length===0){inp.disabled=false;tr.style.opacity='';return;}
-
-    // colorProdCdMap이 있는데 해당 색상 코드가 없으면 비활성화 — N/A(해당없음)도 비활성화
-    const colorKey=resolveColorKey(color);
-    const cd=map[colorKey]||map[color];
-    const hasCd=!!(cd&&cd!=='N/A');
-    inp.disabled=!hasCd;
-    tr.style.opacity=hasCd?'':'.45';
-    if(!hasCd) _insertNoCdBadge(tr,color+' 코드 없음');
+    if(oldBadge) oldBadge.remove();
   });
 }
 
@@ -518,7 +441,8 @@ function _openOrderModalRender(initialData){
   // 기본 정보 초기화
   // 납품처: 관리자/일반 사용자 모두 currentUser.deliveryName 강제 + 읽기 전용
   //         (이카운트 코드 등 다른 필드는 별개)
-  const autoDeliveryName=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
+  // [2026-06-29] fallback: deliveryName 없으면 name 사용 (신규 계정 안전망)
+  const autoDeliveryName=(currentUser&&(currentUser.deliveryName||currentUser.name))||'';
   const delivToEl=document.getElementById('o-delivery-to');
   delivToEl.value=autoDeliveryName;
   delivToEl.readOnly=true;
@@ -785,8 +709,9 @@ function _openOrderModalRender(initialData){
 // draft 발주서 데이터를 열린 모달에 복원
 function _restoreDraftToModal(order){
   // 기본정보 — 납품처는 저장된 값 무시하고 현재 본인 deliveryName으로 강제 덮어쓰기 + 읽기 전용
+  // [2026-06-29] fallback: deliveryName 없으면 name 사용 (신규 계정 안전망)
   const delivToEl2=document.getElementById('o-delivery-to');
-  const forcedDeliv=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
+  const forcedDeliv=(currentUser&&(currentUser.deliveryName||currentUser.name))||'';
   delivToEl2.value=forcedDeliv;
   delivToEl2.readOnly=true;
   delivToEl2.tabIndex=-1;
@@ -907,7 +832,8 @@ async function submitOrder(saveMode='발주확정'){
   if(isAdmin()){
     deliveryTo=(_delivEl?_delivEl.value:'').trim();
   } else {
-    const _forceDeliv=(currentUser&&currentUser.deliveryName)?currentUser.deliveryName:'';
+    // [2026-06-29] fallback: deliveryName 없으면 name 사용 (신규 계정 안전망)
+    const _forceDeliv=(currentUser&&(currentUser.deliveryName||currentUser.name))||'';
     if(_delivEl) _delivEl.value=_forceDeliv;
     deliveryTo=_forceDeliv;
   }
@@ -978,41 +904,7 @@ async function submitOrder(saveMode='발주확정'){
       }
     });
 
-    // ── 이카운트 색상 코드 없는 품목에 수량 입력 시 차단 ──
-    const ucColorForVal=(document.getElementById('upper-common-color')||{}).value||'';
-    const scColorForVal=(document.getElementById('shared-color-sel')||{}).value||'';
-
-    // 상부자재 체크
-    document.querySelectorAll('#upper-material-body .upper-qty').forEach(inp=>{
-      const qty=parseInt(inp.value)||0;
-      if(qty<1)return;
-      const matName=inp.dataset.mat||'';
-      const mappedName=compatUpperName(matName);
-      let dbItem=dbItemsForVal.find(i=>normalizeName(i.name)===normalizeName(mappedName));
-      if(!dbItem){const agg=aggressiveNormalize(mappedName);dbItem=dbItemsForVal.find(i=>aggressiveNormalize(i.name)===agg);}
-      if(!dbItem){const agg=aggressiveNormalize(mappedName);dbItem=dbItemsForVal.find(i=>{const ai=aggressiveNormalize(i.name);return ai.length>=2&&(agg.startsWith(ai)||ai.startsWith(agg));});}
-      if(!dbItem||dbItem.noColor)return;
-      const map1=dbItem.colorProdCdMap;
-      if(!map1||Object.keys(map1).length===0)return; // 코드 미입력 품목은 건너뜀
-      const colorKey1=resolveColorKey(ucColorForVal);
-      const hasCd1=!!(map1[colorKey1]||map1[ucColorForVal]);
-      if(!hasCd1) _markRequired(inp, matName+' — '+ucColorForVal+' 색상 이카운트 코드가 없습니다. 품목 관리에서 코드를 입력해주세요.');
-    });
-
-    // 서랍/옵션 체크
-    document.querySelectorAll('#drawer-body .drawer-qty').forEach(inp=>{
-      const qty=parseInt(inp.value)||0;
-      if(qty<1)return;
-      const itemId=parseInt(inp.dataset.itemId);
-      const dbItem=dbItemsForVal.find(i=>i.id===itemId);
-      if(!dbItem||dbItem.hasColor||dbItem.noColor||(dbItem.colorOptions&&dbItem.colorOptions.length>0))return;
-      const map2=dbItem.colorProdCdMap;
-      if(!map2||Object.keys(map2).length===0)return; // 코드 미입력 품목은 건너뜀
-      const usedColor=scColorForVal;
-      const colorKey2=resolveColorKey(usedColor);
-      const hasCd2=!!(map2[colorKey2]||map2[usedColor]);
-      if(!hasCd2) _markRequired(inp, dbItem.name+' — '+usedColor+' 색상 이카운트 코드가 없습니다. 품목 관리에서 코드를 입력해주세요.');
-    });
+    // ── [2026-06-29] 이카운트 색상 코드 검증 제거 (이카운트 미사용) ──
   }
   // 오류가 있으면 첫 번째 항목으로 스크롤 후 중단
   if(_validationErrors.length>0){

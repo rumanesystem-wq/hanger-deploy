@@ -3,9 +3,15 @@
   "private": true,
   "description": "발주허브 — E2E/로컬 테스트 도구 (앱 자체는 public/발주앱 정적 호스팅)",
   "scripts": {
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "smoke:prod": "playwright test e2e/smoke-prod.spec.ts",
+    "verify:prod": "node scripts/verify-prod-assets.mjs",
+    "deploy:preview": "firebase hosting:channel:deploy preview --expires 1d && npm run verify:prod -- preview",
+    "deploy:prod": "firebase deploy --only hosting && npm run verify:prod && npm run smoke:prod"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1"
   }
 }
+</content>
+</invoke>
