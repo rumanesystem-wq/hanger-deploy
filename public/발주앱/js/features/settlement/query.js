@@ -41,12 +41,19 @@ async function fetchCompletedOrders(filter) {
   const allOrders = (typeof DB !== 'undefined' && typeof DB.get === 'function')
     ? DB.get('orders', [])
     : [];
+  // [2026-07-03] 옛 오염 데이터(0026-XX-XX, 26-XX-XX)도 필터 통과하도록 정규화 후 비교
+  const _norm = (s) => (typeof window !== 'undefined' && typeof window.normalizeDateStr === 'function')
+    ? window.normalizeDateStr(s) : s;
   return allOrders.filter(o => {
     if (!o) return false;
     // 출고완료 + 발주확정(=UI '출고확정') 둘 다 매출 인식 (운영 워크플로우)
     if (o.status !== '출고완료' && o.status !== '발주확정') return false;
-    const dateField = o.shipDate || o.orderDate || '';
-    if (!dateField || dateField < filter.range.startDate || dateField > filter.range.endDate) return false;
+    // [2026-07-03] 정산도 발주일 기준으로 통일 (원장과 일치)
+    // 방어: orderDate가 '0000-00-00'이면 shipDate 폴백 (옛 데이터 사라짐 방지)
+    let dateField = (o.orderDate && o.orderDate !== '0000-00-00') ? o.orderDate : (o.shipDate || '');
+    dateField = _norm(dateField);
+    if (!dateField || dateField === '0000-00-00') return false;
+    if (dateField < filter.range.startDate || dateField > filter.range.endDate) return false;
     if (filter.ordererSearch && !(o.deliveryTo || '').includes(filter.ordererSearch)) return false;
     if (filter.warehouse && o.warehouse !== filter.warehouse) return false;
     return true;

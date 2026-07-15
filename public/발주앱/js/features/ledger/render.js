@@ -333,9 +333,24 @@ function renderCarryOverRow(amount) {
  */
 function renderOrderHeaderRow(ev, seq, balance) {
   const addr = ev.address ? `(${escapeHtml(ev.address)})` : '';
+  // [2026-07-03] 출고일 명확히 표시 (거래 기준은 발주일)
+  const _norm = (s) => (typeof window !== 'undefined' && typeof window.normalizeDateStr === 'function')
+    ? window.normalizeDateStr(s) : s;
+  let shipLine = '';
+  // [2026-07-03] 출고일 항상 병기 (발주일 = 출고일이어도 표시)
+  if (ev.shipDate === '0000-00-00') {
+    shipLine = `<div style="font-size:11px;color:var(--warning);margin-top:2px"><i class="fas fa-truck" style="margin-right:4px"></i>출고일 미정</div>`;
+  } else if (ev.shipDate) {
+    const sd = _norm(ev.shipDate);
+    if (sd) {
+      shipLine = `<div style="font-size:11px;color:var(--text-2);margin-top:2px"><i class="fas fa-truck" style="margin-right:4px;color:var(--text-3)"></i>출고일 ${sd}</div>`;
+    }
+  } else {
+    shipLine = `<div style="font-size:11px;color:var(--warning);margin-top:2px"><i class="fas fa-truck" style="margin-right:4px"></i>출고일 없음</div>`;
+  }
   return `<tr class="ec-row-header">
     <td class="date">${formatDateSeq(ev.date, seq)}</td>
-    <td>${escapeHtml(ev.orderNum || '')}${addr}</td>
+    <td><div style="font-weight:600">${escapeHtml(ev.orderNum || '')}${addr}</div>${shipLine}</td>
     <td class="num">${fmtMoney(ev.amountWithVat)}</td>
     <td class="num"></td>
     <td class="num">${fmtMoney(balance)}</td>
@@ -365,13 +380,29 @@ function renderItemRow(item) {
  * 입금 행 (연두색)
  */
 function renderPaymentRow(ev, seq, balance) {
+  const delBtn = ev.id
+    ? `<button class="btn-payment-delete" data-payment-id="${escapeHtml(ev.id)}" title="입금 삭제" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;padding:2px 6px;margin-left:6px" onmouseover="this.style.background='#fef2f2'" onmouseout="this.style.background='none'"><i class="fas fa-times-circle"></i></button>`
+    : '';
   return `<tr class="ec-row-payment">
     <td class="date">${formatDateSeq(ev.date, seq)}</td>
-    <td>${escapeHtml(ev.description || '')}</td>
+    <td>${escapeHtml(ev.description || '')}${delBtn}</td>
     <td class="num"></td>
     <td class="num">${fmtMoney(ev.amount)}</td>
     <td class="num">${fmtMoney(balance)}</td>
   </tr>`;
+}
+
+// 삭제 버튼 이벤트 위임 (1회 등록)
+if (typeof document !== 'undefined' && !document._paymentDeleteDelegated) {
+  document._paymentDeleteDelegated = true;
+  document.addEventListener('click', function(e) {
+    const btn = e.target && e.target.closest && e.target.closest('.btn-payment-delete');
+    if (!btn) return;
+    const id = btn.dataset.paymentId;
+    if (id && typeof handleDeletePayment === 'function') {
+      handleDeletePayment(id);
+    }
+  });
 }
 
 /**
@@ -409,7 +440,9 @@ function calcCarryOver(stats, startDate) {
   let carry = 0;
   // A.1: 거래명세서 있는 발주서만 이월잔액 계산
   (stats.orders || []).forEach(o => {
-    const dateField = o.shipDate || o.orderDate || '';
+    // [2026-07-03] 원장 일자는 발주일 기준
+    // 방어: orderDate가 '0000-00-00'이면 shipDate 폴백 (옛 데이터 이월잔액 누락 방지)
+    const dateField = (o.orderDate && o.orderDate !== '0000-00-00') ? o.orderDate : (o.shipDate || '');
     if (dateField && dateField < startDate) {
       const inv = invoiceMap && invoiceMap[o.orderNum];
       if (!inv || typeof inv.totalAmount !== 'number') return; // 거래명세서 없으면 매출 인식 안 함
@@ -427,8 +460,15 @@ function calcCarryOver(stats, startDate) {
  */
 function filterOrdersInRange(orders, range) {
   if (!range.startDate || !range.endDate) return [...orders];
+  // [2026-07-03] 옛 오염 데이터(0026-XX-XX)도 정규화 후 비교
+  const _norm = (s) => (typeof window !== 'undefined' && typeof window.normalizeDateStr === 'function')
+    ? window.normalizeDateStr(s) : s;
   return orders.filter(o => {
-    const d = o.shipDate || o.orderDate || '';
+    // [2026-07-03] 원장 일자는 발주일 기준
+    // 방어: orderDate가 '0000-00-00'이면 shipDate 폴백 (옛 데이터 사라짐 방지)
+    let d = (o.orderDate && o.orderDate !== '0000-00-00') ? o.orderDate : (o.shipDate || '');
+    d = _norm(d);
+    if (!d || d === '0000-00-00') return false;
     return d >= range.startDate && d <= range.endDate;
   });
 }
@@ -455,7 +495,11 @@ function buildTimelineEvents(orders, payments, invoiceMap) {
     const withVat = typeof inv.totalAmount === 'number' ? inv.totalAmount : (o.totalAmount || Math.round(supply * 1.1));
     events.push({
       type: 'out',
-      date: o.shipDate || o.orderDate || '',
+      // [2026-07-03] 원장 일자는 발주일 기준 (거래 인식 시점)
+      // 방어: orderDate가 '0000-00-00'이면 shipDate 폴백
+      date: (o.orderDate && o.orderDate !== '0000-00-00') ? o.orderDate : (o.shipDate || ''),
+      shipDate: o.shipDate || '',   // 참고용 (적요에 함께 표시)
+      orderDate: o.orderDate || '', // 참고용
       orderNum: o.orderNum,
       address: o.address || '',
       warehouse: o.warehouse || '',
@@ -529,6 +573,20 @@ async function handleSavePayment() {
   const err = validatePayment(draft);
   if (err) { alert(err); return; }
 
+  // [A] 확인 다이얼로그 — 콤마 표기로 오타 방지
+  const amountStr = draft.amount.toLocaleString();
+  const confirmMsg = `${draft.customer} 입금 등록\n\n` +
+    `일자: ${draft.date}\n` +
+    `금액: ₩${amountStr}\n` +
+    (draft.memo ? `메모: ${draft.memo}\n` : '') +
+    `\n등록하시겠습니까?`;
+  if (!confirm(confirmMsg)) return;
+
+  // [B] 큰 금액 재확인 (100만원 초과)
+  if (draft.amount > 1000000) {
+    if (!confirm(`⚠️ 큰 금액입니다!\n\n₩${amountStr}\n\n금액이 맞습니까?`)) return;
+  }
+
   try {
     await createPayment(draft);
     closePaymentModal();
@@ -544,9 +602,20 @@ async function handleSavePayment() {
  * @returns {Promise<void>}
  */
 async function handleDeletePayment(id) {
-  if (!confirm('입금 내역을 삭제할까요?')) return;
+  // [C] 삭제 사유 입력 (감사용)
+  const reason = prompt(
+    '입금 내역을 삭제합니다.\n\n삭제 사유를 입력하세요 (감사 기록됩니다):\n' +
+    '예: 금액 오류, 중복 등록, 취소 등',
+    ''
+  );
+  if (reason === null) return; // 취소
+  const reasonTrimmed = String(reason).trim();
+  if (!reasonTrimmed) {
+    alert('삭제 사유가 필요합니다.');
+    return;
+  }
   try {
-    await deletePayment(id);
+    await deletePayment(id, reasonTrimmed);
     await renderCustomerDetail();
   } catch (e) {
     alert('삭제 실패: ' + e.message);

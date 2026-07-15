@@ -192,8 +192,9 @@ function renderCustomerTable(grouped, totalSummary) {
 function renderCustomerDetailTable(orders) {
   const PAGE_SIZE = 10;
   const sorted = [...orders].sort((a,b)=>{
-    const da=a.orderDate||a.shipDate||'';
-    const db=b.orderDate||b.shipDate||'';
+    // 방어: orderDate가 '0000-00-00'이면 shipDate 폴백 (정렬 튐 방지)
+    const da=(a.orderDate && a.orderDate!=='0000-00-00') ? a.orderDate : (a.shipDate||'');
+    const db=(b.orderDate && b.orderDate!=='0000-00-00') ? b.orderDate : (b.shipDate||'');
     return db.localeCompare(da);
   });
   const rowsHTML = sorted.map((o, i) => {
@@ -240,7 +241,14 @@ function renderOrderRow(o) {
       <td><code style="background:#eff6ff;color:#1e40af;padding:2px 6px;border-radius:4px;font-weight:700">${escapeHtml(o.orderNum)}</code></td>
       <td class="col-addr" style="font-size:12px;color:var(--text-2)">${escapeHtml(o.address)}</td>
       <td class="center col-warehouse"><span class="badge ${whClass}">${escapeHtml(o.warehouse)}</span></td>
-      <td class="center col-date" style="font-size:12px">${fmtShortDate(o.orderDate)}</td>
+      <td class="center col-date" style="font-size:12px">${fmtShortDate(o.orderDate)}${(()=>{
+        // [2026-07-03] 원장과 통일: 출고일 항상 병기
+        const _sd = o.shipDate;
+        if (!_sd) return `<div style="font-size:10px;color:#b45309;margin-top:2px"><i class="fas fa-truck" style="margin-right:2px"></i>출고 없음</div>`;
+        if (_sd === '0000-00-00') return `<div style="font-size:10px;color:#b45309;margin-top:2px"><i class="fas fa-truck" style="margin-right:2px"></i>출고 미정</div>`;
+        const _norm = (typeof window!=='undefined' && typeof window.normalizeDateStr==='function') ? window.normalizeDateStr(_sd) : _sd;
+        return `<div style="font-size:10px;color:var(--text-3);margin-top:2px"><i class="fas fa-truck" style="margin-right:2px;color:var(--text-3)"></i>${fmtShortDate(_norm)}</div>`;
+      })()}</td>
       <td class="num col-supply">${fmtMoney(o.totalSupply)}</td>
       <td class="num"><strong>${fmtMoney(o.totalAmount)}</strong></td>
       <td class="center" style="white-space:nowrap"><button class="btn-invoice" data-action="open-invoice" data-order-id="${o.id}"><i class="fas fa-file-invoice"></i> 거래명세서</button> ${(()=>{
@@ -542,13 +550,13 @@ function renderTrend(orders) {
   tbody.innerHTML = '';
 
   if (currentMode === 'monthly') {
-    title.textContent = '일별 추이 (출고완료일 기준)';
+    title.textContent = '일별 추이 (발주일 기준)';
     aggregateByDay(orders).forEach(row => {
       tbody.insertAdjacentHTML('beforeend',
         `<tr><td>${row.date}</td><td class="num">${row.count}건</td><td class="num">${fmtMoney(row.total)}</td></tr>`);
     });
   } else {
-    title.textContent = '월별 추이 (출고완료일 기준)';
+    title.textContent = '월별 추이 (발주일 기준)';
     aggregateByMonth(orders).forEach(row => {
       tbody.insertAdjacentHTML('beforeend',
         `<tr><td>${row.month}</td><td class="num">${row.count}건</td><td class="num">${fmtMoney(row.total)}</td></tr>`);

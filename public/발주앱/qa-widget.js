@@ -77,8 +77,20 @@
           <button class="qa-btn" style="display:inline-block;width:auto" data-seed="orders">발주서 N건 추가</button>
         </div>
         <button class="qa-btn" data-seed="invoices">발주확정 발주서에 invoice 자동발급</button>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0"/>
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:6px">📊 입금 부하 테스트 (1MB 한계 검증)</div>
+        <div style="margin-bottom:8px">
+          <input type="number" class="qa-input" id="qa-pay-count" value="100" min="1" max="2000"/>
+          <button class="qa-btn" style="display:inline-block;width:auto" data-seed="payments">입금 N건 대량 등록</button>
+        </div>
+        <button class="qa-btn" data-seed="check-storage">📏 저장 크기 진단</button>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0"/>
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:6px">💾 전체 백업 (Firebase 이관·복구 대비)</div>
+        <button class="qa-btn" data-seed="backup-all" style="background:#f0fdf4;border-color:#16a34a;color:#166534"><i class="fas fa-download"></i> 📥 전체 백업 다운로드 (JSON)</button>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:10px 0"/>
         <button class="qa-btn danger" data-seed="reset-orders">⚠️ orders 전부 삭제</button>
         <button class="qa-btn danger" data-seed="reset-invoices">⚠️ invoices 전부 삭제</button>
+        <button class="qa-btn danger" data-seed="reset-payments">⚠️ payments 전부 삭제</button>
         <div class="qa-log" id="qa-seed-log">대기 중...</div>
       </div>
     </div>
@@ -110,9 +122,195 @@
   }
 
   // ── 시나리오 (사람이 직접 조작, 위젯은 결과만 검증) ──
+  // 🆕 = 오늘 로컬 변경 (아직 배포 X)  |  📦 = 기존 배포 기능 회귀 검증
   const SCENARIOS = [
+    // ═══════════════════════════════════════════════
+    // 🆕 오늘 변경 (아직 배포 안 됨) — 우선 확인
+    // ═══════════════════════════════════════════════
+    {
+      id: 'T1',
+      badge: '🆕 오늘 변경',
+      name: '입금 저장 시 확인 다이얼로그 (금액 오타 방지)',
+      desc: '[A] 저장 클릭 시 콤마 포함 금액 재확인 → 오타 방지',
+      goto: async () => {
+        document.querySelector('[data-nav="settlement"]')?.click();
+        await wait(500);
+        document.querySelector('[data-stl-tab="ledger"]')?.click();
+      },
+      gotoLabel: '거래처 원장 탭으로 이동',
+      steps: [
+        '원장 → 거래처 → 관리대장',
+        '[+ 입금 등록] → 금액 100000 입력',
+        '[저장] 클릭',
+        '→ "₩100,000 등록하시겠습니까?" 다이얼로그 떠야 OK',
+      ],
+      verify: () => ({ ok: true, msg: '수동 확인 — 다이얼로그 뜨면 통과' })
+    },
+    {
+      id: 'T2',
+      badge: '🆕 오늘 변경',
+      name: '100만원 초과 시 2단계 재확인',
+      desc: '[B] 큰 금액은 실수 방지용 재확인 다이얼로그 한 번 더',
+      goto: async () => {
+        document.querySelector('[data-nav="settlement"]')?.click();
+        await wait(500);
+        document.querySelector('[data-stl-tab="ledger"]')?.click();
+      },
+      gotoLabel: '거래처 원장 탭으로 이동',
+      steps: [
+        '원장 → 거래처 → [+ 입금 등록]',
+        '금액 5000000 (500만원) 입력 → [저장]',
+        '1차 다이얼로그 → [확인]',
+        '→ "⚠️ 큰 금액입니다!" 2차 재확인 떠야 OK',
+      ],
+      verify: () => ({ ok: true, msg: '수동 확인 — 2단계 다이얼로그 뜨면 통과' })
+    },
+    {
+      id: 'T3',
+      badge: '🆕 오늘 변경',
+      name: '입금 삭제 시 사유 필수 입력',
+      desc: '[C] 삭제 실수 방지 + 감사용 사유 기록',
+      goto: async () => {
+        document.querySelector('[data-nav="settlement"]')?.click();
+        await wait(500);
+        document.querySelector('[data-stl-tab="ledger"]')?.click();
+      },
+      gotoLabel: '거래처 원장 탭으로 이동',
+      steps: [
+        '원장 → 관리대장 → 입금 [X] 클릭',
+        '→ "삭제 사유를 입력하세요" 프롬프트',
+        '빈 값으로 [확인] → "사유 필요" 알림',
+        '사유 입력 후 [확인] → 삭제 진행',
+      ],
+      verify: () => ({ ok: true, msg: '수동 확인 — 빈 사유 차단 뜨면 통과' })
+    },
+    {
+      id: 'T4',
+      badge: '🆕 오늘 변경',
+      name: '수금 컬럼 표시 + 잔액 자동 차감',
+      desc: '입금 등록 후 판매/수금내역 표에 수금 컬럼 반영',
+      goto: async () => {
+        document.querySelector('[data-nav="settlement"]')?.click();
+        await wait(500);
+        document.querySelector('[data-stl-tab="ledger"]')?.click();
+      },
+      gotoLabel: '거래처 원장 탭으로 이동',
+      steps: [
+        '이전 잔액 메모 (예: ₩500,000)',
+        '[+ 입금 등록] → 100,000원 등록',
+        '판매/수금내역 표 → 수금 컬럼 ₩100,000',
+        '잔액 ₩400,000 (100,000 차감) → OK',
+      ],
+      verify: () => {
+        const rows = document.querySelectorAll('.ec-row-payment');
+        if (rows.length === 0) return { ok: false, msg: '수금 행 없음' };
+        return { ok: true, msg: '수금 행 ' + rows.length + '개 — 화면에서 금액·잔액 확인' };
+      }
+    },
+    {
+      id: 'T5',
+      badge: '🆕 오늘 변경',
+      name: '컬렉션 방식 저장 (race-free + 1MB 무한)',
+      desc: 'hanger_payments 컬렉션에 문서 단위로 저장. 옛 배열 방식 X.',
+      goto: () => window.open('http://localhost:4000/firestore/default/data/hanger_payments', '_blank'),
+      gotoLabel: 'Firestore UI 열기',
+      steps: [
+        '[▶ Firestore UI 열기] 클릭',
+        'hanger_payments 컬렉션 확인',
+        '→ 문서들이 개별로 나열 (배열 X, 문서 단위) → OK',
+        'hanger_payment_logs 컬렉션도 존재 확인',
+      ],
+      verify: () => ({ ok: true, msg: 'Firestore UI에서 시각 확인' })
+    },
+    {
+      id: 'T6',
+      badge: '🆕 오늘 변경',
+      name: '감사 로그 자동 저장 (payment_logs)',
+      desc: '[D] 입금 등록·삭제할 때마다 누가/언제/무엇/왜 자동 기록',
+      goto: () => window.open('http://localhost:4000/firestore/default/data/hanger_payment_logs', '_blank'),
+      gotoLabel: '감사 로그 확인',
+      steps: [
+        '위 T1~T4 시나리오 실행 후',
+        '[▶ 감사 로그 확인] 클릭',
+        'hanger_payment_logs 컬렉션에 문서들 보임',
+        '각 문서에 by(누가), at(언제), action(create/delete), amount(얼마) 필드 → OK',
+      ],
+      verify: () => ({ ok: true, msg: 'Firestore UI에서 시각 확인' })
+    },
+    {
+      id: 'T7',
+      badge: '🆕 오늘 변경',
+      name: '원장·정산 총계 일치 (둘 다 발주일 기준)',
+      desc: '원장과 정산이 같은 기간에서 같은 총계 나와야 함',
+      goto: () => document.querySelector('[data-nav="settlement"]')?.click(),
+      gotoLabel: '정산 페이지로 이동',
+      steps: [
+        '정산 페이지 → 기간 2026-06-01 ~ 2026-06-30',
+        '전체 합계 금액 메모',
+        '거래처 원장 탭 → 같은 기간',
+        '전체 합계 금액 확인',
+        '→ 두 값 일치해야 OK',
+      ],
+      verify: () => ({ ok: true, msg: '수동 확인 — 두 페이지 총계 비교' })
+    },
+    {
+      id: 'T8',
+      badge: '🆕 오늘 변경',
+      name: '원장에 출고일 병기 표시',
+      desc: '거래 기준은 발주일이지만 출고일도 참고용으로 함께 표시',
+      goto: async () => {
+        document.querySelector('[data-nav="settlement"]')?.click();
+        await wait(500);
+        document.querySelector('[data-stl-tab="ledger"]')?.click();
+      },
+      gotoLabel: '거래처 원장 탭으로 이동',
+      steps: [
+        '원장 → 거래처 → 관리대장',
+        '판매/수금내역 표의 발주서 행 확인',
+        '발주번호 옆 또는 아래에 🚚 출고일 YYYY-MM-DD 표시',
+        '발주일과 출고일이 다를 때만 표시 (같으면 생략)',
+        '출고 미정이면 노란색 "출고일 미정"',
+      ],
+      verify: () => {
+        const rows = document.querySelectorAll('.ec-row-header .fa-truck');
+        return { ok: rows.length > 0 || true, msg: rows.length > 0 ? `출고일 표시 ${rows.length}건` : '표시할 게 없거나 발주일=출고일' };
+      }
+    },
+    {
+      id: 'T9',
+      badge: '🆕 오늘 변경',
+      name: '날짜 정규화 (0026 → 2026 자동)',
+      desc: '옛 오염 데이터도 화면에 정상 년도로 표시. 새 입력도 26 → 2026 자동',
+      goto: () => document.querySelector('[data-nav="orders"]')?.click(),
+      gotoLabel: '발주서 목록',
+      steps: [
+        '발주서 목록 → 옛 발주서 있으면 확인',
+        '"2026-XX-XX"로 표시되어야 (0026-XX-XX 아니라)',
+        '또는 신규 발주서 등록 → 출고일 년도에 "26" 입력',
+        '저장 → 다시 열어보면 "2026-XX-XX"로 저장됨 → OK',
+      ],
+      verify: () => ({ ok: true, msg: '수동 확인 — 화면·저장값 확인' })
+    },
+    {
+      id: 'T10',
+      badge: '🆕 오늘 변경',
+      name: '전체 백업 다운로드',
+      desc: 'Firebase 이관·복구 대비 JSON 백업 파일 저장',
+      goto: () => document.querySelector('.qa-tab[data-tab="seed"]')?.click(),
+      gotoLabel: '시드 탭으로',
+      steps: [
+        '시드 탭 → [📥 전체 백업 다운로드]',
+        '자동으로 hanger_backup_YYYYMMDD_HHmmss.json 다운로드',
+        '파일 열어보면 orders·accounts·payments 등 다 있음 → OK',
+      ],
+      verify: () => ({ ok: true, msg: '수동 확인 — 파일 다운로드되면 통과' })
+    },
+    // ═══════════════════════════════════════════════
+    // 📦 기존 배포 기능 회귀 검증 (아래는 이미 운영 반영됨)
+    // ═══════════════════════════════════════════════
     {
       id: 'R1',
+      badge: '📦 기존',
       name: '정렬 상태가 탭 이동 후 초기화되는지',
       desc: '정산에서 "오래된순"으로 바꾼 뒤 다른 메뉴 갔다 돌아오면 자동으로 "최신순"으로 돌아와야 정상',
       goto: () => document.querySelector('[data-nav="settlement"]')?.click(),
@@ -133,6 +331,7 @@
     },
     {
       id: 'R2',
+      badge: '📦 기존',
       name: '검색 중에 정렬을 바꿔도 검색 결과가 유지되는지',
       desc: '검색해서 일부만 보이는 상태에서 정렬을 바꿨을 때, 검색 필터가 풀려서 안 봐도 될 항목까지 다시 보이면 안 됨',
       goto: () => document.querySelector('[data-nav="settlement"]')?.click(),
@@ -155,6 +354,7 @@
     },
     {
       id: 'R3',
+      badge: '📦 기존',
       name: '검색 결과가 적을 때 "더보기" 버튼이 사라지는지',
       desc: '발주서가 많은 거래처에서 검색했을 때, 검색 결과가 10건 이하면 "더보기" 버튼이 의미 없으니 숨겨져야 함',
       goto: () => document.querySelector('[data-nav="settlement"]')?.click(),
@@ -178,6 +378,7 @@
     },
     {
       id: 'R6',
+      badge: '📦 기존',
       name: '원장 검색 후 관리대장 보고 뒤로가면 검색 유지되는지',
       desc: '거래처 원장에서 검색해서 거래처 클릭 → 관리대장 보고 → 뒤로가면, 검색어와 필터링 결과가 그대로 유지되어야 사용자가 다시 찾을 필요 없음',
       goto: async () => {
@@ -207,13 +408,146 @@
         return { ok: true, msg: '검색어 "' + s.value + '" 유지' };
       }
     }
+    // (P1~P6는 T 시리즈로 대체됨 — 오늘 변경은 T 참고)
+    /*
+    {
+      id: 'P1',
+      name: '입금 저장 시 확인 다이얼로그 뜨는지',
+      desc: '입금 등록 [저장] 클릭 시 금액 오타 방지용 확인 다이얼로그가 떠야 함 (금액을 콤마 포함해서 재확인)',
+      goto: async () => {
+        document.querySelector('[data-nav="settlement"]')?.click();
+        await wait(500);
+        document.querySelector('[data-stl-tab="ledger"]')?.click();
+      },
+      gotoLabel: '거래처 원장 탭으로 이동',
+      steps: [
+        '원장 → 아무 거래처 클릭 (관리대장 진입)',
+        '상단 [+ 입금 등록] 클릭',
+        '금액에 100000 입력 (아무 값이나 OK)',
+        '[저장] 클릭',
+        '→ "₩100,000 등록하시겠습니까?" 확인 다이얼로그 떠야 OK',
+      ],
+      verify: () => {
+        // 실제 저장 후 hanger_payments에 마지막 등록된 게 있는지
+        return { ok: true, msg: '수동 확인 항목 — 다이얼로그 뜨면 통과 (자동 검증 불가)' };
+      }
+    },
+    {
+      id: 'P2',
+      name: '100만원 초과 입금 시 2단계 확인',
+      desc: '큰 금액(100만원 초과) 등록 시 실수 방지용 재확인 다이얼로그가 한 번 더 떠야 함',
+      goto: async () => {
+        document.querySelector('[data-nav="settlement"]')?.click();
+        await wait(500);
+        document.querySelector('[data-stl-tab="ledger"]')?.click();
+      },
+      gotoLabel: '거래처 원장 탭으로 이동',
+      steps: [
+        '원장 → 거래처 → [+ 입금 등록]',
+        '금액에 5000000 (500만원) 입력',
+        '[저장] 클릭',
+        '→ 1차 확인 다이얼로그 → [확인]',
+        '→ "⚠️ 큰 금액입니다! 금액이 맞습니까?" 2차 재확인 떠야 OK',
+      ],
+      verify: () => {
+        return { ok: true, msg: '수동 확인 항목 — 2단계 다이얼로그 뜨면 통과' };
+      }
+    },
+    {
+      id: 'P3',
+      name: '입금 삭제 시 사유 입력 필수',
+      desc: '삭제 [X] 클릭 시 감사용으로 사유를 반드시 입력받아야 함. 빈 사유는 삭제 거부.',
+      goto: async () => {
+        document.querySelector('[data-nav="settlement"]')?.click();
+        await wait(500);
+        document.querySelector('[data-stl-tab="ledger"]')?.click();
+      },
+      gotoLabel: '거래처 원장 탭으로 이동',
+      steps: [
+        '원장 → 거래처 → 관리대장',
+        '기존 입금 내역의 [X] 삭제 버튼 클릭',
+        '→ "삭제 사유를 입력하세요" 프롬프트 떠야 OK',
+        '빈 값으로 [확인] → "삭제 사유가 필요합니다" 알림 떠야 OK',
+        '사유 입력 후 [확인] → 삭제 진행',
+      ],
+      verify: () => {
+        return { ok: true, msg: '수동 확인 항목 — 사유 입력 요구 + 빈 값 차단 뜨면 통과' };
+      }
+    },
+    {
+      id: 'P4',
+      name: '수금·잔액 자동 반영',
+      desc: '입금 등록 후 판매/수금내역 표에 수금 컬럼 금액 표시 + 잔액 자동 차감',
+      goto: async () => {
+        document.querySelector('[data-nav="settlement"]')?.click();
+        await wait(500);
+        document.querySelector('[data-stl-tab="ledger"]')?.click();
+      },
+      gotoLabel: '거래처 원장 탭으로 이동',
+      steps: [
+        '원장 → 거래처 → 관리대장',
+        '이전 잔액 확인 (예: ₩500,000)',
+        '[+ 입금 등록] → 100,000원 등록',
+        '판매/수금내역 표에 새 행 생김',
+        '→ 수금 컬럼 ₩100,000, 잔액 ₩400,000 (100,000 차감) → OK',
+      ],
+      verify: () => {
+        const rows = document.querySelectorAll('.ec-row-payment');
+        if (rows.length === 0) return { ok: false, msg: '수금 행이 없음 — 입금 등록 안 됐거나 렌더 문제' };
+        return { ok: true, msg: '수금 행 ' + rows.length + '개 표시됨 — 화면에서 금액·잔액 확인 필요' };
+      }
+    },
+    {
+      id: 'P5',
+      name: '컬렉션 방식 저장 (race-free + 1MB 무한)',
+      desc: 'hanger_payments 컬렉션에 문서 단위로 저장되는지 확인. 옛 방식(단일 doc 배열)과 다름.',
+      goto: async () => {
+        window.open('http://localhost:4000/firestore/default/data/hanger_payments', '_blank');
+      },
+      gotoLabel: 'Firestore UI 열기',
+      steps: [
+        '[▶ Firestore UI 열기] 클릭 (localhost:4000)',
+        'hanger_payments 컬렉션 확인',
+        '→ 문서들이 개별로 나열되어 있어야 OK (배열 X, 문서 단위 O)',
+        'hanger_payment_logs 컬렉션도 있어야 OK (감사 로그)',
+      ],
+      verify: () => {
+        return { ok: true, msg: 'Firestore UI에서 시각적으로 확인' };
+      }
+    },
+    {
+      id: 'P6',
+      name: '원장 = 정산 총계 일치 (발주일 기준)',
+      desc: '원장과 정산 페이지 모두 발주일 기준으로 필터링되어 두 페이지 총계가 일치해야 함',
+      goto: () => document.querySelector('[data-nav="settlement"]')?.click(),
+      gotoLabel: '정산 페이지로 이동',
+      steps: [
+        '정산 페이지 → 기간 설정 (예: 2026-06-01 ~ 2026-06-30)',
+        '전체 합계 금액 메모',
+        '거래처 원장 탭 → 같은 기간',
+        '전체 합계 금액 확인',
+        '→ 정산 = 원장 합계 일치해야 OK',
+      ],
+      verify: () => {
+        return { ok: true, msg: '수동 확인 — 두 페이지 총계 비교' };
+      }
+    }
+    */
   ];
 
   // 시나리오 카드 렌더
   const list = document.getElementById('qa-scenario-list');
-  list.innerHTML = SCENARIOS.map(sc => `
-    <div class="qa-sc" data-sc-id="${sc.id}" style="border:1px solid #e5e7eb;border-radius:6px;padding:10px;margin-bottom:8px;background:#f9fafb">
-      <div style="font-weight:700;font-size:12px;margin-bottom:4px;color:#111">${sc.name}</div>
+  list.innerHTML = SCENARIOS.map(sc => {
+    const isNew = sc.badge && sc.badge.includes('🆕');
+    const bgColor = isNew ? '#fef9c3' : '#f9fafb';
+    const borderColor = isNew ? '#fde68a' : '#e5e7eb';
+    const badgeStyle = isNew
+      ? 'background:#fbbf24;color:#78350f'
+      : 'background:#e5e7eb;color:#6b7280';
+    return `
+    <div class="qa-sc" data-sc-id="${sc.id}" style="border:1px solid ${borderColor};border-radius:6px;padding:10px;margin-bottom:8px;background:${bgColor}">
+      ${sc.badge ? `<div style="display:inline-block;font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;margin-bottom:4px;${badgeStyle}">${sc.badge}</div>` : ''}
+      <div style="font-weight:700;font-size:12px;margin-bottom:4px;color:#111">${sc.id}. ${sc.name}</div>
       <div style="font-size:11px;color:#6b7280;margin-bottom:8px;line-height:1.5">${sc.desc || ''}</div>
       <div style="font-size:11px;color:#dc2626;font-weight:600;margin-bottom:4px">📋 따라할 순서</div>
       <ol style="margin:0 0 8px 18px;padding:0;font-size:11px;color:#374151;line-height:1.6">
@@ -224,8 +558,8 @@
         <button class="qa-btn qa-verify" data-verify="${sc.id}" style="margin:0;flex:1">🔍 지금 검증</button>
       </div>
       <div class="qa-result" data-result="${sc.id}" style="margin-top:6px;font-size:11px"></div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 
   panel.querySelectorAll('.qa-goto').forEach(btn => btn.addEventListener('click', async () => {
     const id = btn.dataset.goto;
@@ -345,6 +679,198 @@
     log.pass(key + ' 초기화 완료 (0건)');
   }
 
+  // 입금 N건 대량 시드 (컬렉션 방식)
+  async function seedPayments(count, log) {
+    if (!window._FS || typeof window._FS.collectionAdd !== 'function') {
+      return log.fail('_FS.collectionAdd 없음 — 컬렉션 방식 미적용');
+    }
+    log.info(`입금 ${count}건 대량 등록 시작...`);
+    const customers = ['테스트업체', '테스트A업체', '테스트B업체', '테스트C업체'];
+    const memos = ['카드결제', '계좌이체', '현금', '어음', '월정산', '분할입금', ''];
+    let success = 0, fail = 0;
+    const t0 = performance.now();
+    for (let i = 0; i < count; i++) {
+      const id = 'p_seed_' + Date.now() + '_' + i.toString(36);
+      const doc = {
+        id,
+        customer: customers[i % customers.length],
+        date: `2026-${String(1 + (i % 6)).padStart(2, '0')}-${String(1 + (i % 28)).padStart(2, '0')}`,
+        amount: 10000 + (i * 1000),
+        memo: memos[i % memos.length],
+        createdAt: new Date().toISOString(),
+        createdBy: 'qa-widget'
+      };
+      try { await window._FS.collectionAdd('hanger_payments', id, doc); success++; }
+      catch (e) { fail++; log.fail(`${i+1}번째 실패: ${e.message.slice(0, 50)}`); }
+      if ((i + 1) % 50 === 0) log.info(`  진행 ${i+1}/${count}...`);
+    }
+    const ms = (performance.now() - t0).toFixed(0);
+    log.pass(`완료 — 성공 ${success}건, 실패 ${fail}건 (${ms}ms)`);
+    log.info(`평균 ${(ms / count).toFixed(1)}ms/건`);
+  }
+
+  // 저장 크기 진단
+  async function checkStorage(log) {
+    // ─────────────────────────────────────
+    // 🔴 orders (발주서) — 정산·원장의 소스 데이터
+    // ─────────────────────────────────────
+    const orders = (await window._FS.get('orders')) || [];
+    const orderBytes = new Blob([JSON.stringify({ value: orders })]).size;
+    const orderCount = Array.isArray(orders) ? orders.length : 0;
+    const orderRatio = (orderBytes / 1048576) * 100;
+    log.info(`━━━ [1] 발주서 hanger_data/orders (정산·원장 소스) ━━━`);
+    log.info(`  건수: ${orderCount}건`);
+    log.info(`  doc 크기: ${(orderBytes / 1024).toFixed(1)} KB / 1024 KB (1MB)`);
+    log.info(`  사용률: ${orderRatio.toFixed(2)}%`);
+    if (orderRatio > 90) {
+      log.fail(`  🚨 90% 초과 — 정산/원장 즉시 멈출 위험! 긴급 조치 필요`);
+    } else if (orderRatio > 75) {
+      log.fail(`  ⚠️ 75% 초과 — Phase 5(옛 경로 폐기) 준비 시급`);
+    } else if (orderRatio > 50) {
+      log.info(`  ⚠️ 50% 초과 — 3-6개월 내 대응 필요`);
+    } else {
+      log.pass(`  ✓ 여유 있음`);
+    }
+    // 남은 여유 예측
+    if (orderCount > 0) {
+      const avgBytes = orderBytes / orderCount;
+      const remain = 1048576 - orderBytes;
+      const remainOrders = Math.floor(remain / avgBytes);
+      log.info(`  평균 발주서 크기: ${avgBytes.toFixed(0)} bytes`);
+      log.info(`  1MB 도달까지 남은 여유: ~${remainOrders}건 (${(remain / 1024).toFixed(0)}KB)`);
+    }
+    log.info('');
+
+    // ─────────────────────────────────────
+    // 🟢 hanger_orders 컬렉션 (Phase 4 — 이미 사용 중)
+    // ─────────────────────────────────────
+    const newOrders = (await window._FS.collectionGet('hanger_orders')) || [];
+    log.info(`━━━ [2] 발주서 hanger_orders 컬렉션 (Phase 4) ━━━`);
+    log.info(`  문서 수: ${newOrders.length}건`);
+    if (newOrders.length > 0) {
+      const maxDoc = newOrders.reduce((m, p) => Math.max(m, new Blob([JSON.stringify(p)]).size), 0);
+      log.info(`  최대 문서 크기: ${maxDoc} bytes / 1MB (문서 개별 한계)`);
+      log.pass(`  ✓ 컬렉션 방식 — 문서 수 무제한, 각 문서만 1MB 유지`);
+    } else {
+      log.info(`  (컬렉션 비어 있음)`);
+    }
+    log.info('');
+
+    // ─────────────────────────────────────
+    // 🟢 payments (컬렉션 방식) - 오늘 만듦
+    // ─────────────────────────────────────
+    log.info(`━━━ [3] 입금 hanger_payments 컬렉션 (신규) ━━━`);
+    // 옛 방식 (hanger_data/payments 배열) - 사용 안 함 확인용
+    const oldPayments = (await window._FS.get('payments')) || [];
+    const oldBytes = new Blob([JSON.stringify({ value: oldPayments })]).size;
+    log.info(`[옛 방식 확인] hanger_data/payments`);
+    log.info(`  건수: ${Array.isArray(oldPayments) ? oldPayments.length : 0}건`);
+    log.info(`  doc 크기: ${(oldBytes / 1024).toFixed(1)} KB`);
+    log.info(`  1MB(1024KB) 대비: ${((oldBytes / 1048576) * 100).toFixed(2)}%`);
+    if (oldBytes > 800000) log.fail('  ⚠️ 800KB 초과 — 1MB 한계 임박!');
+    else if (oldBytes > 500000) log.info('  ⚠️ 500KB 초과 — 절반 사용');
+    else log.pass('  ✓ 여유 있음 (또는 미사용)');
+
+    // 새 방식 (hanger_payments 컬렉션)
+    const newPayments = (await window._FS.collectionGet('hanger_payments')) || [];
+    log.info(`[새 방식] hanger_payments 컬렉션`);
+    log.info(`  문서 수: ${newPayments.length}건`);
+    if (newPayments.length > 0) {
+      const totalBytes = newPayments.reduce((s, p) => s + new Blob([JSON.stringify(p)]).size, 0);
+      const avgBytes = totalBytes / newPayments.length;
+      const maxDoc = newPayments.reduce((m, p) => Math.max(m, new Blob([JSON.stringify(p)]).size), 0);
+      log.info(`  총 크기: ${(totalBytes / 1024).toFixed(1)} KB (${newPayments.length}개 문서 합)`);
+      log.info(`  평균 문서 크기: ${avgBytes.toFixed(0)} bytes`);
+      log.info(`  최대 문서 크기: ${maxDoc} bytes`);
+      log.pass(`  ✓ 각 문서 개별 1MB 한계 — 사실상 무제한 (문서 수 무한)`);
+    } else {
+      log.info('  (문서 없음 — [입금 N건 대량 등록] 먼저 실행)');
+    }
+
+    // 감사 로그
+    const logs = (await window._FS.collectionGet('hanger_payment_logs')) || [];
+    log.info(`[감사 로그] hanger_payment_logs: ${logs.length}건`);
+  }
+
+  // 전체 백업 다운로드 (Firebase 이관·복구 대비)
+  async function backupAll(log) {
+    log.info('전체 데이터 수집 중...');
+    const backup = {
+      _meta: {
+        exportedAt: new Date().toISOString(),
+        exportedBy: (typeof currentUser !== 'undefined' && currentUser) ? (currentUser.id || 'unknown') : 'unknown',
+        source: location.hostname,
+        version: 1
+      },
+      hanger_data: {},   // 옛 방식 (배열 저장)
+      collections: {}    // 새 방식 (컬렉션)
+    };
+
+    // hanger_data doc 들 (배열 방식)
+    const dataKeys = ['orders', 'accounts', 'invoices', 'items', 'price_settings', 'purchase_requests', 'logs', 'session', 'payments', 'payment_logs'];
+    for (const key of dataKeys) {
+      try {
+        const val = await window._FS.get(key);
+        backup.hanger_data[key] = val;
+        const n = Array.isArray(val) ? val.length : (val ? '(존재)' : '(없음)');
+        log.info(`  hanger_data/${key}: ${n}${Array.isArray(val) ? '건' : ''}`);
+      } catch (e) {
+        log.fail(`  hanger_data/${key} 실패: ${e.message.slice(0, 50)}`);
+      }
+    }
+
+    // 컬렉션 방식
+    const colls = ['hanger_orders', 'hanger_payments', 'hanger_payment_logs'];
+    for (const coll of colls) {
+      try {
+        const arr = await window._FS.collectionGet(coll);
+        backup.collections[coll] = arr;
+        log.info(`  ${coll}: ${arr.length}건`);
+      } catch (e) {
+        log.fail(`  ${coll} 실패: ${e.message.slice(0, 50)}`);
+      }
+    }
+
+    // 파일 다운로드
+    const now = new Date();
+    const y = now.getFullYear();
+    const mo = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    const h = String(now.getHours()).padStart(2, '0');
+    const mi = String(now.getMinutes()).padStart(2, '0');
+    const s = String(now.getSeconds()).padStart(2, '0');
+    const fileName = `hanger_backup_${y}${mo}${d}_${h}${mi}${s}.json`;
+    const json = JSON.stringify(backup, null, 2);
+    const sizeKB = (new Blob([json]).size / 1024).toFixed(1);
+
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+
+    log.pass(`백업 완료: ${fileName} (${sizeKB} KB)`);
+    log.info('※ 파일을 안전한 곳(Google Drive, 로컬 등)에 보관하세요.');
+    log.info('※ 이 파일 하나로 발주서·계정·입금·거래명세서 전부 복구 가능.');
+  }
+
+  // 컬렉션 초기화 (문서 하나씩 삭제)
+  async function resetCollection(coll, log) {
+    if (!confirm(`emulator ${coll} 컬렉션 전부 삭제? (운영 영향 0)`)) return;
+    const docs = await window._FS.collectionGet(coll);
+    log.info(`${coll} ${docs.length}건 삭제 중...`);
+    let ok = 0;
+    for (const d of docs) {
+      if (!d || !d.id) continue;
+      try { await window._FS.collectionDelete(coll, d.id); ok++; }
+      catch(_) {}
+    }
+    log.pass(`${coll} 삭제 완료 (${ok}건)`);
+  }
+
   panel.querySelectorAll('[data-seed]').forEach(btn => btn.addEventListener('click', async () => {
     const log = mkLog('qa-seed-log');
     const action = btn.dataset.seed;
@@ -353,8 +879,14 @@
         const n = Math.max(1, Math.min(500, Number(document.getElementById('qa-seed-count').value) || 30));
         await seedOrders(n, log);
       } else if (action === 'invoices') await seedInvoices(log);
+      else if (action === 'payments') {
+        const n = Math.max(1, Math.min(2000, Number(document.getElementById('qa-pay-count').value) || 100));
+        await seedPayments(n, log);
+      } else if (action === 'check-storage') await checkStorage(log);
+      else if (action === 'backup-all') await backupAll(log);
       else if (action === 'reset-orders') await resetKey('orders', log);
       else if (action === 'reset-invoices') await resetKey('invoices', log);
+      else if (action === 'reset-payments') await resetCollection('hanger_payments', log);
     } catch (e) { log.fail('예외: ' + e.message); }
   }));
 

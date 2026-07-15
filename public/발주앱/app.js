@@ -1399,6 +1399,12 @@ function _renderLedgerPanelHTML(){
         /* (L1399-1402 옛 nowrap/76px 강제 제거됨 — 잘림 원인) */
         .ledger-scope #view-detail h2,
         .ledger-scope .ec-detail-title { font-size: 18px; }
+        /* 모바일: 출고일 표시 + 삭제 버튼 축소 */
+        .ledger-scope .ec-ledger .fa-truck { font-size: 9px !important; margin-right: 2px !important; }
+        .ledger-scope .ec-ledger td div[style*="fa-truck"],
+        .ledger-scope .ec-ledger .ec-row-header td div:not(:first-child) { font-size: 9px !important; margin-top: 1px !important; }
+        .ledger-scope .ec-ledger .btn-payment-delete { font-size: 10px !important; padding: 0 3px !important; margin-left: 2px !important; }
+        .ledger-scope .ec-ledger .btn-payment-delete i { font-size: 11px !important; }
       }
       .ledger-scope .ec-ledger-title { background:#e0f2fe; text-align:center; font-weight:800; font-size:13px; padding:7px; border:1px solid #94a3b8; border-bottom:none; }
       .ledger-scope .ec-ledger { width:100%; border-collapse:collapse; font-size:12px; }
@@ -1855,6 +1861,16 @@ function renderSettlement(){
       if(typeof loadData==='function') loadData();
     });
   });
+  // [2026-07-03] 연월/날짜 입력값 변경 시 자동 조회 (사용자 UX 개선)
+  if (!document._settlementDateAutoLoad) {
+    document._settlementDateAutoLoad = true;
+    document.addEventListener('change', (e) => {
+      const id = e.target && e.target.id;
+      if (id === 'date-input' || id === 'date-year' || id === 'date-quarter' || id === 'date-start' || id === 'date-end') {
+        if (typeof loadData === 'function') loadData();
+      }
+    });
+  }
 }
 
 // 품목 마스터 (관리자)

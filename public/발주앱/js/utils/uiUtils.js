@@ -1,7 +1,7 @@
 // UI Utilities Section
 // Toast, modal, formatter, navigation utilities
 
-function fmt(d){if(!d)return'-';if(d==='0000-00-00')return'미정';const dt=new Date(d);if(isNaN(dt.getTime()))return'-';return`${dt.getFullYear()}.${String(dt.getMonth()+1).padStart(2,'0')}.${String(dt.getDate()).padStart(2,'0')}`;}
+function fmt(d){if(!d)return'-';if(d==='0000-00-00')return'미정';/* [2026-07-03] 옛 오염 데이터 정규화 후 표시 */if(typeof window!=='undefined'&&typeof window.normalizeDateStr==='function'){d=window.normalizeDateStr(d);}const dt=new Date(d);if(isNaN(dt.getTime()))return'-';return`${dt.getFullYear()}.${String(dt.getMonth()+1).padStart(2,'0')}.${String(dt.getDate()).padStart(2,'0')}`;}
 function fmtDt(d){if(!d)return'-';const dt=new Date(d);if(isNaN(dt.getTime()))return'-';return`${String(dt.getMonth()+1).padStart(2,'0')}.${String(dt.getDate()).padStart(2,'0')} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;}
 function toast(msg,type='info'){const t=document.getElementById('toast');t.textContent=msg;t.className=type;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3000);}
 function openModal(id){document.getElementById(id).classList.add('open');}

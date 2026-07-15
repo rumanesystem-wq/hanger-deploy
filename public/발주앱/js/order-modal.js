@@ -730,6 +730,8 @@ function _restoreDraftToModal(order){
   if(ucRestore){
     const storedColor=order.upperCommonColor||(order.upperMaterials&&order.upperMaterials[0]&&order.upperMaterials[0].color)||'화이트';
     ucRestore.value=storedColor;
+    // [2026-07-14] 상부자재 색상별 코드 체크 (편집 복원과 동일 - Bug 3 수정)
+    if(typeof checkUpperColorCodes==='function') checkUpperColorCodes(storedColor);
   }
   // 품목별 수량/비고 복원
   (order.upperMaterials||[]).forEach(r=>{
@@ -880,15 +882,27 @@ async function submitOrder(saveMode='발주확정'){
     if(!whCheck){
       _markRequired(document.getElementById('o-warehouse'),'출고 창고를 선택해주세요. (시흥 또는 평택)');
     }
-    // 상부자재 공통 색상 필수
-    const ucCheck=document.getElementById('upper-common-color');
-    if(!ucCheck||!ucCheck.value){
-      _markRequired(ucCheck,'상부자재 색상을 선택해주세요.');
+    // [2026-07-15] 색상 필수 조건부 — 해당 카테고리에 수량 입력한 품목이 있을 때만 색상 필수
+    // [H1] 옷봉(rodEntries)도 상부자재 색상 사용 — 옷봉만 발주 시 색상 검증 skip 방지
+    // 상부자재 색상: 상부자재 or 옷봉에 항목이 있을 때
+    const hasUpperItems = Array.from(document.querySelectorAll('.upper-qty'))
+      .some(inp => (parseInt(inp.value)||0) > 0)
+      || (typeof rodEntries !== 'undefined' && rodEntries.length > 0);
+    if (hasUpperItems) {
+      const ucCheck=document.getElementById('upper-common-color');
+      if(!ucCheck||!ucCheck.value){
+        _markRequired(ucCheck,'상부자재 색상을 선택해주세요.');
+      }
     }
-    // 선반/서랍 공통 색상 필수
-    const scCheck=document.getElementById('shared-color-sel');
-    if(!scCheck||!scCheck.value){
-      _markRequired(scCheck,'선반/코너선반/서랍/옵션 색상을 선택해주세요.');
+    // 선반/서랍 색상: 선반·코너선반·서랍/옵션 중 하나라도 있을 때만
+    const hasShelfOrCorner = shelfRowEntries.length > 0 || cornerEntries.length > 0;
+    const hasDrawer = Array.from(document.querySelectorAll('.drawer-qty'))
+      .some(inp => (parseInt(inp.value)||0) > 0);
+    if (hasShelfOrCorner || hasDrawer) {
+      const scCheck=document.getElementById('shared-color-sel');
+      if(!scCheck||!scCheck.value){
+        _markRequired(scCheck,'선반/코너선반/서랍/옵션 색상을 선택해주세요.');
+      }
     }
     // hasColor 또는 colorOptions 품목 개별 색상 필수
     const dbItemsForVal=DB.get('items',[]);

@@ -137,39 +137,89 @@ async function fetchAllCompletedOrders() {
 }
 
 /**
- * 전체 입금 내역 조회
- * 입금 기능 미사용 결정 (사용자) — 항상 빈 배열 반환
- * (옛 LEDGER_MOCK_PAYMENTS는 보관 — 추후 입금 기능 추가 시 복구 가능)
+ * 전체 입금 내역 조회 — hanger_payments 컬렉션 (문서 단위)
  * @returns {Promise<Payment[]>}
  */
 async function fetchAllPayments() {
-  return [];
+  if (typeof window === 'undefined' || !window._FS || typeof window._FS.collectionGet !== 'function') return [];
+  const arr = await window._FS.collectionGet('hanger_payments');
+  return Array.isArray(arr) ? arr : [];
 }
 
 /**
- * 입금 등록
- * (추후 firebase.firestore().collection('hanger_payments').add({...}))
+ * 감사 로그 기록 — hanger_payment_logs 컬렉션 (race-free)
+ * @param {object} log
+ * @returns {Promise<void>}
+ */
+async function _appendPaymentLog(log) {
+  if (typeof window === 'undefined' || !window._FS || typeof window._FS.collectionAdd !== 'function') return;
+  const id = 'plog_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+  const entry = {
+    id,
+    at: new Date().toISOString(),
+    by: (typeof currentUser !== 'undefined' && currentUser) ? (currentUser.id || currentUser.name || 'unknown') : 'unknown',
+    ...log
+  };
+  try { await window._FS.collectionAdd('hanger_payment_logs', id, entry); }
+  catch (e) { console.warn('[payment_logs 저장 실패]', e.message); }
+}
+
+/**
+ * 입금 등록 — hanger_payments 컬렉션에 단건 저장 (race-free, 1MB 무한)
  * @param {Omit<Payment, 'id'>} payment
- * @returns {Promise<Payment>} 저장된 (id 부여된) 입금 데이터
+ * @returns {Promise<Payment>}
  */
 async function createPayment(payment) {
-  /** @type {Payment} */
+  const id = 'p' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
   const saved = {
     ...payment,
-    id: 'p' + Date.now()
+    id,
+    createdAt: new Date().toISOString(),
+    createdBy: (typeof currentUser !== 'undefined' && currentUser) ? (currentUser.id || currentUser.name || 'unknown') : 'unknown'
   };
-  LEDGER_MOCK_PAYMENTS.push(saved);
+  if (typeof window === 'undefined' || !window._FS || typeof window._FS.collectionAdd !== 'function') {
+    throw new Error('DB 사용 불가 — 저장할 수 없습니다.');
+  }
+  // 단건 문서 저장 — 다른 관리자의 저장과 충돌 없음 (각자 다른 문서)
+  await window._FS.collectionAdd('hanger_payments', id, saved);
+  // [D] 감사 로그
+  await _appendPaymentLog({
+    action: 'create',
+    paymentId: id,
+    customer: saved.customer,
+    date: saved.date,
+    amount: saved.amount,
+    memo: saved.memo || ''
+  });
   return saved;
 }
 
 /**
- * 입금 삭제
- * (추후 firebase.firestore().collection('hanger_payments').doc(id).delete())
+ * 입금 삭제 — hanger_payments 컬렉션 단건 삭제 + 감사 로그 (사유 필수)
  * @param {string} paymentId
+ * @param {string} reason
  * @returns {Promise<void>}
  */
-async function deletePayment(paymentId) {
-  LEDGER_MOCK_PAYMENTS = LEDGER_MOCK_PAYMENTS.filter(p => p.id !== paymentId);
+async function deletePayment(paymentId, reason) {
+  if (typeof window === 'undefined' || !window._FS || typeof window._FS.collectionDelete !== 'function') return;
+  // 삭제 전 스냅샷 (감사 로그용)
+  let target = null;
+  try {
+    const arr = await window._FS.collectionGet('hanger_payments');
+    target = arr.find(p => p && p.id === paymentId) || null;
+  } catch(_) {}
+  await window._FS.collectionDelete('hanger_payments', paymentId);
+  if (target) {
+    await _appendPaymentLog({
+      action: 'delete',
+      paymentId,
+      customer: target.customer,
+      date: target.date,
+      amount: target.amount,
+      memo: target.memo || '',
+      reason: String(reason || '')
+    });
+  }
 }
 
 /**

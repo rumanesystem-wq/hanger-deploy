@@ -141,7 +141,13 @@ async function changeOrderStatus(orderId, newStatus){
   orders[idx].status=newStatus;
   orders[idx].updatedAt=now;
   addStatusHistory(idx, orders, newStatus, '');
-  DB.set('orders',orders);
+  // [2026-07-09] 유케이 사고 재발 방지: 저장 완료 확인 후 성공 토스트
+  try {
+    await DB.set('orders',orders);
+  } catch (e) {
+    toast('저장 실패. 페이지를 새로고침한 후 다시 시도해주세요.','error');
+    return false;
+  }
   // (핫픽스 B' 20260610) 방금 저장한 로컬 orders 기준 (재조회 불필요)
   const chgOrder=orders.find(o=>o.id===orderId);
   toast(`발주 ${chgOrder?(chgOrder.orderNum||('#'+orderId)):('#'+orderId)} 상태가 '${newStatus}'로 변경되었습니다.`,'success');
@@ -214,7 +220,13 @@ async function cancelOrder(orderId, cancelReason){
   orders[idx].updatedAt=cancelNow;
   orders[idx].stockDeducted=false;
   addStatusHistory(idx, orders, '취소', cancelReason||'');
-  DB.set('orders',orders);
+  // [2026-07-09] 유케이 사고 재발 방지: 저장 완료 확인
+  try {
+    await DB.set('orders',orders);
+  } catch (e) {
+    toast('취소 저장 실패. 페이지를 새로고침한 후 다시 시도해주세요.','error');
+    return false;
+  }
 
   // 관련 발주 필요 목록도 취소 처리
   const prs=DB.get('purchase_requests',[]);
@@ -303,7 +315,13 @@ async function uncancelOrder(orderId){
   orders[idx].stockDeducted=true;
   orders[idx].updatedAt=restoreNow2;
   addStatusHistory(idx, orders, prevStatus, '취소 되돌림');
-  DB.set('orders',orders);
+  // [2026-07-09] 유케이 사고 재발 방지: 저장 완료 확인
+  try {
+    await DB.set('orders',orders);
+  } catch (e) {
+    toast('되돌리기 저장 실패. 페이지를 새로고침한 후 다시 시도해주세요.','error');
+    return false;
+  }
 
   // 관련 발주필요(PR) 복원
   const prs=DB.get('purchase_requests',[]);
@@ -376,10 +394,23 @@ function openOrderConfirmModal(){
   if(!shipDate||!/^\d{4}-\d{2}-\d{2}$/.test(shipDate)){toast('출고일을 입력해주세요.','error');return;}
   const whVal=document.getElementById('o-warehouse')?.value||'';
   if(!whVal){toast('출고 창고를 선택해주세요. (시흥 또는 평택)','error');return;}
-  const ucCheck=document.getElementById('upper-common-color');
-  if(!ucCheck||!ucCheck.value){toast('상부자재 색상을 선택해주세요.','error');return;}
-  const scCheck=document.getElementById('shared-color-sel');
-  if(!scCheck||!scCheck.value){toast('선반/코너선반/서랍/옵션 색상을 선택해주세요.','error');return;}
+  // [2026-07-15] 색상 필수 조건부 — 해당 카테고리에 수량 입력한 품목이 있을 때만
+  // [H1] 옷봉(rodEntries)도 상부자재 색상 사용
+  const hasUpperItems = Array.from(document.querySelectorAll('.upper-qty'))
+    .some(inp => (parseInt(inp.value)||0) > 0)
+    || (typeof rodEntries !== 'undefined' && rodEntries.length > 0);
+  if (hasUpperItems) {
+    const ucCheck=document.getElementById('upper-common-color');
+    if(!ucCheck||!ucCheck.value){toast('상부자재 색상을 선택해주세요.','error');return;}
+  }
+  const hasShelfOrCorner = (typeof shelfRowEntries !== 'undefined' && shelfRowEntries.length > 0) ||
+                           (typeof cornerEntries !== 'undefined' && cornerEntries.length > 0);
+  const hasDrawer = Array.from(document.querySelectorAll('.drawer-qty'))
+    .some(inp => (parseInt(inp.value)||0) > 0);
+  if (hasShelfOrCorner || hasDrawer) {
+    const scCheck=document.getElementById('shared-color-sel');
+    if(!scCheck||!scCheck.value){toast('선반/코너선반/서랍/옵션 색상을 선택해주세요.','error');return;}
+  }
   const dbItemsForVal=DB.get('items',[]);
   const colorMissingItems=[];
   document.querySelectorAll('.drawer-qty').forEach(inp=>{
@@ -561,7 +592,13 @@ async function toggleOrderLock(orderId){
     orders[idx].status='발주확정';
     orders[idx].updatedAt=now;
     addStatusHistory(idx, orders, '발주확정', '관리자 확정');
-    DB.set('orders',orders);
+    // [2026-07-09] 유케이 사고 재발 방지: 저장 완료 확인 후 성공 토스트
+    try {
+      await DB.set('orders',orders);
+    } catch (e) {
+      toast('확정 저장 실패. 페이지를 새로고침한 후 다시 시도해주세요.','error');
+      return;
+    }
     toast('발주가 확정되었습니다.','success');
     // 거래명세서 자동 발급 (best-effort, 실패해도 발주확정은 유지)
     if(window.LumaneInvoice && typeof window.LumaneInvoice.autoCreateForOrder==='function'){
@@ -573,7 +610,13 @@ async function toggleOrderLock(orderId){
     orders[idx].status='발주대기';
     orders[idx].updatedAt=now;
     addStatusHistory(idx, orders, '발주대기', '확정 해제');
-    DB.set('orders',orders);
+    // [2026-07-09] 유케이 사고 재발 방지: 저장 완료 확인 후 성공 토스트
+    try {
+      await DB.set('orders',orders);
+    } catch (e) {
+      toast('해제 저장 실패. 페이지를 새로고침한 후 다시 시도해주세요.','error');
+      return;
+    }
     toast('확정이 해제되었습니다.','warning');
     // 거래명세서 자동 취소 (cancelled 플래그, 사용자 수기 편집값 보존)
     if(window.LumaneInvoice && typeof window.LumaneInvoice.cancelByOrderNum==='function'){
@@ -1553,9 +1596,21 @@ async function openEditOrder(orderId){
         if(!nEl){const cn=compatUpperName(rawName);if(cn!==rawName)nEl=document.querySelector(`.upper-note[data-mat="${cn}"]`);}
         if(nEl)nEl.value=r.note;
       }
+      // [2026-07-14] 길이 분할 복원 (포스트바) — 임시저장 복원과 동일 로직 (Bug 1 수정)
+      if(r.lengthSplits&&Array.isArray(r.lengthSplits)&&r.lengthSplits.length>0){
+        const matKey=inp?.dataset?.mat||rawName;
+        if(inp){inp.dataset.splits=JSON.stringify(r.lengthSplits);}
+        if(typeof setRowLengthSplits==='function')setRowLengthSplits(matKey,r.lengthSplits);
+      }
     });
-    // 공통 색상
-    if(order.sharedColor){const ss=document.getElementById('shared-color-sel');if(ss)ss.value=order.sharedColor;}
+    // 공통 색상 + 서랍 색상별 코드 체크 (임시저장 복원과 동일 - Bug 2 수정)
+    if(order.sharedColor){
+      const ss=document.getElementById('shared-color-sel');
+      if(ss){
+        ss.value=order.sharedColor;
+        if(typeof checkDrawerColorCodes==='function') checkDrawerColorCodes(order.sharedColor);
+      }
+    }
     // 선반/코너선반
     if(order.shelfItems&&order.shelfItems.length>0){
       order.shelfItems.forEach(si=>{

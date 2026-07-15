@@ -90,12 +90,12 @@ async function downloadOrderExcel(order){
   // 납품처 / 발주일
   fr(R,em);
   st(gc(R,1,'납품처'),lb); st(gc(R,2,dTo),vl); mg(R,2,R,3);
-  st(gc(R,4,'발  주  일'),lb); st(gc(R,5,order.orderDate||'-'),vl);
+  st(gc(R,4,'발  주  일'),lb); st(gc(R,5,(window.normalizeDateStr?window.normalizeDateStr(order.orderDate):order.orderDate)||'-'),vl);
   rh(R); R++;
   // 시공주소 / 출고일
   fr(R,em);
   st(gc(R,1,'시공주소'),lb); st(gc(R,2,addr),{...vl,wrap:true}); mg(R,2,R,3);
-  st(gc(R,4,'출  고  일'),lb); st(gc(R,5,order.shipDate==='0000-00-00'?'미정':order.shipDate||'-'),vl);
+  st(gc(R,4,'출  고  일'),lb); st(gc(R,5,order.shipDate==='0000-00-00'?'미정':((window.normalizeDateStr?window.normalizeDateStr(order.shipDate):order.shipDate)||'-')),vl);
   rh(R); R++;
   // 비고(선택)
   if(order.note){
@@ -497,13 +497,13 @@ function renderOrderDocument(order){
           <td class="doc-info-label">납품처</td>
           <td class="doc-info-val">${dTo}</td>
           <td class="doc-info-label">발주일</td>
-          <td class="doc-info-val">${order.orderDate||'-'}</td>
+          <td class="doc-info-val">${(window.normalizeDateStr?window.normalizeDateStr(order.orderDate):order.orderDate)||'-'}</td>
         </tr>
         <tr>
           <td class="doc-info-label">시공주소</td>
           <td class="doc-info-val">${addr}</td>
           <td class="doc-info-label">출고일</td>
-          <td class="doc-info-val">${order.shipDate==='0000-00-00'?'미정':order.shipDate||'-'}</td>
+          <td class="doc-info-val">${order.shipDate==='0000-00-00'?'미정':((window.normalizeDateStr?window.normalizeDateStr(order.shipDate):order.shipDate)||'-')}</td>
         </tr>
         <tr>
           <td class="doc-info-label">출고 창고</td>

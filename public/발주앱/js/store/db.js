@@ -33,7 +33,8 @@ const DB={
         try{
           const server=await Promise.race([
             window._FS.get('orders'),
-            new Promise((_,rj)=>setTimeout(()=>rj(new Error('TIMEOUT')),3000))
+            // [2026-07-09] 3초→10초: 모바일·저녁 네트워크에서 3초는 자주 실패 (유케이 07-08 사고 원인)
+            new Promise((_,rj)=>setTimeout(()=>rj(new Error('TIMEOUT')),10000))
           ]);
           // Codex 보강 (Critical-1): _FS.get 실패가 null로 삼켜질 때 stale 저장 차단
           // 운영에선 hanger_data/orders 문서가 항상 존재 → null/undefined는 실패로 간주
@@ -1462,8 +1463,8 @@ async function saveOrder(payload, saveMode='발주확정'){
   //           drawerMemo, etcMemo}
   const dbItems=DB.get('items',[]),orders=DB.get('orders',[]),prs=DB.get('purchase_requests',[]);
   // 수정 모드: _editOverride로 원래 id/orderNum/status/등록자/등록일 유지
+  // [2026-07-15 Critical 1] _editOverride 클리어를 저장 성공 후로 이동 — 실패 시 재시도가 편집 모드 유지되도록 (중복 발주서 생성 방지)
   const _eo=window._editOverride||null;
-  if(_eo)window._editOverride=null;
 
   // ── 서버 단일 ID 발급 (PC간 번호 충돌 방지) ──
   const _drawerCount=Array.isArray(payload.drawerItems)?payload.drawerItems.length:0;
@@ -1580,6 +1581,12 @@ async function saveOrder(payload, saveMode='발주확정'){
   } else {
     orders.push(orderDoc);
   }
-  DB.set('orders',orders);DB.set('purchase_requests',prs);
+  // [2026-07-09] 유케이 07-08 사고 재발 방지: orders 저장 완료를 await로 대기
+  // 실패 시 throw됨 → 호출처(order-modal.js) try/catch가 사용자에게 에러 토스트 노출
+  // 성공 토스트가 실제 저장 확인 전에 뜨는 문제 해결
+  await DB.set('orders',orders);
+  DB.set('purchase_requests',prs);
+  // [2026-07-15 Critical 1] 저장 성공 후에만 _editOverride 클리어 — 실패 시 편집 모드 유지
+  if(_eo) window._editOverride=null;
   return{orderId,shortageCount};
 }

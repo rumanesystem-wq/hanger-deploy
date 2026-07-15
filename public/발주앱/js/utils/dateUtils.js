@@ -1,6 +1,47 @@
 // Date Utilities Section
 // Date parsing, formatting, and synchronization
 
+// [2026-07-03] 년도 정규화 — "26", "0026", "2026" 모두 "2026"으로
+// - 1~2자리 → 2000 + n (26 → 2026)
+// - 4자리인데 0000이면 그대로 반환 (0000-00-00은 미정 표시)
+// - 4자리인데 100 미만이면 2000 + n (0026 → 2026)
+// - 4자리 정상은 그대로
+function normalizeYear(yStr) {
+  if (!yStr) return '';
+  const n = parseInt(yStr, 10);
+  if (isNaN(n)) return yStr;
+  if (n === 0) return '0000';           // 0000-00-00 미정 표시 유지
+  if (n < 100) return String(2000 + n); // "26", "0026" → "2026"
+  return String(n).padStart(4, '0');
+}
+
+// 발주서 저장 시 사용 — YYYY-MM-DD 형식 정규화
+// "0026-06-15" / "26-06-15" → "2026-06-15"
+// "0000-00-00" 유지 (미정)
+// "" 유지
+function normalizeDateStr(s) {
+  if (!s || typeof s !== 'string') return '';
+  if (s === '0000-00-00') return s; // 미정 표시 그대로
+  const m = s.match(/^(\d{1,4})-(\d{1,2})-(\d{1,2})$/);
+  if (!m) return s;
+  const y = normalizeYear(m[1]);
+  const mm = m[2].padStart(2, '0');
+  const dd = m[3].padStart(2, '0');
+  return `${y}-${mm}-${dd}`;
+}
+
+// 정산·원장 필터에서 사용 — 옛 오염 데이터도 인식하도록 파싱만 관대하게
+// (실제 데이터는 안 바꿈, 필터 비교용 정규화만)
+function coerceDateForFilter(s) {
+  return normalizeDateStr(s);
+}
+
+if (typeof window !== 'undefined') {
+  window.normalizeYear = normalizeYear;
+  window.normalizeDateStr = normalizeDateStr;
+  window.coerceDateForFilter = coerceDateForFilter;
+}
+
 // ── 분리형 날짜 입력 헬퍼 ──
 // 날짜 prefix → 분리칸 ID prefix 변환 (o-ship-date → o-ship, o-date → o-date)
 function _datePartPrefix(prefix){
@@ -14,13 +55,32 @@ function syncDateParts(prefix){
   const dEl=document.getElementById(p+'-d');
   const hidden=document.getElementById(prefix);
   if(!yEl||!mEl||!dEl||!hidden)return;
-  const y=yEl.value.padStart(4,'0');
+  // [2026-07-03] "26" 또는 "0026" 입력도 "2026"으로 정규화 (0026-XX-XX 저장 방지)
+  const y=normalizeYear(yEl.value);
   const m=(mEl.value||'').padStart(2,'0');
   const d=(dEl.value||'').padStart(2,'0');
   if(y.length===4&&m.length===2&&d.length===2&&/\d{4}/.test(y)&&/\d{2}/.test(m)&&/\d{2}/.test(d)){
     hidden.value=`${y}-${m}-${d}`;
+    // [2026-07-15 H3] 정상 날짜 입력 시 미정 버튼 하이라이트 자동 해제 (출고일만)
+    if(prefix==='o-ship-date'){
+      const btn=document.getElementById('o-ship-undecided-btn');
+      if(btn){btn.style.background='';btn.style.color='';btn.style.borderColor='';}
+    }
   } else {
-    hidden.value='';
+    // [2026-07-15 H2] 미정('0000-00-00') 보존은 y/m/d 모두 비어있을 때만
+    // 부분입력(년만·월만 등) 상태에서는 hidden도 미완성으로 처리
+    const hasAnyInput = (yEl.value||'').length>0 || (mEl.value||'').length>0 || (dEl.value||'').length>0;
+    if(hasAnyInput){
+      hidden.value=''; // 부분입력 → 미완성
+      // 미정 버튼도 해제 (사용자가 날짜 입력 중이므로)
+      if(prefix==='o-ship-date'){
+        const btn=document.getElementById('o-ship-undecided-btn');
+        if(btn){btn.style.background='';btn.style.color='';btn.style.borderColor='';}
+      }
+    } else if(hidden.value !== '0000-00-00'){
+      hidden.value=''; // 완전 빈 상태, 미정 아니면 비움
+    }
+    // hidden.value === '0000-00-00' && 모든 입력 비어있으면 미정 상태 그대로 보존
   }
 }
 // 출고일 미정 상태 토글
@@ -91,6 +151,11 @@ function setDateValue(prefix, val){
     if(mEl)mEl.value='';
     if(dEl)dEl.value='';
     if(hidden)hidden.value='';
+    // [2026-07-15] 출고일 빈값 세팅 시 미정 버튼 스타일 초기화 (이전 상태 잔여 방지)
+    if(prefix==='o-ship-date'){
+      const btn=document.getElementById('o-ship-undecided-btn');
+      if(btn){btn.style.background='';btn.style.color='';btn.style.borderColor='';}
+    }
     return;
   }
   // 미정 처리 (출고일만)

@@ -4,13 +4,15 @@ services:
     container_name: hanger-emu
     working_dir: /home/node
     user: node
+    # [2026-07-09] 호스트 포트를 15000+ 로 이동 — 툭탁 프로젝트 에뮬레이터와 8080/9099 충돌 회피
+    # 컨테이너 내부 포트는 그대로 (Firebase emulators 기본값 유지)
     ports:
-      - "5050:5050"   # hosting
-      - "8080:8080"   # firestore
-      - "9099:9099"   # auth
-      - "4000:4000"   # UI
-      - "4400:4400"   # hub
-      - "9150:9150"   # firestore ws
+      - "15050:5050"   # hosting  (host 15050 → container 5050)
+      - "18080:8080"   # firestore
+      - "19099:9099"   # auth
+      - "14000:4000"   # UI
+      - "14400:4400"   # hub
+      - "19150:9150"   # firestore ws
     volumes:
       - .:/home/node:rw
     environment:
