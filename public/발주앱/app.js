@@ -1133,7 +1133,8 @@ function bulkComplete(){
 // 페이지네이션 HTML 생성 헬퍼
 
 // 재고 관리 (관리자·서랍장만)
-document.getElementById('inv-qty').addEventListener('keydown',e=>{if(e.key==='Enter')submitInventory();});
+// [2026-07-24] Enter 키 리스너 중복 제거 — inventory.js L824가 소유. 이 라인은 5월 파일 분할 시 남은 잔여로 판단
+// 유지 시 재고 2배 반영 위험 (adversarial-tester + code-bug-fixer 공통 확인)
 
 // 이력 조회
 let histTab='orders',histSite='',histItem='',histType='',histFrom='',histTo='';

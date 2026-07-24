@@ -787,7 +787,11 @@ function updateInvPreview(){
   const qtyStr=document.getElementById('inv-qty').value;
   const preview=document.getElementById('inv-preview');
   if(!qtyStr){preview.innerHTML='';return;}
-  const qty=parseInt(qtyStr);if(isNaN(qty)){preview.innerHTML='';return;}
+  // [2026-07-24 Codex-Low-7] submitInventory와 동일 검증 (정수·안전정수) — 1.9 입력 시 미리보기도 거부
+  const qty=Number(qtyStr);
+  if(!Number.isFinite(qty)||!Number.isInteger(qty)||!Number.isSafeInteger(qty)){
+    preview.innerHTML='<div class="preview-box" style="color:#dc2626">수량은 정수만 입력 가능합니다.</div>';return;
+  }
   const{type}=invModalState;
   const wh=document.getElementById('inv-warehouse')?.value||'시흥';
   const color=document.getElementById('inv-color')?.value||'';
@@ -801,7 +805,12 @@ function updateInvPreview(){
   preview.innerHTML=`<div class="preview-box">${colorLabel}[${wh}] 변경 결과: ${whStock}개 → <strong style="color:${after<whStock?'#dc2626':'#16a34a'}">${after}개</strong> <span style="color:var(--text-3)">(${diff>0?'+':''}${diff})</span></div>`;
 }
 
+// [2026-07-24 방어] Enter 연타·더블 클릭 방지 — 진행 중 재호출 차단
+let _invSubmitting = false;
+
 async function submitInventory(){
+  // [Critical 방어] 이미 처리 중이면 무시 (Enter 연타·더블 클릭 시 재고 배수 반영 방지)
+  if (_invSubmitting) return;
   const{itemId,type}=invModalState;
   const qtyStr=document.getElementById('inv-qty').value;
   const memo=document.getElementById('inv-memo').value.trim();
@@ -811,14 +820,22 @@ async function submitInventory(){
   if(!logDate){toast('날짜를 입력해주세요.','error');return;}
   if(!color){toast('색상을 선택해주세요.','error');return;}
   if(!qtyStr){toast('수량을 입력해주세요.','error');return;}
-  const qty=parseInt(qtyStr);
-  if(isNaN(qty)){toast('올바른 수량을 입력해주세요.','error');return;}
+  // [Medium 방어] parseInt는 '1e5'→1, '1.9'→1 조용한 절삭 → 정수만 명시적으로 허용
+  // Number.isSafeInteger로 정밀도 손실(2^53 초과) 방어 (재고량이 이런 값일 리 없지만 안전)
+  const qtyNum = Number(qtyStr);
+  if (!Number.isFinite(qtyNum) || !Number.isInteger(qtyNum) || !Number.isSafeInteger(qtyNum)) {
+    toast('수량은 정수만 입력 가능합니다.','error');
+    return;
+  }
+  const qty = qtyNum;
   if((type==='입고'||type==='출고')&&qty<1){toast('입고/출고 수량은 1 이상이어야 합니다.','error');return;}
   if(type==='조정'&&qty<0){toast('조정 후 재고는 0 이상이어야 합니다.','error');return;}
+  _invSubmitting = true;
   try{
     const{before,after,warehouse:wh}=await processInventory({itemId,type,qty,memo,warehouse,logDate,color});
     const colorLabel=color?`[${color}] `:'';
     closeModal('inv-modal');toast(`${colorLabel}[${wh}] ${type} 처리 완료: ${before} → ${after}`,'success');renderInventory(stockLogItem?parseInt(stockLogItem):undefined);
   }catch(e){toast(e.message,'error');}
+  finally{ _invSubmitting = false; }
 }
 document.getElementById('inv-qty').addEventListener('keydown',e=>{if(e.key==='Enter')submitInventory();});
