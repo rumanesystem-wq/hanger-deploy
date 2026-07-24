@@ -853,3 +853,18 @@ tbody tr:last-child td{border-bottom:none}
   .ship-detail{padding-left:60px}
   .ship-complete-btn{padding:11px 13px}
 }
+
+/* [2026-07-22] 모바일에서 발주 모달 테이블 X 삭제 버튼이 스크롤로 잘려 보이는 문제 수정
+   선반·코너선반·옷봉 테이블 마지막 컬럼(X 버튼)만 오른쪽 sticky로 고정 → 스크롤해도 항상 보임
+   상부자재·서랍 테이블은 마지막 컬럼이 X 아니므로 대상 아님 (헤더-바디 어긋남 방지) */
+@media(max-width:640px){
+  #shelf-rows tr td:last-child,
+  #corner-rows tr td:last-child,
+  #rod-rows tr td:last-child{
+    position:sticky;
+    right:0;
+    background:#fff;
+    box-shadow:-4px 0 6px -3px rgba(0,0,0,0.08);
+    z-index:2;
+  }
+}

@@ -1472,6 +1472,8 @@ function _renderLedgerPanelHTML(){
           <button class="btn-back" onclick="goBackToList()"><i class="fas fa-arrow-left"></i> 거래처 목록</button>
           <button class="btn-add-payment" onclick="openPaymentModal()"><i class="fas fa-plus"></i> 입금 등록</button>
           <button class="btn-print" onclick="window.print()"><i class="fas fa-print"></i> 인쇄</button>
+          <!-- [2026-07-20] PDF 저장 버튼 — 모바일·PWA·인앱 브라우저에서도 다운로드 가능 (jspdf + html2canvas 기존 로드 사용) -->
+          <button class="btn-print" style="background:#7c3aed" onclick="saveLedgerPdf()"><i class="fas fa-file-pdf"></i> PDF 저장</button>
         </div>
         <div class="ec-filter-bar no-print">
           <div class="fld"><label>시작일</label><input type="date" id="ec-start-date"/></div>

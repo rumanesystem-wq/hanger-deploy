@@ -636,6 +636,116 @@ function goBackToList() {
 }
 
 // ============================================================
+// [2026-07-20] PDF 저장 — 모바일·PWA·인앱 브라우저 대응
+// window.print()가 안 되는 환경에서도 관리대장을 PDF로 저장·공유
+// 기존 로드된 jspdf + html2canvas 라이브러리 사용 (신규 스크립트 X)
+//
+// 팀 검토 반영 (Critical + High 3건 수정):
+//  - 다중 페이지: offscreen canvas로 slice 후 페이지별 개별 addImage (파일 크기 폭증 방지)
+//  - 인앱 폴백: pdf.save() 실패 시 blob URL 새 창으로 열기 (카톡/네이버 인앱 대응)
+//  - 파일명 sanitize: OS 금지 특수문자 언더스코어 치환
+//  - 성능: scale 1.5 + JPEG 0.85 (PNG 대비 파일 크기·메모리 절감)
+// ============================================================
+function _sanitizeFilename(name) {
+  return String(name || '').replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_').trim() || '관리대장';
+}
+
+async function saveLedgerPdf() {
+  const el = document.getElementById('ec-print-area');
+  if (!el) { if (typeof toast === 'function') toast('저장할 관리대장이 없습니다.', 'error'); return; }
+  // 라이브러리 로드 확인
+  if (typeof window.jspdf === 'undefined' || typeof window.html2canvas === 'undefined') {
+    if (typeof toast === 'function') toast('PDF 라이브러리 로드 실패. 새로고침 후 다시 시도해주세요.', 'error');
+    return;
+  }
+  const rawCustomer = (document.getElementById('ec-doc-customer-name')?.textContent || '거래처').trim();
+  const periodRaw = (document.getElementById('ec-doc-period')?.textContent || '').trim();
+  const period = periodRaw.replace(/[^0-9]/g, '').slice(0, 12);
+  const filename = _sanitizeFilename(`${rawCustomer}_관리대장${period ? '_' + period : ''}`) + '.pdf';
+  if (typeof toast === 'function') toast('PDF 생성 중...', 'info');
+
+  try {
+    // 1) 원본 캔버스 렌더 (scale 1.5로 파일 크기·메모리 절감)
+    const srcCanvas = await window.html2canvas(el, {
+      scale: 1.5,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      logging: false
+    });
+
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pdfW = pdf.internal.pageSize.getWidth();
+    const pdfH = pdf.internal.pageSize.getHeight();
+
+    // 2) 픽셀 ↔ mm 비율 계산
+    const pxPerMm = srcCanvas.width / pdfW;
+    const pageHeightPx = Math.floor(pdfH * pxPerMm);
+
+    // 3) 단일 페이지에 들어가면 그대로 추가
+    if (srcCanvas.height <= pageHeightPx) {
+      const imgData = srcCanvas.toDataURL('image/jpeg', 0.85);
+      const imgH = (srcCanvas.height * pdfW) / srcCanvas.width;
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfW, imgH);
+    } else {
+      // 4) 다중 페이지: offscreen canvas로 페이지 높이만큼 slice
+      const sliceCanvas = document.createElement('canvas');
+      sliceCanvas.width = srcCanvas.width;
+      let y = 0;
+      let pageIndex = 0;
+      while (y < srcCanvas.height) {
+        const remaining = srcCanvas.height - y;
+        const sliceH = Math.min(pageHeightPx, remaining);
+        sliceCanvas.height = sliceH;
+        const ctx = sliceCanvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+        ctx.drawImage(srcCanvas, 0, y, srcCanvas.width, sliceH, 0, 0, srcCanvas.width, sliceH);
+        const sliceData = sliceCanvas.toDataURL('image/jpeg', 0.85);
+        const sliceMmH = (sliceH * pdfW) / srcCanvas.width;
+        if (pageIndex > 0) pdf.addPage();
+        pdf.addImage(sliceData, 'JPEG', 0, 0, pdfW, sliceMmH);
+        y += sliceH;
+        pageIndex++;
+      }
+    }
+
+    // 5) 저장 시도 (인앱 브라우저 폴백)
+    let saved = false;
+    try {
+      pdf.save(filename);
+      saved = true;
+    } catch (saveErr) {
+      console.warn('[PDF pdf.save 실패, 새 창 폴백 시도]', saveErr && saveErr.message);
+    }
+    if (!saved) {
+      // 카톡/네이버 인앱 브라우저는 <a download> 무시 → blob URL 새 창으로 열어 사용자가 저장·공유
+      try {
+        const blob = pdf.output('blob');
+        const blobUrl = URL.createObjectURL(blob);
+        const win = window.open(blobUrl, '_blank');
+        if (!win) {
+          if (typeof toast === 'function') toast('PDF 새 창 열기 실패. 브라우저 팝업 차단 확인 필요.', 'error');
+        } else {
+          if (typeof toast === 'function') toast('PDF 새 창으로 열림. 저장하려면 브라우저 메뉴 사용.', 'info');
+          // 60초 후 blob URL 정리 (메모리 해제)
+          setTimeout(() => { try { URL.revokeObjectURL(blobUrl); } catch (_) {} }, 60000);
+        }
+      } catch (blobErr) {
+        console.error('[PDF blob 폴백 실패]', blobErr);
+        if (typeof toast === 'function') toast('PDF 저장·열기 모두 실패. 데스크톱 브라우저에서 시도해주세요.', 'error');
+        return;
+      }
+    } else {
+      if (typeof toast === 'function') toast('PDF 저장 완료', 'success');
+    }
+  } catch (e) {
+    console.error('[PDF 저장 실패]', e);
+    if (typeof toast === 'function') toast('PDF 저장 실패: ' + (e && e.message || '알 수 없는 오류'), 'error');
+  }
+}
+
+// ============================================================
 // 초기화 + 이벤트 바인딩
 // ============================================================
 window.addEventListener('DOMContentLoaded', () => {
