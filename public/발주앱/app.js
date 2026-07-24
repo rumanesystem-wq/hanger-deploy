@@ -16,6 +16,9 @@ async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
   // 마이그레이션 보정
   if(item.stockSiheung===undefined)item.stockSiheung=item.currentStock||0;
   if(item.stockPyeongtaek===undefined)item.stockPyeongtaek=0;
+  // [2026-07-24] 오산 재고 필드 초기화 (기존 item에는 없음)
+  if(item.stockOsan===undefined)item.stockOsan=0;
+  if(item.colorStockOsan===undefined)item.colorStockOsan={};
   const n=Number(qty);
   let before, after;
   if(color){
@@ -42,15 +45,35 @@ async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
   logs.push({id:_logIds[0],itemId,type,qty:type==='조정'?n-before:n,beforeStock:before,afterStock:after,warehouse:wh,color:color||'',memo:memo||'',createdAt:logTs});
   DB.set('logs',logs);
   // 입고 시: 해당 품목의 대기 중인 발주 필요 항목 자동 완료 처리
-  if(type==='입고'){
+  // [2026-07-24 Codex-3차] 정책: 엄격 FIFO
+  // - 오산 입고는 PR 자동완료 X (발주 대상 아님)
+  // - 시흥·평택 입고 시: warehouse/color 일치 + createdAt 오래된 순으로 소진
+  // - 오래된 PR을 못 채우면 break, 이후 PR도 자동완료하지 않음 (queue jump 방지)
+  // - 부분입고 누적은 미지원 (별도 UI에서 수동 처리 필요)
+  if(type==='입고' && wh !== '오산' && qty > 0){
     const prs=DB.get('purchase_requests',[]);
     let changed=false;
-    prs.forEach(p=>{
-      if(p.itemId===itemId&&p.status==='대기'){
-        p.status='발주완료';p.updatedAt=new Date().toISOString();p.autoCompleted=true;
-        changed=true;
-      }
-    });
+    let remaining=qty;
+    const _now=new Date().toISOString();
+    const candidates=prs
+      .filter(p=>{
+        if(p.itemId!==itemId||p.status!=='대기') return false;
+        const whMatch=!p.warehouse||p.warehouse===wh;
+        const colorMatch=!color||!p.color||p.color===color;
+        return whMatch && colorMatch;
+      })
+      .sort((a,b)=>new Date(a.createdAt||0)-new Date(b.createdAt||0));
+    for(const p of candidates){
+      const need=p.shortageQty||p.requiredQty||0;
+      if(need<=0) continue;
+      if(need>remaining) break; // 엄격 FIFO: 오래된 PR 못 채우면 여기서 종료
+      p.status='발주완료';
+      p.updatedAt=_now;
+      p.autoCompleted=true;
+      remaining-=need;
+      changed=true;
+      if(remaining<=0) break;
+    }
     if(changed)DB.set('purchase_requests',prs);
   }
   return{before,after,warehouse:wh};
@@ -518,7 +541,10 @@ function renderDashboard(){
     }else{
       html+=`<div class="table-wrap"><table><thead><tr><th>품목명</th><th class="td-center">창고</th><th class="td-center">유형</th><th class="td-center">변동</th><th class="td-center">일시</th></tr></thead><tbody>
       ${recentLogs.map(l=>{const it=getItem(l.itemId);
-        const whBadge=l.warehouse==='평택'?`<span style="display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;background:#d1fae5;color:#065f46">평택</span>`:`<span style="display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;background:#dbeafe;color:#1e40af">시흥</span>`;
+        // [2026-07-24] 오산 뱃지 추가 (재고 이력 로그가 오산일 수 있음)
+        const _wbBg=l.warehouse==='시흥'?'#dbeafe':l.warehouse==='평택'?'#d1fae5':l.warehouse==='오산'?'#fef7ed':'#f3f4f6';
+        const _wbFg=l.warehouse==='시흥'?'#1e40af':l.warehouse==='평택'?'#065f46':l.warehouse==='오산'?'#7c2d12':'#6b7280';
+        const whBadge=`<span style="display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;background:${_wbBg};color:${_wbFg}">${l.warehouse||'-'}</span>`;
         return `<tr><td class="td-name">${it?it.name:'?'}</td><td class="td-center">${l.warehouse?whBadge:'-'}</td><td class="td-center"><span class="badge ${l.type==='입고'?'type-in':l.type==='출고'?'type-out':'type-adj'}">${l.type}</span></td><td class="td-center">${l.beforeStock} → <strong>${l.afterStock}</strong></td><td class="td-center td-muted">${fmtDt(l.createdAt)}</td></tr>`;
       }).join('')}</tbody></table></div>`;
     }

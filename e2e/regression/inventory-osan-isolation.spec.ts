@@ -1,0 +1,712 @@
+// inventory-osan-isolation.spec.ts
+// Codex 3차 검토 지적사항 회귀
+// - 각 테스트 beforeEach에 에뮬레이터 리셋+시드 (완전 격리)
+// - 정확한 selector·색상·nav 사용
+// - C3는 실제 lifecycle 함수 호출로 검증
+// 대상: docker tooktak-emulator, hosting http://localhost:15050
+
+import { test, expect, Page } from "@playwright/test";
+import { resetAndSeed } from "../helpers/emu-reset";
+
+test.setTimeout(90_000);
+
+const COLOR = "화이트 오크"; // SHELF_COLORS[0]
+
+// [Codex 4차] boot readiness: DB에 accounts가 로드되고 Auth 초기화까지 대기
+// waitForTimeout(500) 같은 임의 대기는 flaky. 실제 readiness 조건으로 검증.
+async function waitForAppReady(page: Page, accountId: string) {
+  await page.waitForSelector("#login-screen", { state: "visible", timeout: 15000 });
+  await page.waitForFunction(
+    (id) => {
+      const w: any = window as any;
+      const accounts =
+        w.DB && typeof w.DB.get === "function"
+          ? w.DB.get("accounts", [])
+          : [];
+      const hasAccount =
+        Array.isArray(accounts) &&
+        accounts.some((a: any) => a && a.id === id);
+      const authReady =
+        !!w._fbAuth &&
+        typeof w._fbAuth.signInWithEmailAndPassword === "function";
+      return hasAccount && authReady;
+    },
+    accountId,
+    { timeout: 15000 }
+  );
+}
+
+async function loginAdmin(page: Page) {
+  await page.goto("/");
+  await waitForAppReady(page, "admin");
+  await page.locator("#tab-admin").click();
+  await page.fill("#login-id", "admin");
+  await page.fill("#login-pw", "123456");
+  await page.locator('button[onclick="doLogin()"]').click();
+  await page.waitForSelector("[data-nav]", { timeout: 15000 });
+  // 초기 데이터 fetch 완료 대기 — items가 로드되면 postLogin이 끝난 것
+  await page.waitForFunction(() => {
+    const w: any = window as any;
+    return w.DB && w.DB.get && Array.isArray(w.DB.get("items", [])) && w.DB.get("items", []).length > 0;
+  }, { timeout: 10000 });
+}
+
+async function loginOrderer(page: Page) {
+  await page.goto("/");
+  await waitForAppReady(page, "orderer");
+  await page.locator("#tab-orderer").click();
+  await page.fill("#login-id", "orderer");
+  await page.fill("#login-pw", "123456");
+  await page.locator('button[onclick="doLogin()"]').click();
+  await page.waitForSelector("[data-nav]", { timeout: 15000 });
+  await page.waitForFunction(() => {
+    const w: any = window as any;
+    return !!(w.DB && w.DB.get);
+  }, { timeout: 10000 });
+}
+
+async function firstDrawerItem(page: Page): Promise<{ id: number; name: string }> {
+  const r = await page.evaluate(() => {
+    const items = window.DB.get("items", []).filter(
+      (i: any) => i.category === "서랍장" && i.isActive && i.drawerType !== "handle"
+    );
+    return items[0] ? { id: items[0].id, name: items[0].name } : null;
+  });
+  if (!r) throw new Error("no drawer item in seed");
+  return r;
+}
+
+test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () => {
+  test.describe.configure({ retries: 0 });
+
+  test.beforeEach(async () => {
+    await resetAndSeed();
+  });
+
+  test("C1: 오산 입고(색상 정상 선택) → 시흥 대기 PR 미변경 + before/after 정확 검증", async ({ page }) => {
+    await loginAdmin(page);
+    const target = await firstDrawerItem(page);
+
+    // 시흥 대기 PR 삽입: 화이트 오크 + shortage=5
+    const testPrId = await page.evaluate(({ tid, color }) => {
+      const prs = window.DB.get("purchase_requests", []);
+      const pid = 999001;
+      prs.push({
+        id: pid, itemId: tid, warehouse: "시흥", color,
+        shortageQty: 5, requiredQty: 5, status: "대기",
+        createdAt: new Date().toISOString()
+      });
+      window.DB.set("purchase_requests", prs);
+      return pid;
+    }, { tid: target.id, color: COLOR });
+
+    // [Codex 4차] 입고 전 baseline snapshot
+    const before = await page.evaluate((tid) => {
+      const item = window.DB.get("items", []).find((i: any) => i.id === tid);
+      const logs = window.DB.get("logs", []).filter((l: any) => l.itemId === tid);
+      return {
+        osan: item ? item.stockOsan || 0 : 0,
+        siheung: item ? (item.stockSiheung !== undefined ? item.stockSiheung : item.currentStock) : 0,
+        pyeongtaek: item ? item.stockPyeongtaek || 0 : 0,
+        currentStock: item ? item.currentStock || 0 : 0,
+        osanInLogs: logs.filter((l: any) => l.warehouse === "오산" && l.type === "입고").length
+      };
+    }, target.id);
+
+    // 오산 입고 3
+    await page.locator('[data-nav="inventory"]').first().click();
+    await page.waitForFunction(() => document.querySelectorAll(".inv-action-btn").length > 0, { timeout: 10000 });
+    await page.locator(`.inv-action-btn[data-inv-id="${target.id}"][data-inv-type="입고"]`).first().click();
+    await page.waitForSelector("#inv-modal", { state: "visible" });
+    await page.waitForSelector("#inv-wh-osan", { state: "visible" });
+    await page.locator("#inv-wh-osan").click();
+    await page.selectOption("#inv-color", COLOR);
+    await page.fill("#inv-qty", "3");
+    await page.locator("#inv-submit-btn").click();
+    await page.waitForSelector("#inv-modal", { state: "hidden", timeout: 10000 });
+
+    // [Codex 4차] 정확 검증: before + 3 (절대값 아님)
+    const after = await page.evaluate(({ tid, pid }) => {
+      const item = window.DB.get("items", []).find((i: any) => i.id === tid);
+      const pr = window.DB.get("purchase_requests", []).find((p: any) => p.id === pid);
+      const logs = window.DB.get("logs", []).filter((l: any) => l.itemId === tid);
+      const osanIn = logs.filter((l: any) => l.warehouse === "오산" && l.type === "입고");
+      return {
+        osan: item ? item.stockOsan || 0 : 0,
+        siheung: item ? (item.stockSiheung !== undefined ? item.stockSiheung : item.currentStock) : 0,
+        pyeongtaek: item ? item.stockPyeongtaek || 0 : 0,
+        currentStock: item ? item.currentStock || 0 : 0,
+        osanInCount: osanIn.length,
+        latestOsanLog: osanIn[osanIn.length - 1] || null,
+        prStatus: pr ? pr.status : null
+      };
+    }, { tid: target.id, pid: testPrId });
+
+    expect(after.osan, "오산 = before + 3").toBe(before.osan + 3);
+    expect(after.siheung, "시흥 재고 불변").toBe(before.siheung);
+    expect(after.pyeongtaek, "평택 재고 불변").toBe(before.pyeongtaek);
+    expect(after.currentStock, "currentStock 불변 (시흥+평택만, 오산 제외)").toBe(before.currentStock);
+    expect(after.osanInCount, "오산 입고 로그 1건 증가").toBe(before.osanInLogs + 1);
+    expect(after.latestOsanLog?.qty, "새 로그 qty=3").toBe(3);
+    expect(after.latestOsanLog?.warehouse, "새 로그 warehouse=오산").toBe("오산");
+    expect(after.latestOsanLog?.type, "새 로그 type=입고").toBe("입고");
+    expect(after.prStatus, "시흥 대기 PR 미변경").toBe("대기");
+  });
+
+  test("C2a: 발주확정 + warehouse='' → 저장 거부", async ({ page }) => {
+    await loginAdmin(page);
+    const r = await page.evaluate(async () => {
+      try {
+        await window.saveOrder(
+          { deliveryTo: "테스트업체", address: "테", orderDate: "2026-07-24", shipDate: "2026-07-25",
+            warehouse: "", drawerItems: [], upperMaterials: [], shelfItems: [], rodItems: [] },
+          "발주확정"
+        );
+        return { ok: true };
+      } catch (e: any) {
+        return { ok: false, err: e.message };
+      }
+    });
+    expect(r.ok, "발주확정+빈창고 거부").toBe(false);
+    expect(r.err, "창고 관련 에러 메시지").toMatch(/창고/);
+  });
+
+  test("C2b: 발주확정 + warehouse='오산' → 저장 거부", async ({ page }) => {
+    await loginAdmin(page);
+    const r = await page.evaluate(async () => {
+      try {
+        await window.saveOrder(
+          { deliveryTo: "테스트업체", address: "테", orderDate: "2026-07-24", shipDate: "2026-07-25",
+            warehouse: "오산", drawerItems: [], upperMaterials: [], shelfItems: [], rodItems: [] },
+          "발주확정"
+        );
+        return { ok: true };
+      } catch (e: any) {
+        return { ok: false, err: e.message };
+      }
+    });
+    expect(r.ok, "오산 저장 거부").toBe(false);
+    expect(r.err).toMatch(/시흥|평택|오산/);
+  });
+
+  test("C3: 실제 lifecycle — invalid warehouse 주문 취소 시도 → items/logs/order 불변", async ({ page }) => {
+    await loginAdmin(page);
+    const target = await firstDrawerItem(page);
+
+    // 조작: order.warehouse='오산' + oi.warehouse='오산' (양쪽 invalid) + stockDeducted=true
+    // 실제 cancelOrder 호출 → _assertOrderableWarehouses throw → 어떤 mutation도 없어야
+    const setup = await page.evaluate(({ tid }) => {
+      const orderId = 999901;
+      const orders = window.DB.get("orders", []);
+      orders.push({
+        id: orderId,
+        orderNum: "TEST-999901",
+        status: "발주확정",
+        warehouse: "오산", // invalid
+        stockDeducted: true,
+        drawerItems: [{ itemId: tid, requiredQty: 3, warehouse: "오산", color: "" }],
+        createdBy: "admin",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      window.DB.set("orders", orders);
+      // 시흥 재고 스냅샷
+      const item = window.DB.get("items", []).find((i: any) => i.id === tid);
+      const logsBefore = window.DB.get("logs", []).length;
+      return {
+        orderId,
+        siheungBefore: item ? item.stockSiheung || 0 : 0,
+        pyeongtaekBefore: item ? item.stockPyeongtaek || 0 : 0,
+        osanBefore: item ? item.stockOsan || 0 : 0,
+        logsBefore
+      };
+    }, { tid: target.id });
+
+    // cancelOrder 호출 — 사전 검증에서 throw 되어야
+    const r = await page.evaluate(async (oid) => {
+      try {
+        const ok = await window.cancelOrder(oid, "테스트");
+        return { threw: false, ok };
+      } catch (e: any) {
+        return { threw: true, err: e.message };
+      }
+    }, setup.orderId);
+
+    // toast 에러로 처리됐거나 throw됐거나 — 어느 쪽이든 items·logs·order 불변이어야
+    const after = await page.evaluate(({ tid, oid }) => {
+      const item = window.DB.get("items", []).find((i: any) => i.id === tid);
+      const order = window.DB.get("orders", []).find((o: any) => o.id === oid);
+      const logsCount = window.DB.get("logs", []).length;
+      return {
+        siheungAfter: item ? item.stockSiheung || 0 : 0,
+        pyeongtaekAfter: item ? item.stockPyeongtaek || 0 : 0,
+        osanAfter: item ? item.stockOsan || 0 : 0,
+        orderStatus: order ? order.status : null,
+        stockDeducted: order ? order.stockDeducted : null,
+        logsAfter: logsCount
+      };
+    }, { tid: target.id, oid: setup.orderId });
+
+    expect(after.siheungAfter, "시흥 재고 불변").toBe(setup.siheungBefore);
+    expect(after.pyeongtaekAfter, "평택 재고 불변").toBe(setup.pyeongtaekBefore);
+    expect(after.osanAfter, "오산 재고 불변").toBe(setup.osanBefore);
+    expect(after.logsAfter, "로그 개수 불변").toBe(setup.logsBefore);
+    expect(after.orderStatus, "주문 상태 불변 (발주확정)").toBe("발주확정");
+    expect(after.stockDeducted, "stockDeducted 불변 (true)").toBe(true);
+  });
+
+  test("H3: 발주자 stock-view — 오산-only 품목의 발주가능=0 + 경고 배경", async ({ page, browser }) => {
+    // 관리자로 데이터 세팅 (Firestore 저장까지 대기)
+    await loginAdmin(page);
+    const target = await firstDrawerItem(page);
+
+    // window._FS.set는 Firestore 서버 반영을 await
+    await page.evaluate(async ({ tid, color }) => {
+      const items = window.DB.get("items", []);
+      const idx = items.findIndex((i: any) => i.id === tid);
+      if (idx === -1) return;
+      items[idx].stockSiheung = 0;
+      items[idx].stockPyeongtaek = 0;
+      items[idx].stockOsan = 5;
+      items[idx].colorStockSiheung = {};
+      items[idx].colorStockPyeongtaek = {};
+      items[idx].colorStockOsan = { [color]: 5 };
+      items[idx].currentStock = 0;
+      // 로컬 반영 + Firestore 저장 완료 대기
+      window.DB.set("items", items);
+      if (window._FS && window._FS.set) {
+        await window._FS.set("items", items);
+      }
+    }, { tid: target.id, color: COLOR });
+
+    // 새 context로 발주자 로그인 (admin 세션 격리)
+    const ordererContext = await browser.newContext();
+    const ordererPage = await ordererContext.newPage();
+    await loginOrderer(ordererPage);
+    page = ordererPage; // 이하 검증에 새 페이지 사용
+
+    // 발주자 재고 현황 nav
+    await page.locator('[data-nav="stock-view"]').first().click();
+    await page.waitForTimeout(1500);
+
+    const row = await page.evaluate((name) => {
+      const rows = document.querySelectorAll("tr.sv-item-row");
+      for (const r of Array.from(rows)) {
+        if ((r as HTMLElement).textContent?.includes(name)) {
+          const cells = r.querySelectorAll("td");
+          return {
+            osan: cells[3]?.textContent?.trim(),
+            orderable: cells[4]?.textContent?.trim(),
+            style: (r as HTMLElement).getAttribute("style") || ""
+          };
+        }
+      }
+      return null;
+    }, target.name);
+
+    expect(row, "발주자 뷰에 대상 행 존재").not.toBeNull();
+    expect(row!.orderable, "발주가능=0").toBe("0");
+    expect(row!.osan, "오산=5").toBe("5");
+    expect(row!.style, "경고 배경(#fef2f2)").toContain("#fef2f2");
+  });
+
+  test("H4: 관리자 재고없음 필터 실제 클릭 → 오산-only 품목 포함 + 발주가능=0", async ({ page }) => {
+    await loginAdmin(page);
+    const target = await firstDrawerItem(page);
+
+    // 대상 아이템: 시흥·평택 0, 오산 7. 다른 아이템(id=2)은 정상 재고 유지 → 필터에 제외 확인용
+    await page.evaluate(({ tid, color }) => {
+      const items = window.DB.get("items", []);
+      const idx = items.findIndex((i: any) => i.id === tid);
+      if (idx === -1) return;
+      items[idx].stockSiheung = 0;
+      items[idx].stockPyeongtaek = 0;
+      items[idx].stockOsan = 7;
+      items[idx].colorStockSiheung = {};
+      items[idx].colorStockPyeongtaek = {};
+      items[idx].colorStockOsan = { [color]: 7 };
+      items[idx].currentStock = 0;
+      window.DB.set("items", items);
+    }, { tid: target.id, color: COLOR });
+
+    await page.locator('[data-nav="inventory"]').first().click();
+    await page.waitForTimeout(1500);
+
+    // "재고 없음" 카드 반드시 visible 확인 후 클릭
+    const zeroCard = page.locator('div[onclick*="invOnlyZero"]').filter({ hasText: "재고 없음" }).first();
+    await expect(zeroCard, "재고없음 카드 표시").toBeVisible({ timeout: 5000 });
+    await zeroCard.click();
+    await page.waitForTimeout(1000);
+
+    // invOnlyZero=true 확인
+    const invOnlyZero = await page.evaluate(() => invOnlyZero);
+    expect(invOnlyZero, "재고없음 필터 활성화").toBe(true);
+
+    // 대상 행 포함 확인
+    const check = await page.evaluate(({ targetName }) => {
+      const rows = document.querySelectorAll("#inv-stock-table tbody tr.inv-main-row");
+      const items = Array.from(rows).map((r) => (r as HTMLElement).textContent || "");
+      const targetRow = Array.from(rows).find((r) =>
+        (r as HTMLElement).textContent?.includes(targetName)
+      );
+      const cells = targetRow ? targetRow.querySelectorAll("td") : null;
+      return {
+        rowCount: rows.length,
+        allNames: items.map((t) => t.slice(0, 30)),
+        found: !!targetRow,
+        orderable: cells ? cells[5]?.textContent?.trim() : null,
+        osan: cells ? cells[4]?.textContent?.trim() : null,
+        style: targetRow ? (targetRow as HTMLElement).getAttribute("style") || "" : ""
+      };
+    }, { targetName: target.name });
+
+    expect(check.found, `필터 결과에 대상 행 포함 (${JSON.stringify(check.allNames)})`).toBe(true);
+    expect(check.orderable, "발주가능=0").toBe("0");
+    expect(check.osan, "오산=7").toBe("7");
+    expect(check.style, "경고 배경(#fef2f2)").toContain("#fef2f2");
+
+    // 정상 재고 품목(id=2, 시흥·평택 5·5)은 필터에서 제외돼야
+    const otherItemName = await page.evaluate(() => {
+      const items = window.DB.get("items", []).filter(
+        (i: any) => i.category === "서랍장" && i.isActive && i.drawerType !== "handle" && (i.stockSiheung > 0 || i.stockPyeongtaek > 0)
+      );
+      return items[0] ? items[0].name : null;
+    });
+    if (otherItemName) {
+      const excluded = !check.allNames.some((n) => n.includes(otherItemName));
+      expect(excluded, `정상 재고 품목(${otherItemName})은 재고없음 필터에서 제외`).toBe(true);
+    }
+  });
+
+  test("N1+N2: 신규 PR에 color 저장 + 다른 색상 입고 시 PR 자동완료 X", async ({ page }) => {
+    await loginAdmin(page);
+    const target = await firstDrawerItem(page);
+
+    // 재고 0으로 만들고 saveOrder → shortage 유도 → PR 생성
+    await page.evaluate(({ tid, color }) => {
+      const items = window.DB.get("items", []);
+      const idx = items.findIndex((i: any) => i.id === tid);
+      if (idx === -1) return;
+      items[idx].stockSiheung = 0;
+      items[idx].stockPyeongtaek = 0;
+      items[idx].colorStockSiheung = { [color]: 0 };
+      items[idx].colorStockPyeongtaek = {};
+      items[idx].currentStock = 0;
+      window.DB.set("items", items);
+    }, { tid: target.id, color: COLOR });
+
+    const saveResult = await page.evaluate(async ({ tid, color }) => {
+      try {
+        const r = await window.saveOrder(
+          { deliveryTo: "테스트업체", address: "테스트", orderDate: "2026-07-24", shipDate: "2026-07-25",
+            warehouse: "시흥", sharedColor: color,
+            drawerItems: [{ itemId: tid, requiredQty: 5, color }],
+            upperMaterials: [], shelfItems: [], rodItems: [] },
+          "발주대기"
+        );
+        return { ok: true, orderId: r.orderId, shortage: r.shortageCount };
+      } catch (e: any) {
+        return { ok: false, err: e.message };
+      }
+    }, { tid: target.id, color: COLOR });
+
+    expect(saveResult.ok, "발주대기 저장 성공").toBe(true);
+    expect(saveResult.shortage, "부족 발생").toBeGreaterThan(0);
+
+    // N1: 신규 PR color 저장 확인
+    const pr = await page.evaluate((oid) => {
+      const prs = window.DB.get("purchase_requests", []);
+      return prs.find((p: any) => p.orderId === oid);
+    }, saveResult.orderId);
+
+    expect(pr, "PR 생성됨").toBeTruthy();
+    expect(pr.color, "PR에 color 저장").toBe(COLOR);
+
+    // N2: 다른 색상('솔리드') 입고 → PR 자동완료 X
+    await page.locator('[data-nav="inventory"]').first().click();
+    await page.waitForTimeout(1500);
+    await page.locator(`.inv-action-btn[data-inv-id="${target.id}"][data-inv-type="입고"]`).first().click();
+    await page.waitForSelector("#inv-modal", { state: "visible" });
+    await page.waitForTimeout(500);
+    await page.locator("#inv-wh-siheung").click();
+    await page.selectOption("#inv-color", "솔리드"); // 다른 색상
+    await page.fill("#inv-qty", "10");
+    await page.locator("#inv-submit-btn").click();
+    await page.waitForTimeout(2500);
+
+    const prAfter = await page.evaluate((oid) => {
+      const prs = window.DB.get("purchase_requests", []);
+      return prs.find((p: any) => p.orderId === oid);
+    }, saveResult.orderId);
+
+    expect(prAfter.status, "다른 색상 입고에 PR 대기 유지").toBe("대기");
+  });
+
+  test("N3: 입고량(3) < 부족량(10) → PR 대기 유지 (엄격 FIFO)", async ({ page }) => {
+    await loginAdmin(page);
+    const target = await firstDrawerItem(page);
+
+    // 대기 PR: 시흥 + 화이트 오크 + shortage=10
+    const testPrId = await page.evaluate(({ tid, color }) => {
+      const prs = window.DB.get("purchase_requests", []);
+      const pid = 999003;
+      prs.push({
+        id: pid, itemId: tid, warehouse: "시흥", color,
+        shortageQty: 10, requiredQty: 10, status: "대기",
+        createdAt: new Date().toISOString()
+      });
+      window.DB.set("purchase_requests", prs);
+      return pid;
+    }, { tid: target.id, color: COLOR });
+
+    // 시흥 + 화이트 오크 + 3개만 입고 (동일 창고/색상, 수량만 부족)
+    await page.locator('[data-nav="inventory"]').first().click();
+    await page.waitForTimeout(1500);
+    await page.locator(`.inv-action-btn[data-inv-id="${target.id}"][data-inv-type="입고"]`).first().click();
+    await page.waitForSelector("#inv-modal", { state: "visible" });
+    await page.waitForTimeout(500);
+    await page.locator("#inv-wh-siheung").click();
+    await page.selectOption("#inv-color", COLOR);
+    await page.fill("#inv-qty", "3");
+    await page.locator("#inv-submit-btn").click();
+    await page.waitForTimeout(2500);
+
+    const status = await page.evaluate((pid) => {
+      const pr = window.DB.get("purchase_requests", []).find((p: any) => p.id === pid);
+      return pr ? pr.status : null;
+    }, testPrId);
+
+    expect(status, "입고량(3)<부족량(10) → PR 대기 유지").toBe("대기");
+  });
+
+  test("N4 (FIFO queue-jump 금지): 오래된 PR need=10 + 새 PR need=2 + 입고=3 → 둘 다 대기", async ({ page }) => {
+    await loginAdmin(page);
+    const target = await firstDrawerItem(page);
+
+    const oldPid = 999010;
+    const newPid = 999011;
+    await page.evaluate(({ tid, color, oldPid, newPid }) => {
+      const prs = window.DB.get("purchase_requests", []);
+      const older = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const newer = new Date().toISOString();
+      prs.push({ id: oldPid, itemId: tid, warehouse: "시흥", color, shortageQty: 10, requiredQty: 10, status: "대기", createdAt: older });
+      prs.push({ id: newPid, itemId: tid, warehouse: "시흥", color, shortageQty: 2, requiredQty: 2, status: "대기", createdAt: newer });
+      window.DB.set("purchase_requests", prs);
+    }, { tid: target.id, color: COLOR, oldPid, newPid });
+
+    // 입고 3 (엄격 FIFO: 오래된 PR 못 채우면 break — 새 PR도 자동완료 X)
+    await page.locator('[data-nav="inventory"]').first().click();
+    await page.waitForTimeout(1500);
+    await page.locator(`.inv-action-btn[data-inv-id="${target.id}"][data-inv-type="입고"]`).first().click();
+    await page.waitForSelector("#inv-modal", { state: "visible" });
+    await page.waitForTimeout(500);
+    await page.locator("#inv-wh-siheung").click();
+    await page.selectOption("#inv-color", COLOR);
+    await page.fill("#inv-qty", "3");
+    await page.locator("#inv-submit-btn").click();
+    await page.waitForTimeout(2500);
+
+    const statuses = await page.evaluate(({ oldPid, newPid }) => {
+      const prs = window.DB.get("purchase_requests", []);
+      const old = prs.find((p: any) => p.id === oldPid);
+      const nw = prs.find((p: any) => p.id === newPid);
+      return { oldStatus: old ? old.status : null, newStatus: nw ? nw.status : null };
+    }, { oldPid, newPid });
+
+    expect(statuses.oldStatus, "오래된 PR 대기 유지 (엄격 FIFO)").toBe("대기");
+    expect(statuses.newStatus, "새 PR 대기 유지 (queue jump 금지)").toBe("대기");
+  });
+
+  test("C3+ (partial mutation 방지): 2-item 주문에서 두 번째 invalid → 첫 아이템 재고도 불변", async ({ page }) => {
+    await loginAdmin(page);
+
+    // 서랍장 품목 2개 필요 (seed에 겉서랍 2단, 속서랍 2단)
+    const targets = await page.evaluate(() => {
+      const items = window.DB.get("items", []).filter(
+        (i: any) => i.category === "서랍장" && i.isActive && i.drawerType !== "handle"
+      );
+      return items.slice(0, 2).map((i: any) => ({ id: i.id, name: i.name }));
+    });
+    expect(targets.length, "서랍장 품목 2개 필요").toBeGreaterThanOrEqual(2);
+
+    // baseline snapshot (2개 아이템)
+    const before = await page.evaluate((ids) => {
+      const items = window.DB.get("items", []);
+      const logsCount = window.DB.get("logs", []).length;
+      const snap = ids.map((id: number) => {
+        const item = items.find((i: any) => i.id === id);
+        return {
+          id,
+          siheung: item ? (item.stockSiheung !== undefined ? item.stockSiheung : item.currentStock) : 0,
+          pyeongtaek: item ? item.stockPyeongtaek || 0 : 0,
+          osan: item ? item.stockOsan || 0 : 0,
+          currentStock: item ? item.currentStock || 0 : 0
+        };
+      });
+      return { snap, logsCount };
+    }, targets.map(t => t.id));
+
+    // order.warehouse는 valid하지만 두 번째 oi.warehouse가 invalid('오산')
+    // → _orderableWh(oi='오산', order='시흥') → order='시흥'로 fallback되어 통과.
+    // 진짜 fail-closed 조건: oi='오산' + order='오산' 둘 다 invalid.
+    const setup = await page.evaluate(async ({ tid1, tid2 }) => {
+      const orderId = 999930;
+      const orders = window.DB.get("orders", []);
+      orders.push({
+        id: orderId,
+        orderNum: "TEST-C3+",
+        status: "발주확정",
+        warehouse: "오산", // order-level invalid (fallback도 invalid 조건 만들기 위함)
+        stockDeducted: true,
+        drawerItems: [
+          { itemId: tid1, requiredQty: 3, warehouse: "시흥", color: "" }, // 첫 valid
+          { itemId: tid2, requiredQty: 2, warehouse: "오산", color: "" }  // 두 번째 invalid + order도 invalid → throw
+        ],
+        createdBy: "admin",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      window.DB.set("orders", orders);
+      if (window._FS && window._FS.set) await window._FS.set("orders", orders);
+      return { orderId };
+    }, { tid1: targets[0].id, tid2: targets[1].id });
+
+    // cancelOrder 시도
+    const call = await page.evaluate(async (oid) => {
+      try {
+        await window.cancelOrder(oid, "테스트");
+        return { threw: false };
+      } catch (e: any) {
+        return { threw: true, err: e.message || String(e) };
+      }
+    }, setup.orderId);
+
+    // [Codex 5차 A] 정확한 warehouse 에러 throw 확인
+    expect(call.threw, "두 번째 invalid warehouse에서 throw").toBe(true);
+    expect(call.err, "warehouse 사전검증 오류").toMatch(/발주 창고 데이터 오류/);
+
+    // [Codex 5차 B] reload 전 즉시 메모리 상태 검사
+    const localAfter = await page.evaluate(({ ids, oid }) => {
+      const items = window.DB.get("items", []);
+      const order = window.DB.get("orders", []).find((o: any) => o.id === oid);
+      const logsCount = window.DB.get("logs", []).length;
+      const snap = ids.map((id: number) => {
+        const item = items.find((i: any) => i.id === id);
+        return {
+          id,
+          siheung: item
+            ? (item.stockSiheung !== undefined
+                ? item.stockSiheung
+                : item.currentStock)
+            : 0,
+          pyeongtaek: item ? item.stockPyeongtaek || 0 : 0,
+          osan: item ? item.stockOsan || 0 : 0,
+          currentStock: item ? item.currentStock || 0 : 0
+        };
+      });
+      return {
+        snap, logsCount,
+        orderStatus: order ? order.status : null,
+        stockDeducted: order ? order.stockDeducted : null
+      };
+    }, { ids: targets.map(t => t.id), oid: setup.orderId });
+
+    for (let i = 0; i < 2; i++) {
+      expect(localAfter.snap[i].siheung, `[memory][${targets[i].name}] 시흥 불변`).toBe(before.snap[i].siheung);
+      expect(localAfter.snap[i].pyeongtaek, `[memory][${targets[i].name}] 평택 불변`).toBe(before.snap[i].pyeongtaek);
+      expect(localAfter.snap[i].osan, `[memory][${targets[i].name}] 오산 불변`).toBe(before.snap[i].osan);
+      expect(localAfter.snap[i].currentStock, `[memory][${targets[i].name}] currentStock 불변`).toBe(before.snap[i].currentStock);
+    }
+    expect(localAfter.logsCount, "[memory] logs 불변").toBe(before.logsCount);
+    expect(localAfter.orderStatus, "[memory] order status 불변").toBe("발주확정");
+    expect(localAfter.stockDeducted, "[memory] stockDeducted 불변").toBe(true);
+
+    // [Codex 5차 C] 새로고침 후 Firestore reload — 실제 저장 여부 재검증
+    await page.reload();
+    await page.waitForSelector("[data-nav]", { timeout: 15000 });
+    await page.waitForFunction(() => {
+      const w: any = window as any;
+      return w.DB && w.DB.get && w.DB.get("items", []).length > 0;
+    }, { timeout: 15000 });
+
+    const after = await page.evaluate(({ ids, oid }) => {
+      const items = window.DB.get("items", []);
+      const order = window.DB.get("orders", []).find((o: any) => o.id === oid);
+      const logsCount = window.DB.get("logs", []).length;
+      const snap = ids.map((id: number) => {
+        const item = items.find((i: any) => i.id === id);
+        return {
+          id,
+          siheung: item ? (item.stockSiheung !== undefined ? item.stockSiheung : item.currentStock) : 0,
+          pyeongtaek: item ? item.stockPyeongtaek || 0 : 0,
+          osan: item ? item.stockOsan || 0 : 0,
+          currentStock: item ? item.currentStock || 0 : 0
+        };
+      });
+      return {
+        snap, logsCount,
+        orderStatus: order ? order.status : null,
+        stockDeducted: order ? order.stockDeducted : null
+      };
+    }, { ids: targets.map(t => t.id), oid: setup.orderId });
+
+    // 두 아이템 모두 불변 (partial mutation 없음)
+    for (let i = 0; i < 2; i++) {
+      expect(after.snap[i].siheung, `[${targets[i].name}] 시흥 불변 (reload 후)`).toBe(before.snap[i].siheung);
+      expect(after.snap[i].pyeongtaek, `[${targets[i].name}] 평택 불변`).toBe(before.snap[i].pyeongtaek);
+      expect(after.snap[i].osan, `[${targets[i].name}] 오산 불변`).toBe(before.snap[i].osan);
+      expect(after.snap[i].currentStock, `[${targets[i].name}] currentStock 불변`).toBe(before.snap[i].currentStock);
+    }
+    expect(after.logsCount, "logs 개수 불변").toBe(before.logsCount);
+    expect(after.orderStatus, "주문 상태 발주확정 유지").toBe("발주확정");
+    expect(after.stockDeducted, "stockDeducted 유지").toBe(true);
+  });
+
+  test("C2c (getNextIds 미호출): 빈 warehouse 발주확정 거부 시 서버 ID 발급 함수 0회 호출", async ({ page }) => {
+    await loginAdmin(page);
+
+    // Codex 4차: 실제 window._FN.getNextIds spy로 callCount 검증
+    const r = await page.evaluate(async () => {
+      const fn: any = window._FN;
+      if (!fn || typeof fn.getNextIds !== "function") {
+        return { ok: false, err: "window._FN.getNextIds 없음" };
+      }
+      const original = fn.getNextIds;
+      let callCount = 0;
+      fn.getNextIds = async (...args: any[]) => {
+        callCount++;
+        return original.apply(fn, args);
+      };
+      const ordersBefore = window.DB.get("orders", []).length;
+      let saveErr: string | null = null;
+      try {
+        await window.saveOrder(
+          {
+            deliveryTo: "테스트업체", address: "테",
+            orderDate: "2026-07-24", shipDate: "2026-07-25",
+            warehouse: "",
+            drawerItems: [], upperMaterials: [], shelfItems: [], rodItems: []
+          },
+          "발주확정"
+        );
+      } catch (e: any) {
+        saveErr = e.message || String(e);
+      } finally {
+        fn.getNextIds = original; // 원본 복원 (bound wrapper 아님)
+      }
+      const ordersAfter = window.DB.get("orders", []).length;
+      return {
+        ok: true,
+        saveErr,
+        callCount,
+        ordersBefore,
+        ordersAfter
+      };
+    });
+
+    expect(r.ok, "getNextIds spy 세팅").toBe(true);
+    expect(r.saveErr, "saveOrder 거부됨").toMatch(/창고/);
+    expect(r.callCount, "getNextIds 호출 0회 (검증이 서버 ID 발급 전에)").toBe(0);
+    expect(r.ordersAfter, "orders 개수 불변").toBe(r.ordersBefore);
+  });
+});

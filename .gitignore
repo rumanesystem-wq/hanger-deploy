@@ -27,3 +27,4 @@ functions/ecount-products.txt
 .vercel/
 test-results/
 playwright-report/
+/functions/_tmp_*.js

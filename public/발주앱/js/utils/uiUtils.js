@@ -9,6 +9,7 @@ function closeModal(id){document.getElementById(id).classList.remove('open');}
 function getItems(){
   const items=DB.get('items',[]);
   // 창고별 재고 필드가 있는 서랍장 품목은 currentStock을 합계로 동기화
+  // [2026-07-24] 오산 창고 추가 — currentStock은 발주 계산용이라 오산 포함 X (발주 대상 아님, 재고 관리 전용)
   items.forEach(item=>{
     if(isTrackStock(item)&&item.stockSiheung!==undefined){
       item.currentStock=(item.stockSiheung||0)+(item.stockPyeongtaek||0);
@@ -23,18 +24,23 @@ function getPRs(){return DB.get('purchase_requests',[]);}
 function getLogs(){return DB.get('logs',[]);}
 function getItem(id){return getItems().find(i=>i.id===id);}
 // 창고명 → DB 재고 필드명 변환 헬퍼
+// [2026-07-24] 오산 창고 추가 (재고 관리 전용, 발주에는 안 나옴)
 function getWhKey(wh){
   if(wh==='평택')return 'stockPyeongtaek';
+  if(wh==='오산')return 'stockOsan';
   return 'stockSiheung'; // 기본: 시흥
 }
-// 창고명 → 이카운트 창고코드 변환 헬퍼
+// 창고명 → 이카운트 창고코드 변환 헬퍼 (오산은 이카운트 연동 안 함)
+// [2026-07-24] 오산은 null 반환 — 발주 흐름에 오산 없음(격리)이지만 실수 방지 방어
 function getWhErpCd(wh){
   if(wh==='평택')return '102';
+  if(wh==='오산')return null;
   return '101'; // 기본: 시흥
 }
 // 창고별 색상별 재고 키 반환
 function getColorWhKey(wh){
   if(wh==='평택')return 'colorStockPyeongtaek';
+  if(wh==='오산')return 'colorStockOsan';
   return 'colorStockSiheung';
 }
 // 재고 추적 대상 판별 (기존 서랍장 + 가격표 가구 trackStock)
@@ -49,5 +55,6 @@ function getWarehouseStock(item,warehouse,color){
   }
   // color 미지정: 창고 전체 합계
   if(warehouse==='평택')return item.stockPyeongtaek||0;
+  if(warehouse==='오산')return item.stockOsan||0;
   return item.stockSiheung||0;
 }

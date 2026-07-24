@@ -228,20 +228,27 @@ function renderStockView(){
   if(_stockViewSearch)items=items.filter(i=>i.name.includes(_stockViewSearch));
   const siheungTotal=items.reduce((s,i)=>s+(i.stockSiheung!==undefined?i.stockSiheung:i.currentStock),0);
   const pyeongtaekTotal=items.reduce((s,i)=>s+(i.stockPyeongtaek||0),0);
+  // [2026-07-24] 오산 창고 재고 (발주 대상 아님, 관리 전용)
+  const osanTotal=items.reduce((s,i)=>s+(i.stockOsan||0),0);
 
   // 품목별 색상 행 생성 (클릭 시 접기/펼치기)
   const rows=items.map(item=>{
     const sTotal=item.stockSiheung!==undefined?item.stockSiheung:item.currentStock;
     const pTotal=item.stockPyeongtaek||0;
-    const grandTotal=sTotal+pTotal;
-    const itemBg=grandTotal===0?'background:#fef2f2':grandTotal<=3?'background:#fffbeb':'';
+    const oTotal=item.stockOsan||0;
+    // [2026-07-24 Codex-High-3] 합계·경고 색상 기준은 발주 가능 재고(시흥+평택). 오산은 발주 대상 아님.
+    const orderableTotal=sTotal+pTotal;
+    const itemBg=orderableTotal===0?'background:#fef2f2':orderableTotal<=3?'background:#fffbeb':'';
 
     const colorRows=SHELF_COLORS.map(color=>{
       const sC=(item.colorStockSiheung||{})[color]||0;
       const pC=(item.colorStockPyeongtaek||{})[color]||0;
+      const oC=(item.colorStockOsan||{})[color]||0;
+      // [2026-07-24 Codex-High-3] 색상 합계도 발주 가능 재고 기준 (시흥+평택). 오산 별도 컬럼 표시.
       const tot=sC+pC;
       const sColor=sC===0?'#9ca3af':sC<=2?'#d97706':'#1e40af';
       const pColor=pC===0?'#9ca3af':pC<=2?'#d97706':'#065f46';
+      const oColor=oC===0?'#9ca3af':oC<=2?'#d97706':'#7c2d12';
       const tColor=tot===0?'#9ca3af':tot<=2?'#d97706':'#111827';
       return `<tr class="sv-color-row sv-cr-${item.id}" style="display:none;background:#fafafa">
         <td style="padding-left:22px;font-size:12px;color:#374151;border-bottom:1px solid #f1f5f9">
@@ -249,6 +256,7 @@ function renderStockView(){
         </td>
         <td class="td-center" style="font-size:13px;font-weight:700;color:${sColor};border-bottom:1px solid #f1f5f9">${sC}</td>
         <td class="td-center" style="font-size:13px;font-weight:700;color:${pColor};border-bottom:1px solid #f1f5f9">${pC}</td>
+        <td class="td-center" style="font-size:13px;font-weight:700;color:${oColor};border-bottom:1px solid #f1f5f9">${oC}</td>
         <td class="td-center" style="font-size:13px;font-weight:800;color:${tColor};border-bottom:1px solid #f1f5f9">${tot}</td>
       </tr>`;
     }).join('');
@@ -259,7 +267,8 @@ function renderStockView(){
       </td>
       <td class="td-center"><span style="font-size:15px;font-weight:800;color:${sTotal===0?'#dc2626':sTotal<=3?'#d97706':'#1e40af'}">${sTotal}</span></td>
       <td class="td-center"><span style="font-size:15px;font-weight:800;color:${pTotal===0?'#dc2626':pTotal<=3?'#d97706':'#065f46'}">${pTotal}</span></td>
-      <td class="td-center"><span style="font-size:15px;font-weight:800;color:${grandTotal===0?'#dc2626':grandTotal<=3?'#d97706':'#111827'}">${grandTotal}</span></td>
+      <td class="td-center"><span style="font-size:15px;font-weight:800;color:${oTotal===0?'#9ca3af':'#7c2d12'}" title="오산은 발주 대상 아님(재고 관리 전용)">${oTotal}</span></td>
+      <td class="td-center"><span style="font-size:15px;font-weight:800;color:${orderableTotal===0?'#dc2626':orderableTotal<=3?'#d97706':'#111827'}">${orderableTotal}</span></td>
     </tr>${colorRows}`;
   }).join('');
 
@@ -275,19 +284,25 @@ function renderStockView(){
         <p style="font-size:11px;font-weight:700;color:#16a34a;margin-bottom:2px">평택 재고</p>
         <p style="font-size:28px;font-weight:800;color:#065f46">${pyeongtaekTotal}개</p>
       </div>
+      <!-- [2026-07-24] 오산 재고 카드 (발주 대상 아님, 재고 관리 전용) -->
+      <div style="background:#fef7ed;border:1px solid #fed7aa;border-radius:var(--r);padding:12px 20px">
+        <p style="font-size:11px;font-weight:700;color:#c2410c;margin-bottom:2px">오산 재고</p>
+        <p style="font-size:28px;font-weight:800;color:#7c2d12">${osanTotal}개</p>
+      </div>
     </div>
     <div class="card">
       <div class="card-header">
         <h3>서랍장 재고 (창고별 · 색상별)</h3>
         <input class="form-input" id="sv-search-input" placeholder="품목명 검색" value="${_stockViewSearch}" style="max-width:150px;padding:5px 8px;font-size:12px"/>
       </div>
-      <p style="font-size:12px;color:#94a3b8;padding:0 16px 8px">품목 행을 클릭하면 색상별 재고를 확인할 수 있습니다.</p>
+      <p style="font-size:12px;color:#94a3b8;padding:0 16px 8px">품목 행을 클릭하면 색상별 재고를 확인할 수 있습니다. <span style="color:#c2410c">*오산은 발주 대상 아님 (재고 관리 전용).</span></p>
       <div class="table-wrap"><table>
         <thead><tr>
           <th>품목 / 색상</th>
           <th class="td-center" style="color:#1e40af">시흥</th>
           <th class="td-center" style="color:#065f46">평택</th>
-          <th class="td-center">합계</th>
+          <th class="td-center" style="color:#7c2d12" title="오산은 발주 대상 아님(재고 관리 전용)">오산*</th>
+          <th class="td-center" title="발주 가능 재고 (시흥+평택)">발주가능</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
@@ -442,7 +457,7 @@ function renderInventory(filterItemId){
         #inv-stock-table tr.inv-main-row {
           display:grid !important;
           grid-template-columns:1fr auto;
-          grid-template-rows:auto auto auto;
+          grid-template-rows:auto auto auto auto;
           gap:6px 8px;
           padding:12px;
           margin-bottom:6px;
@@ -451,10 +466,11 @@ function renderInventory(filterItemId){
           border-radius:8px;
         }
         #inv-stock-table tr.inv-main-row td { display:block !important; padding:0 !important; border:none !important; }
-        /* Row 1: 품목명(좌) | 합계(우, 큰 글씨) */
+        /* [2026-07-24 Codex-Medium-5] 오산 컬럼 추가 후 열 순서: 1=품목 2=구분 3=시흥 4=평택 5=오산 6=발주가능 7=처리 */
+        /* Row 1: 품목명(좌) | 발주가능 합계(우, 큰 글씨) */
         #inv-stock-table tr.inv-main-row td:nth-child(1) { grid-column:1; grid-row:1; font-size:14px; font-weight:700; }
-        #inv-stock-table tr.inv-main-row td:nth-child(5) { grid-column:2; grid-row:1; justify-self:end; }
-        #inv-stock-table tr.inv-main-row td:nth-child(5)::before { content:"합계 "; color:var(--text-3); font-size:11px; }
+        #inv-stock-table tr.inv-main-row td:nth-child(6) { grid-column:2; grid-row:1; justify-self:end; }
+        #inv-stock-table tr.inv-main-row td:nth-child(6)::before { content:"발주가능 "; color:var(--text-3); font-size:11px; }
         /* 구분 chip 숨김 (공간 절약) */
         #inv-stock-table tr.inv-main-row td:nth-child(2) { display:none !important; }
         /* Row 2: 시흥(좌) | 평택(우) */
@@ -462,8 +478,11 @@ function renderInventory(filterItemId){
         #inv-stock-table tr.inv-main-row td:nth-child(3)::before { content:"시흥 "; color:var(--text-3); font-size:11px; }
         #inv-stock-table tr.inv-main-row td:nth-child(4) { grid-column:2; grid-row:2; justify-self:end; font-size:12px; }
         #inv-stock-table tr.inv-main-row td:nth-child(4)::before { content:"평택 "; color:var(--text-3); font-size:11px; }
-        /* Row 3: 처리 버튼 */
-        #inv-stock-table tr.inv-main-row td:nth-child(6) { grid-column:1/-1; grid-row:3; margin-top:4px; padding-top:6px !important; border-top:1px solid #f1f5f9; }
+        /* Row 3: 오산 (좌, 참고용 회색) */
+        #inv-stock-table tr.inv-main-row td:nth-child(5) { grid-column:1/-1; grid-row:3; font-size:11px; color:var(--text-3); }
+        #inv-stock-table tr.inv-main-row td:nth-child(5)::before { content:"오산 (참고) "; color:var(--text-3); font-size:11px; }
+        /* Row 4: 처리 버튼 */
+        #inv-stock-table tr.inv-main-row td:nth-child(7) { grid-column:1/-1; grid-row:4; margin-top:4px; padding-top:6px !important; border-top:1px solid #f1f5f9; }
 
         /* 재고 기록 표 — 카드형 */
         #inv-log-table { display:block !important; width:100% !important; }
@@ -511,15 +530,20 @@ function renderInventory(filterItemId){
   const lowCount=allItems.filter(i=>i.currentStock>0&&i.currentStock<=3).length;
 
   // 현재고 표 — 색상별 행 표시
+  // [2026-07-24] 오산 창고 컬럼 추가 (재고 관리 전용, 발주 대상 아님)
   const tableRows=items.map(item=>{
     const sTotal=item.stockSiheung!==undefined?item.stockSiheung:item.currentStock;
     const pTotal=item.stockPyeongtaek||0;
-    const grandTotal=sTotal+pTotal;
-    const rowBg=grandTotal===0?'background:#fef2f2':grandTotal<=3?'background:#fffbeb':'';
+    const oTotal=item.stockOsan||0;
+    // [2026-07-24 Codex-High-4] 필터(currentStock=시흥+평택)와 표시 기준 통일. 오산은 발주 대상 아님.
+    const orderableTotal=sTotal+pTotal;
+    const rowBg=orderableTotal===0?'background:#fef2f2':orderableTotal<=3?'background:#fffbeb':'';
     // 색상별 행 생성
     const colorRows=SHELF_COLORS.map(color=>{
       const sC=(item.colorStockSiheung||{})[color]||0;
       const pC=(item.colorStockPyeongtaek||{})[color]||0;
+      const oC=(item.colorStockOsan||{})[color]||0;
+      // [2026-07-24 Codex-High-4] 색상 합계도 발주 가능 재고(시흥+평택)만
       const tot=sC+pC;
       const cColor=tot===0?'#9ca3af':tot<=3?'#d97706':'var(--text)';
       return `<tr class="inv-color-row" style="background:#fafafa">
@@ -527,6 +551,7 @@ function renderInventory(filterItemId){
         <td class="td-center" style="font-size:11px;color:#9ca3af"></td>
         <td class="td-center"><span style="font-size:13px;font-weight:600;color:${sC===0?'#9ca3af':sC<=3?'#d97706':'#1e40af'}">${sC}</span></td>
         <td class="td-center"><span style="font-size:13px;font-weight:600;color:${pC===0?'#9ca3af':pC<=3?'#d97706':'#065f46'}">${pC}</span></td>
+        <td class="td-center"><span style="font-size:13px;font-weight:600;color:${oC===0?'#9ca3af':oC<=3?'#d97706':'#7c2d12'}">${oC}</span></td>
         <td class="td-center"><span style="font-size:13px;font-weight:700;color:${cColor}">${tot}</span></td>
         <td></td>
       </tr>`;
@@ -536,7 +561,8 @@ function renderInventory(filterItemId){
       <td class="td-center">${drawerBadge(item)}</td>
       <td class="td-center"><span class="td-num" style="font-size:14px;font-weight:700;color:${sTotal===0?'#dc2626':sTotal<=3?'#d97706':'#1e40af'}">${sTotal}</span></td>
       <td class="td-center"><span class="td-num" style="font-size:14px;font-weight:700;color:${pTotal===0?'#dc2626':pTotal<=3?'#d97706':'#065f46'}">${pTotal}</span></td>
-      <td class="td-center"><span class="td-num" style="font-size:14px;font-weight:700;color:${grandTotal===0?'#dc2626':grandTotal<=3?'#d97706':'var(--text)'}">${grandTotal}</span></td>
+      <td class="td-center"><span class="td-num" style="font-size:14px;font-weight:700;color:${oTotal===0?'#9ca3af':'#7c2d12'}" title="오산은 발주 대상 아님">${oTotal}</span></td>
+      <td class="td-center"><span class="td-num" style="font-size:14px;font-weight:700;color:${orderableTotal===0?'#dc2626':orderableTotal<=3?'#d97706':'var(--text)'}" title="발주 가능 재고 (시흥+평택)">${orderableTotal}</span></td>
       <td class="td-center">
         <div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap">
           <button class="btn btn-xs inv-action-btn" style="background:#dbeafe;color:#1e40af;border:none" data-inv-id="${item.id}" data-inv-type="입고">입고</button>
@@ -546,7 +572,7 @@ function renderInventory(filterItemId){
         </div>
       </td>
     </tr>${colorRows}`;
-  }).join('')||'<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-3)">검색 결과가 없습니다.</td></tr>';
+  }).join('')||'<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-3)">검색 결과가 없습니다.</td></tr>';
 
   // 재고 기록 필터 상태 (renderInventory 호출 시 품목 필터 주입 가능)
   if(filterItemId!==undefined)stockLogItem=String(filterItemId);
@@ -577,7 +603,10 @@ function renderInventory(filterItemId){
     const it=logItems.find(i=>i.id===l.itemId);
     const typeCls=logTypeCls(l.type);
     const orderLink=l.orderId?`<button class="btn btn-ghost btn-xs slog-order-link" data-order-id="${l.orderId}" style="font-size:11px;padding:1px 5px">#${l.orderId}</button>`:'-';
-    const whBadge=l.warehouse?`<span style="font-size:10px;padding:1px 6px;border-radius:20px;font-weight:700;background:${l.warehouse==='시흥'?'#dbeafe':'#dcfce7'};color:${l.warehouse==='시흥'?'#1e40af':'#065f46'}">${l.warehouse}</span>`:'<span style="font-size:10px;color:var(--text-3)">-</span>';
+    // [2026-07-24] 오산 뱃지 색상 (평택=녹색, 시흥=파랑, 오산=주황)
+    const _whBg=l.warehouse==='시흥'?'#dbeafe':l.warehouse==='평택'?'#dcfce7':l.warehouse==='오산'?'#fef7ed':'#f3f4f6';
+    const _whFg=l.warehouse==='시흥'?'#1e40af':l.warehouse==='평택'?'#065f46':l.warehouse==='오산'?'#7c2d12':'#6b7280';
+    const whBadge=l.warehouse?`<span style="font-size:10px;padding:1px 6px;border-radius:20px;font-weight:700;background:${_whBg};color:${_whFg}">${l.warehouse}</span>`:'<span style="font-size:10px;color:var(--text-3)">-</span>';
     const colorBadge=l.color?`<span style="font-size:10px;padding:1px 6px;border-radius:20px;background:#ede9fe;color:#6d28d9;font-weight:700">${l.color}</span>`:'<span style="font-size:10px;color:var(--text-3)">-</span>';
     return`<tr>
       <td class="td-muted" style="font-size:11px;white-space:nowrap">${fmtDt(l.createdAt)}</td>
@@ -594,9 +623,11 @@ function renderInventory(filterItemId){
   const invPgHtml=makePaginationHtml(totalInvLog,invLogPage,INVPER,'_goInvLogPage');
   const selSiheung=selItem?(selItem.stockSiheung!==undefined?selItem.stockSiheung:selItem.currentStock):0;
   const selPyeongtaek=selItem?(selItem.stockPyeongtaek||0):0;
+  const selOsan=selItem?(selItem.stockOsan||0):0;
   const summaryHtml=selItem?`<div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
     <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:var(--r);padding:10px 16px"><p style="font-size:10px;font-weight:700;color:#3b82f6;margin-bottom:2px">시흥 재고</p><p style="font-size:22px;font-weight:800;color:${selSiheung===0?'#dc2626':'#1e40af'}">${selSiheung}</p></div>
     <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:var(--r);padding:10px 16px"><p style="font-size:10px;font-weight:700;color:#16a34a;margin-bottom:2px">평택 재고</p><p style="font-size:22px;font-weight:800;color:${selPyeongtaek===0?'#dc2626':'#065f46'}">${selPyeongtaek}</p></div>
+    <div style="background:#fef7ed;border:1px solid #fed7aa;border-radius:var(--r);padding:10px 16px"><p style="font-size:10px;font-weight:700;color:#c2410c;margin-bottom:2px">오산 재고</p><p style="font-size:22px;font-weight:800;color:${selOsan===0?'#dc2626':'#7c2d12'}">${selOsan}</p></div>
     <div style="background:#fff;border:1px solid var(--border);border-radius:var(--r);padding:10px 16px"><p style="font-size:10px;font-weight:700;color:var(--text-3);margin-bottom:2px">누적 입고</p><p style="font-size:22px;font-weight:800;color:#16a34a">+${totalIn}</p></div>
     <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:var(--r);padding:10px 16px"><p style="font-size:10px;font-weight:700;color:#dc2626;margin-bottom:2px">누적 출고</p><p style="font-size:22px;font-weight:800;color:#dc2626">-${totalOut}</p></div>
     <div style="background:#fff;border:1px solid var(--border);border-radius:var(--r);padding:10px 16px"><p style="font-size:10px;font-weight:700;color:var(--text-3);margin-bottom:2px">최근 7일</p><p style="font-size:22px;font-weight:800;color:#1d4ed8">${recent7}건</p></div>
@@ -620,8 +651,13 @@ function renderInventory(filterItemId){
         <p style="font-size:11px;font-weight:700;color:#16a34a;margin-bottom:3px">평택 재고</p>
         <p style="font-size:26px;font-weight:800;color:#065f46">${allItems.reduce((s,i)=>s+(i.stockPyeongtaek||0),0)}</p>
       </div>
+      <!-- [2026-07-24] 오산 재고 (재고 관리 전용, 발주 대상 아님) -->
+      <div style="background:#fef7ed;border:1px solid #fed7aa;border-radius:var(--r);padding:12px 20px;min-width:120px">
+        <p style="font-size:11px;font-weight:700;color:#c2410c;margin-bottom:3px">오산 재고</p>
+        <p style="font-size:26px;font-weight:800;color:#7c2d12">${allItems.reduce((s,i)=>s+(i.stockOsan||0),0)}</p>
+      </div>
       <div style="background:#fff;border:1px solid var(--border);border-radius:var(--r);padding:12px 20px;min-width:120px">
-        <p style="font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:3px">전체 합계</p>
+        <p style="font-size:11px;font-weight:700;color:var(--text-3);margin-bottom:3px">전체 합계 (발주 대상)</p>
         <p style="font-size:26px;font-weight:800;color:#374151">${totalStock}</p>
       </div>
       <div style="background:#fff;border:1px solid var(--border);border-radius:var(--r);padding:12px 20px;min-width:120px">
@@ -655,7 +691,7 @@ function renderInventory(filterItemId){
         </div>
       </div>
       <div class="table-wrap"><table id="inv-stock-table">
-        <thead><tr><th>품목명</th><th class="td-center">구분</th><th class="td-center" style="color:#1e40af">시흥</th><th class="td-center" style="color:#065f46">평택</th><th class="td-center">합계</th><th class="td-center" style="min-width:200px">처리</th></tr></thead>
+        <thead><tr><th>품목명</th><th class="td-center">구분</th><th class="td-center" style="color:#1e40af">시흥</th><th class="td-center" style="color:#065f46">평택</th><th class="td-center" style="color:#7c2d12" title="오산은 발주 대상 아님(재고 관리 전용)">오산*</th><th class="td-center" title="발주 가능 재고 (시흥+평택)">발주가능</th><th class="td-center" style="min-width:200px">처리</th></tr></thead>
         <tbody>${tableRows}</tbody>
       </table></div>
     </div>
@@ -738,8 +774,11 @@ function invSelectWarehouse(wh){
   document.getElementById('inv-warehouse').value=wh;
   const sBtn=document.getElementById('inv-wh-siheung');
   const pBtn=document.getElementById('inv-wh-pyeongtaek');
+  const oBtn=document.getElementById('inv-wh-osan');
   if(sBtn){sBtn.style.background=wh==='시흥'?'var(--primary)':'';sBtn.style.color=wh==='시흥'?'#fff':'';sBtn.style.borderColor=wh==='시흥'?'var(--primary)':'';}
   if(pBtn){pBtn.style.background=wh==='평택'?'var(--primary)':'';pBtn.style.color=wh==='평택'?'#fff':'';pBtn.style.borderColor=wh==='평택'?'var(--primary)':'';}
+  // [2026-07-24] 오산 버튼 처리 (재고 관리 전용)
+  if(oBtn){oBtn.style.background=wh==='오산'?'var(--primary)':'';oBtn.style.color=wh==='오산'?'#fff':'';oBtn.style.borderColor=wh==='오산'?'var(--primary)':'';}
   updateInvPreview();
 }
 
@@ -750,16 +789,18 @@ function openInvModal(itemId,type){
   document.getElementById('inv-modal-title').innerHTML=`<span style="color:${typeColor}">${type}</span> 처리`;
   const sStock=item.stockSiheung!==undefined?item.stockSiheung:item.currentStock;
   const pStock=item.stockPyeongtaek||0;
-  // 색상별 재고 요약 표시
+  const oStock=item.stockOsan||0;
+  // 색상별 재고 요약 표시 (오산 포함)
   const colorSummary=SHELF_COLORS.map(c=>{
     const cs=item.colorStockSiheung||{};
     const cp=item.colorStockPyeongtaek||{};
-    const tot=(cs[c]||0)+(cp[c]||0);
+    const co=item.colorStockOsan||{};
+    const tot=(cs[c]||0)+(cp[c]||0)+(co[c]||0);
     return tot>0?`${c}:${tot}`:null;
   }).filter(Boolean).join(', ');
   document.getElementById('inv-modal-info').innerHTML=
     `<strong>${item.name}</strong><br>`+
-    `<span style="font-size:12px;color:#1e40af">시흥 계: ${sStock}개</span> &nbsp;/&nbsp; <span style="font-size:12px;color:#065f46">평택 계: ${pStock}개</span>`+
+    `<span style="font-size:12px;color:#1e40af">시흥: ${sStock}</span> &nbsp;/&nbsp; <span style="font-size:12px;color:#065f46">평택: ${pStock}</span> &nbsp;/&nbsp; <span style="font-size:12px;color:#7c2d12">오산: ${oStock}</span>`+
     (colorSummary?`<br><span style="font-size:11px;color:var(--text-3)">${colorSummary}</span>`:'');
   document.getElementById('inv-qty-label').innerHTML=type==='조정'?'조정 후 재고 수량 <span class="req">*</span>':`${type} 수량 <span class="req">*</span>`;
   document.getElementById('inv-qty').value='';

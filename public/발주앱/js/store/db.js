@@ -1466,6 +1466,24 @@ async function saveOrder(payload, saveMode='발주확정'){
   // [2026-07-15 Critical 1] _editOverride 클리어를 저장 성공 후로 이동 — 실패 시 재시도가 편집 모드 유지되도록 (중복 발주서 생성 방지)
   const _eo=window._editOverride||null;
 
+  // [2026-07-24 Codex-재검토-Critical-2] warehouse 검증을 서버 ID 발급 전에 수행
+  // - 임시저장만 빈 창고 허용 (선택 미완료 상태)
+  // - 발주대기·발주확정 등 재고 차감 모드는 반드시 시흥|평택 강제
+  // - 오산은 재고 관리 전용, 발주 대상 절대 아님
+  const _preWarehouse=payload.warehouse||'';
+  const _preSaveMode=_eo?(_eo.status||saveMode):saveMode;
+  if(_preSaveMode!=='임시저장'){
+    if(!_preWarehouse){
+      throw new Error('발주 창고를 선택해주세요. (시흥 또는 평택)');
+    }
+    if(_preWarehouse!=='시흥'&&_preWarehouse!=='평택'){
+      throw new Error('발주 창고는 시흥 또는 평택만 가능합니다. (입력: '+_preWarehouse+')');
+    }
+  } else if(_preWarehouse&&_preWarehouse!=='시흥'&&_preWarehouse!=='평택'){
+    // 임시저장이라도 오산 등 잘못된 값은 거부
+    throw new Error('발주 창고는 시흥 또는 평택만 가능합니다. (입력: '+_preWarehouse+')');
+  }
+
   // ── 서버 단일 ID 발급 (PC간 번호 충돌 방지) ──
   const _drawerCount=Array.isArray(payload.drawerItems)?payload.drawerItems.length:0;
   const _idCounts={};
@@ -1492,7 +1510,7 @@ async function saveOrder(payload, saveMode='발주확정'){
   const orderNum=_eo?_eo.orderNum:await generateOrderNum(payload.orderDate||todayStr());
   const effectiveSaveMode=_eo?(_eo.status||saveMode):saveMode;
   const savedDrawerItems=[];let shortageCount=0;
-  // 임시저장은 창고 미선택 허용, 차감 시에는 시흥 기본값 사용
+  // 임시저장은 창고 미선택 허용, 차감 시에는 시흥 기본값 사용 (검증은 함수 상단에서 완료)
   const warehouse=payload.warehouse||'';
 
   // 서랍장 항목 재고 비교 · 차감 · 발주 필요 목록 생성
@@ -1508,7 +1526,8 @@ async function saveOrder(payload, saveMode='발주확정'){
     const shortage=isTrackStock(item)?calcShortage(requiredQty,whStock):0;
     savedDrawerItems.push({id:_popId('order_items'),orderId,itemId,requiredQty,color:orderColor,currentStockSnapshot:whStock,shortageQty:shortage,warehouse,createdAt:now,handleOption:drawerItem.handleOption||'basic',displayName:drawerItem.displayName||'',note:drawerItem.note||'',subTypeChecked:drawerItem.subTypeChecked||[]});
     if(shortage>0){
-      prs.push({id:_popId('purchase_requests'),orderId,itemId,requiredQty,currentStockSnapshot:whStock,shortageQty:shortage,warehouse,status:'대기',createdAt:now,updatedAt:now});
+      // [2026-07-24 Codex-재검토-Critical-1] color 저장 — 다른 색상 입고에 오인 자동완료 방지
+      prs.push({id:_popId('purchase_requests'),orderId,itemId,requiredQty,color:orderColor||'',currentStockSnapshot:whStock,shortageQty:shortage,warehouse,status:'대기',createdAt:now,updatedAt:now});
       shortageCount++;
     }
     // 서랍장 실재고 차감 — 발주대기·발주확정 모두 발주 넣는 시점에 즉시 차감 (임시저장은 미차감)
@@ -1589,4 +1608,11 @@ async function saveOrder(payload, saveMode='발주확정'){
   // [2026-07-15 Critical 1] 저장 성공 후에만 _editOverride 클리어 — 실패 시 편집 모드 유지
   if(_eo) window._editOverride=null;
   return{orderId,shortageCount};
+}
+
+// [2026-07-24 Codex] localhost/127.0.0.1에서만 DB를 window에 노출 (E2E·QA 편의)
+// 운영 hosting에서는 노출 X — 콘솔 조작 공격면 축소
+if(typeof window!=='undefined'){
+  const _h=(location&&location.hostname)||'';
+  if(_h==='localhost'||_h==='127.0.0.1') window.DB=DB;
 }

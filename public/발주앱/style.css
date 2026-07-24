@@ -796,16 +796,21 @@ tbody tr:last-child td{border-bottom:none}
   }
 }
 
-/* ── 모바일 현재고 표 — 시흥/평택/합계 라벨 자동 표시 ── */
+/* ── 모바일 색상 서브행 재고 라벨 (inv-color-row만) ── */
+/* [2026-07-24 Codex-재검토-Medium] inv-main-row 모바일 재구성은 inventory.js가 담당.
+   여기서는 color 서브 행에만 라벨을 붙이고, 오산 컬럼 추가된 열 순서(5=오산, 6=발주가능)에 맞춤. */
 @media(max-width:640px){
-  #inv-stock-table td:nth-child(3)::before{
+  #inv-stock-table tr.inv-color-row td:nth-child(3)::before{
     content:"시흥 ";font-size:10px;font-weight:700;color:#1e40af;margin-right:2px;
   }
-  #inv-stock-table td:nth-child(4)::before{
+  #inv-stock-table tr.inv-color-row td:nth-child(4)::before{
     content:"평택 ";font-size:10px;font-weight:700;color:#065f46;margin-right:2px;
   }
-  #inv-stock-table td:nth-child(5)::before{
-    content:"합계 ";font-size:10px;font-weight:700;color:#374151;margin-right:2px;
+  #inv-stock-table tr.inv-color-row td:nth-child(5)::before{
+    content:"오산 ";font-size:10px;font-weight:700;color:#7c2d12;margin-right:2px;
+  }
+  #inv-stock-table tr.inv-color-row td:nth-child(6)::before{
+    content:"발주가능 ";font-size:10px;font-weight:700;color:#374151;margin-right:2px;
   }
 }
 

@@ -1,6 +1,30 @@
 // ── 발주 관리 (상태/잠금/목록/상세/수정/복사) ──
 // 의존: js/store/db.js, js/utils/uiUtils.js, js/utils.js, js/price.js, js/inventory.js
 
+// [2026-07-24 Codex-3차] 발주 재고 조작 창고 방어 헬퍼 (fail-closed)
+// - wh가 유효(시흥/평택)면 그대로 사용
+// - wh만 invalid이고 fallback이 유효면 fallback 사용 (아이템별 override 오류 방어)
+// - 둘 다 invalid이면 throw
+function _orderableWh(wh, fallback){
+  if(wh==='시흥'||wh==='평택') return wh;
+  if(fallback==='시흥'||fallback==='평택') return fallback;
+  throw new Error('발주 창고 데이터 오류: wh='+wh+', fallback='+fallback);
+}
+
+// [2026-07-24 Codex-3차 atomicity] 재고 mutation 전에 모든 아이템의 warehouse를 사전 검증.
+// 하나라도 실패면 즉시 throw → 어떤 items/logs/order 변경도 발생하지 않음.
+// 서랍장(재고 추적) 아이템만 검증 (재고 조작 대상만).
+// dbItems: DB.get('items') 결과 배열 (category 판정용, mutation 없음)
+function _assertOrderableWarehouses(oiList, orderWh, dbItems){
+  for(const oi of (oiList||[])){
+    const it=dbItems.find(x=>x.id===oi.itemId);
+    if(!it) continue; // 삭제된 품목은 어차피 처리 안 됨
+    if(it.category!=='서랍장') continue; // 재고 조작 대상 아님
+    // _orderableWh 호출 — 유효/fallback 판정, invalid이면 throw
+    _orderableWh(oi.warehouse, orderWh);
+  }
+}
+
 // ── 동시 작업 차단 가드 (Phase 1: race condition 1차 방어) ──
 // 같은 발주서 + 같은 작업을 중복 실행하지 못하게 막음.
 // 008 발주서 사라짐 같은 사고의 1차 원인(빠른 더블 클릭/중복 호출) 차단.
@@ -63,6 +87,8 @@ async function changeOrderStatus(orderId, newStatus){
     // 서버에서 로그 id 배치 발급 (forEach 진입 전, 실패 시 throw)
     let _logIds=[];
     const _items=(order.drawerItems||order.items||[]);
+    // [2026-07-24 Codex-3차 atomicity] mutation 전에 전수 warehouse 검증
+    _assertOrderableWarehouses(_items, confWh, dbItems);
     if(_items.length>0) _logIds=await _serverGetLogIds(_items.length);
     _items.forEach(oi=>{
       const iIdx=dbItems.findIndex(i=>i.id===oi.itemId);
@@ -70,7 +96,7 @@ async function changeOrderStatus(orderId, newStatus){
       if(dbItems[iIdx].category!=='서랍장')return;
       if(dbItems[iIdx].stockSiheung===undefined)dbItems[iIdx].stockSiheung=dbItems[iIdx].currentStock||0;
       if(dbItems[iIdx].stockPyeongtaek===undefined)dbItems[iIdx].stockPyeongtaek=0;
-      const wh=oi.warehouse||confWh;
+      const wh=_orderableWh(oi.warehouse, confWh);
       const whKey=getWhKey(wh);
       const cwKey=getColorWhKey(wh);
       const oiColor=oi.color||order.sharedColor||'';
@@ -102,6 +128,8 @@ async function changeOrderStatus(orderId, newStatus){
     // 서버에서 로그 id 배치 발급 (forEach 진입 전, 실패 시 throw)
     let _logIds=[];
     const _items=(order.drawerItems||order.items||[]);
+    // [2026-07-24 Codex-3차 atomicity] mutation 전에 전수 warehouse 검증
+    _assertOrderableWarehouses(_items, rollWh, dbItems);
     if(_items.length>0) _logIds=await _serverGetLogIds(_items.length);
     _items.forEach(oi=>{
       const iIdx=dbItems.findIndex(i=>i.id===oi.itemId);
@@ -109,7 +137,7 @@ async function changeOrderStatus(orderId, newStatus){
       if(dbItems[iIdx].category!=='서랍장')return;
       if(dbItems[iIdx].stockSiheung===undefined)dbItems[iIdx].stockSiheung=dbItems[iIdx].currentStock||0;
       if(dbItems[iIdx].stockPyeongtaek===undefined)dbItems[iIdx].stockPyeongtaek=0;
-      const wh=oi.warehouse||rollWh;
+      const wh=_orderableWh(oi.warehouse, rollWh);
       const whKey=getWhKey(wh);
       const cwKey=getColorWhKey(wh);
       const oiColor=oi.color||order.sharedColor||'';
@@ -180,6 +208,8 @@ async function cancelOrder(orderId, cancelReason){
     // 서버에서 로그 id 배치 발급 (forEach 진입 전, 실패 시 throw)
     let _logIds=[];
     const _items=(order.drawerItems||order.items||[]);
+    // [2026-07-24 Codex-3차 atomicity] mutation 전에 전수 warehouse 검증
+    _assertOrderableWarehouses(_items, orderWh, items);
     if(_items.length>0) _logIds=await _serverGetLogIds(_items.length);
     _items.forEach(oi=>{
       const iIdx=items.findIndex(i=>i.id===oi.itemId);
@@ -187,7 +217,7 @@ async function cancelOrder(orderId, cancelReason){
       if(items[iIdx].category==='서랍장'){
         if(items[iIdx].stockSiheung===undefined)items[iIdx].stockSiheung=items[iIdx].currentStock||0;
         if(items[iIdx].stockPyeongtaek===undefined)items[iIdx].stockPyeongtaek=0;
-        const wh=oi.warehouse||orderWh;
+        const wh=_orderableWh(oi.warehouse, orderWh);
         const whKey=getWhKey(wh);
         const cwKey=getColorWhKey(wh);
         const oiColor=oi.color||order.sharedColor||'';
@@ -272,6 +302,8 @@ async function uncancelOrder(orderId){
     // 서버에서 로그 id 배치 발급 (forEach 진입 전, 실패 시 throw)
     let _logIds=[];
     const _items=(order.drawerItems||order.items||[]);
+    // [2026-07-24 Codex-3차 atomicity] mutation 전에 전수 warehouse 검증
+    _assertOrderableWarehouses(_items, orderWh, items);
     if(_items.length>0) _logIds=await _serverGetLogIds(_items.length);
     _items.forEach(oi=>{
       const iIdx=items.findIndex(i=>i.id===oi.itemId);
@@ -279,7 +311,7 @@ async function uncancelOrder(orderId){
       if(items[iIdx].category==='서랍장'){
         if(items[iIdx].stockSiheung===undefined)items[iIdx].stockSiheung=items[iIdx].currentStock||0;
         if(items[iIdx].stockPyeongtaek===undefined)items[iIdx].stockPyeongtaek=0;
-        const wh=oi.warehouse||orderWh;
+        const wh=_orderableWh(oi.warehouse, orderWh);
         const whKey=getWhKey(wh);
         const cwKey=getColorWhKey(wh);
         const oiColor=oi.color||order.sharedColor||'';
@@ -1492,6 +1524,8 @@ async function rollbackInventoryForEdit(order){
   const now=new Date().toISOString();
   const drawerRows=order.drawerItems||order.items||[];
   const editWh=order.warehouse||'시흥';
+  // [2026-07-24 Codex-3차 atomicity] mutation 전에 전수 warehouse 검증
+  _assertOrderableWarehouses(drawerRows, editWh, items);
   // 서버에서 로그 id 배치 발급 (forEach 진입 전, 실패 시 throw)
   let _logIds=[];
   if(drawerRows.length>0) _logIds=await _serverGetLogIds(drawerRows.length);
@@ -1500,7 +1534,7 @@ async function rollbackInventoryForEdit(order){
     if(iIdx===-1||items[iIdx].category!=='서랍장')return;
     if(items[iIdx].stockSiheung===undefined)items[iIdx].stockSiheung=items[iIdx].currentStock||0;
     if(items[iIdx].stockPyeongtaek===undefined)items[iIdx].stockPyeongtaek=0;
-    const wh=oi.warehouse||editWh;
+    const wh=_orderableWh(oi.warehouse, editWh);
     const whKey=getWhKey(wh);
     const cwKey=getColorWhKey(wh);
     const oiColor=oi.color||order.sharedColor||'';

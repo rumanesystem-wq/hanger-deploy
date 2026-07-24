@@ -287,10 +287,16 @@ function downloadInventoryExcel(){
   if(typeof XLSX==='undefined'){toast('엑셀 라이브러리를 불러오는 중입니다. 잠시 후 다시 시도해주세요.','error');return;}
   const items=getItems().filter(i=>i.isActive&&i.category==='서랍장'&&i.drawerType!=='handle');
   if(items.length===0){toast('재고 품목이 없습니다.','error');return;}
-  const header=['품목명','구분','세부유형','현재고','상태'];
+  // [2026-07-24 Codex-Medium-6] 창고별(시흥/평택/오산) + 발주가능(시흥+평택) + 물리합계 구분 출력
+  const header=['품목명','구분','세부유형','시흥','평택','오산*','발주가능(시흥+평택)','물리합계','상태'];
   const rows=items.map(i=>{
-    const status=i.currentStock===0?'재고없음':i.currentStock<=3?'부족':'정상';
-    return[i.name,i.category||'-',i.drawerType||'-',i.currentStock,status];
+    const s=(i.stockSiheung!==undefined?i.stockSiheung:i.currentStock)||0;
+    const p=i.stockPyeongtaek||0;
+    const o=i.stockOsan||0;
+    const orderable=s+p;
+    const physical=orderable+o;
+    const status=orderable===0?'재고없음':orderable<=3?'부족':'정상';
+    return[i.name,i.category||'-',i.drawerType||'-',s,p,o,orderable,physical,status];
   });
   const wb=XLSX.utils.book_new();
   const ws=XLSX.utils.aoa_to_sheet([header,...rows]);
@@ -300,14 +306,15 @@ function downloadInventoryExcel(){
             left:{style:'thin',color:{rgb:'93C5FD'}},right:{style:'thin',color:{rgb:'93C5FD'}}}};
   header.forEach((_,c)=>{const a=XLSX.utils.encode_cell({r:0,c});if(ws[a])ws[a].s=sTH;});
   rows.forEach((row,ri)=>{
-    const bg=row[3]===0?'FEF2F2':row[3]<=3?'FFFBEB':'FFFFFF';
+    // 상태 판정은 발주가능(index 6) 기준
+    const bg=row[6]===0?'FEF2F2':row[6]<=3?'FFFBEB':'FFFFFF';
     const s={font:{name:'맑은 고딕',sz:10},fill:{patternType:'solid',fgColor:{rgb:bg}},
       alignment:{horizontal:'left',vertical:'center'},
       border:{top:{style:'thin',color:{rgb:'CBD5E1'}},bottom:{style:'thin',color:{rgb:'CBD5E1'}},
               left:{style:'thin',color:{rgb:'CBD5E1'}},right:{style:'thin',color:{rgb:'CBD5E1'}}}};
     header.forEach((_,c)=>{const a=XLSX.utils.encode_cell({r:ri+1,c});if(ws[a])ws[a].s=s;});
   });
-  ws['!cols']=[{wch:22},{wch:10},{wch:12},{wch:8},{wch:8}];
+  ws['!cols']=[{wch:22},{wch:10},{wch:12},{wch:8},{wch:8},{wch:8},{wch:16},{wch:10},{wch:8}];
   ws['!rows']=[{hpt:20},...rows.map(()=>({hpt:18}))];
   XLSX.utils.book_append_sheet(wb,ws,'재고 현황');
   xlsxDownload(wb,`재고현황_${xlsxDate()}.xlsx`);
