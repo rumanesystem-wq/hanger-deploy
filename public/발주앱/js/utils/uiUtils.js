@@ -48,6 +48,7 @@ function isTrackStock(item){return !!item&&(item.category==='서랍장'||item.tr
 // 창고별 재고 반환 헬퍼 (color 지정 시 색상별 재고, 미지정 시 창고 합계)
 function getWarehouseStock(item,warehouse,color){
   if(!item||!isTrackStock(item))return 0;
+  if(item.noColor)color='';
   const cwKey=getColorWhKey(warehouse||'시흥');
   if(color){
     const cMap=item[cwKey]||{};

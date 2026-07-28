@@ -8,6 +8,7 @@ async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
   if(idx===-1)throw new Error('품목을 찾을 수 없습니다.');
   const item=items[idx];
   if(!isTrackStock(item))throw new Error('재고 관리 대상 품목만 재고를 처리할 수 있습니다.');
+  if(item.noColor)color='';
   // 서버에서 로그 id 1개 발급 — 실패 시 즉시 throw(상태 변경 전)
   const _logIds=await _serverGetLogIds(1);
   const wh=warehouse||'시흥';
@@ -397,7 +398,7 @@ function renderDashboard(){
     document.head.appendChild(s);
   }
   const items=getItems().filter(i=>i.isActive);
-  const drawerItems=items.filter(i=>i.category==='서랍장'&&i.drawerType!=='handle');
+  const drawerItems=items.filter(i=>isTrackStock(i)&&i.drawerType!=='handle');
   const orders=getOrders(),prs=getPRs(),logs=getLogs();
   const today=todayStr();
   // 관리자: 전체, 발주자: 본인 건만 (취소 제외)
@@ -480,9 +481,9 @@ function renderDashboard(){
   }
 
   if(isAdmin()){
-    html+=`<div class="card card-stock-wh"><div class="card-header"><h3>서랍장 재고 현황 (창고별)</h3><button class="btn btn-outline btn-sm" data-nav="inventory">전체보기</button></div>
+    html+=`<div class="card card-stock-wh"><div class="card-header"><h3>관리 품목 재고 현황 (창고별)</h3><button class="btn btn-outline btn-sm" data-nav="inventory">전체보기</button></div>
     <div class="table-wrap"><table><thead><tr><th>품목명</th><th class="td-center">구분</th><th class="td-center" style="color:#1e40af">시흥</th><th class="td-center" style="color:#065f46">평택</th></tr></thead><tbody>
-    ${drawerItems.slice(0,6).map(i=>{const s=i.stockSiheung!==undefined?i.stockSiheung:i.currentStock;const p=i.stockPyeongtaek||0;return`<tr><td class="td-name">${i.name}</td><td class="td-center">${drawerBadge(i)}</td><td class="td-center"><span style="font-weight:700;color:${s===0?'#dc2626':'#1e40af'}">${s}</span></td><td class="td-center"><span style="font-weight:700;color:${p===0?'#dc2626':'#065f46'}">${p}</span></td></tr>`;}).join('')}
+    ${drawerItems.slice(0,6).map(i=>{const s=i.stockSiheung!==undefined?i.stockSiheung:i.currentStock;const p=i.stockPyeongtaek||0;const typeBadge=drawerBadge(i)||`<span class="badge badge-gray" style="font-size:10px">${i.category||'-'}</span>`;return`<tr><td class="td-name">${i.name}</td><td class="td-center">${typeBadge}</td><td class="td-center"><span style="font-weight:700;color:${s===0?'#dc2626':'#1e40af'}">${s}</span></td><td class="td-center"><span style="font-weight:700;color:${p===0?'#dc2626':'#065f46'}">${p}</span></td></tr>`;}).join('')}
     </tbody></table></div></div>`;
   }else{
     // 발주자: +손잡이 제외, 색상별 재고 표시
@@ -491,7 +492,8 @@ function renderDashboard(){
       const sTotal=item.stockSiheung!==undefined?item.stockSiheung:item.currentStock;
       const pTotal=item.stockPyeongtaek||0;
       const itemBg=(sTotal+pTotal)===0?'background:#fef2f2':(sTotal+pTotal)<=3?'background:#fffbeb':'';
-      const colorDetail=SHELF_COLORS.map(color=>{
+      const colorList=typeof inventoryColorsForItem==='function'?inventoryColorsForItem(item):SHELF_COLORS;
+      const colorDetail=colorList.map(color=>{
         const sC=(item.colorStockSiheung||{})[color]||0;
         const pC=(item.colorStockPyeongtaek||{})[color]||0;
         const tot=sC+pC;
@@ -513,7 +515,7 @@ function renderDashboard(){
         <td class="td-center" style="font-weight:800;color:${(sTotal+pTotal)===0?'#dc2626':'#111827'}">${sTotal+pTotal}</td>
       </tr>${colorDetail}`;
     }).join('');
-    html+=`<div class="card"><div class="card-header"><h3><i class="fas fa-boxes-stacked" style="color:var(--primary-light)"></i> 서랍장 재고 현황</h3><button class="btn btn-outline btn-sm" data-nav="stock-view">전체 보기</button></div>
+    html+=`<div class="card"><div class="card-header"><h3><i class="fas fa-boxes-stacked" style="color:var(--primary-light)"></i> 관리 품목 재고 현황</h3><button class="btn btn-outline btn-sm" data-nav="stock-view">전체 보기</button></div>
     <div class="table-wrap"><table><thead><tr><th>품목 / 색상</th><th class="td-center" style="color:#1e40af">시흥</th><th class="td-center" style="color:#065f46">평택</th><th class="td-center">합계</th></tr></thead><tbody>
     ${dashColorRows}
     </tbody></table></div></div>`;
@@ -1981,17 +1983,18 @@ function renderItems(){
               : (item.prodCd ? `<i class="fas fa-check-circle" style="color:#7c3aed;margin-right:3px"></i>${item.prodCd.split(',').length}개 설정됨` : '<i class="fas fa-plus" style="margin-right:3px"></i>코드 설정')}
           </button>`;
       const displayName=PRICE_DISPLAY_LABEL[item.name]||item.name;
+      const trackStockItem=isTrackStock(item);
       return `<tr class="${cat==='서랍장'?'items-drawer':'items-other'}"${item.isActive?'':' style="opacity:.5"'}>
         <td class="td-name">${displayName}</td>
         ${cat==='서랍장'?`<td class="td-center">${drawerBadge(item)}</td>`:''}
-        <td class="td-center td-num" style="font-weight:700;color:${item.category==='서랍장'&&item.currentStock===0?'#dc2626':'var(--text)'}">${item.category==='서랍장'?item.currentStock:'-'}</td>
+        <td class="td-center td-num" style="font-weight:700;color:${trackStockItem&&item.currentStock===0?'#dc2626':'var(--text)'}">${trackStockItem?(item.currentStock||0):'-'}</td>
         <td class="td-center"><span class="item-price-display" data-item-name="${escapedName}" style="font-size:13px;font-weight:700;color:${priceColor}">${priceStr}</span></td>
         <td class="td-center">${prodCdCellInner}</td>
         <td class="td-center"><button class="toggle-active-btn" data-item-id="${item.id}"  style="width:44px;height:24px;border-radius:12px;border:none;cursor:pointer;background:${item.isActive?'var(--primary-light)':'#e2e8f0'};position:relative;transition:all .2s"><span style="position:absolute;top:3px;${item.isActive?'right:3px':'left:3px'};width:18px;height:18px;border-radius:9px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:all .2s"></span></button></td>
       </tr>`;
     }).join('');
     catHtml+=`<div class="card items-tbl-wrap" style="margin-bottom:16px">
-      <div class="card-header"><h3>${cat} <span style="font-size:12px;font-weight:400;color:var(--text-3)">${cat==='서랍장'?'(재고 관리 대상)':'(발주 기록만)'}</span></h3><span style="font-size:12px;color:var(--text-3)">${catItems.length}개</span></div>
+      <div class="card-header"><h3>${cat} <span style="font-size:12px;font-weight:400;color:var(--text-3)">${cat==='서랍장'||cat==='옵션'?'(재고 관리 대상)':'(발주 기록만)'}</span></h3><span style="font-size:12px;color:var(--text-3)">${catItems.length}개</span></div>
       <div class="table-wrap"><table>
         <thead><tr><th>품목명</th>${cat==='서랍장'?'<th class="td-center">구분</th>':''}<th class="td-center">현재고</th><th class="td-center">단가</th><th class="td-center" style="min-width:150px">이카운트 품목코드</th><th class="td-center">활성</th></tr></thead>
         <tbody>${rows}</tbody>
@@ -2087,6 +2090,7 @@ function renderItems(){
         if(items.find(i=>i.name===name)){toast('이미 같은 이름의 품목이 있습니다.','error');return;}
         // items 마스터에 push
         const newId=items.reduce((m,i)=>Math.max(m,i.id||0),0)+1;
+        const trackStockNew=cat==='서랍장'||cat==='옵션';
         const newItem={
           id:newId,
           name,
@@ -2094,9 +2098,14 @@ function renderItems(){
           isActive:true,
           noColor,
           isCustom:true,
-          currentStock:cat==='서랍장'?0:undefined,
-          stockSiheung:cat==='서랍장'?0:undefined,
-          stockPyeongtaek:cat==='서랍장'?0:undefined,
+          trackStock:trackStockNew?true:undefined,
+          currentStock:trackStockNew?0:undefined,
+          stockSiheung:trackStockNew?0:undefined,
+          stockPyeongtaek:trackStockNew?0:undefined,
+          stockOsan:trackStockNew?0:undefined,
+          colorStockSiheung:trackStockNew?{}:undefined,
+          colorStockPyeongtaek:trackStockNew?{}:undefined,
+          colorStockOsan:trackStockNew?{}:undefined,
         };
         // undefined 필드 제거 (Firestore 저장 안정성)
         Object.keys(newItem).forEach(k=>newItem[k]===undefined&&delete newItem[k]);
@@ -2821,6 +2830,18 @@ document.getElementById('content').addEventListener('click',async e=>{
   // 재고 처리 버튼
   const invBtn=e.target.closest('.inv-action-btn');
   if(invBtn){openInvModal(parseInt(invBtn.dataset.invId),invBtn.dataset.invType);return;}
+  // [2026-07-28] 모바일 재고 카드 탭 → 색상별 재고 펼치기/접기
+  const invMainRow=e.target.closest('#inv-stock-table tr.inv-main-row');
+  if(invMainRow && !e.target.closest('button')){
+    invMainRow.classList.toggle('expanded');
+    // 인접한 색상 서브 행들도 같이 토글 (다음 inv-main-row 전까지)
+    let sib=invMainRow.nextElementSibling;
+    while(sib && sib.classList.contains('inv-color-row')){
+      sib.classList.toggle('expanded');
+      sib=sib.nextElementSibling;
+    }
+    return;
+  }
   // 품목별 재고 기록 버튼 → 하단 기록 영역 필터
   const logBtn=e.target.closest('.inv-log-filter-btn');
   if(logBtn){

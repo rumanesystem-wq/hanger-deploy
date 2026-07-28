@@ -21,18 +21,34 @@
 </script>
 <script>
   // Service Worker 등록 + 자동 업데이트
+  const _isLocalPage = (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
   if('serviceWorker' in navigator){
     let _swReg=null;
     function _swCheckUpdate(){if(_swReg)_swReg.update().catch(()=>{});}
 
-    window.addEventListener('load',()=>{
-      navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'})
-        .then(reg=>{_swReg=reg;console.log('[PWA] SW 등록 완료');})
-        .catch(e=>console.warn('[PWA] SW 등록 실패',e));
-    });
+    // [2026-07-28] localhost 개발 환경에서는 SW 아예 등록 X (캐시 문제 근본 차단)
+    // 운영(hanger-deploy.web.app)에선 정상 등록 → PWA 설치·오프라인 대응
+    const _skipSWOnLocal = _isLocalPage;
+    if (_skipSWOnLocal) {
+      // 이미 등록된 SW는 언등록해서 잔여 캐시 문제 방지
+      navigator.serviceWorker.getRegistrations().then(regs => {
+        for (const r of regs) r.unregister();
+        console.log('[PWA] 로컬 개발 모드 → SW 등록 skip + 기존 SW 언등록');
+      });
+    } else {
+      window.addEventListener('load',()=>{
+        navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'})
+          .then(reg=>{_swReg=reg;console.log('[PWA] SW 등록 완료');})
+          .catch(e=>console.warn('[PWA] SW 등록 실패',e));
+      });
+    }
 
     // 새 SW 활성화 시 자동 새로고침
     navigator.serviceWorker.addEventListener('controllerchange',()=>{
+      if(_isLocalPage){
+        console.log('[PWA] 로컬 개발 모드 → controllerchange 자동 새로고침 무시');
+        return;
+      }
       console.log('[PWA] 새 SW 활성화 → 새로고침');
       location.reload();
     });
@@ -68,6 +84,7 @@
           v=v.trim();
           var stored=localStorage.getItem('_appVer');
           localStorage.setItem('_appVer',v);
+          if(_isLocalPage)return;
           if(stored&&stored!==v){console.log('[PWA] 새 버전 감지:',v,'→ 강제 새로고침');_hardReload();}
         }).catch(()=>{});
     }
@@ -126,10 +143,10 @@
 <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <!-- Firebase SDK (compat) -->
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-functions-compat.js"></script>
+<script src="./vendor/firebase/firebase-app-compat.js"></script>
+<script src="./vendor/firebase/firebase-auth-compat.js"></script>
+<script src="./vendor/firebase/firebase-firestore-compat.js"></script>
+<script src="./vendor/firebase/firebase-functions-compat.js"></script>
 <script src="firebase-config.js"></script>
 <script>
   (function(){
@@ -142,9 +159,81 @@
       const _isLocalEmu = (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
       if (_isLocalEmu) {
         try {
-          // [2026-07-09] 포트 8080→18080: 툭탁 에뮬레이터와 충돌 회피 (localhost 조건 안에만 있어 운영 영향 X)
-          db.useEmulator('localhost', 18080);
-          console.warn('🔧 [LOCAL EMULATOR MODE] Firestore: localhost:18080 (운영 DB 안 씁니다)');
+          // [2026-07-28] settings()로 host + longPolling 한 번에 지정 (useEmulator 호출 X)
+          // 이유: 크롬 확장/네트워크가 WebChannel 스트림 차단하는 경우 → longPolling 강제로 우회
+          // settings()는 첫 Firestore 사용 전에 반드시 호출되어야 함 (여기서 호출)
+          db.settings({
+            host: 'localhost:18080',
+            ssl: false,
+            experimentalForceLongPolling: true
+          });
+          console.warn('🔧 [LOCAL EMULATOR MODE] Firestore: localhost:18080 (운영 DB 안 씁니다, longPolling ON via settings)');
+          // [2026-07-28] 자동 진단·복구
+          // Step1: 도커 에뮬레이터가 열려있는지 (직접 fetch)
+          // Step2: Firestore SDK가 실제로 에뮬레이터에 붙었는지 (get 타임아웃)
+          // Step2 실패면 SW/캐시 문제 → 자동 초기화 + 리로드
+          setTimeout(async () => {
+            let dockerReachable = false;
+            try {
+              const ctl = new AbortController();
+              const to = setTimeout(() => ctl.abort(), 2500);
+              await fetch('http://localhost:18080/', { signal: ctl.signal, mode: 'no-cors' });
+              clearTimeout(to);
+              dockerReachable = true;
+              console.info('✅ [로컬 진단 1/2] 도커 에뮬레이터 도달 OK');
+            } catch(_) {
+              console.error('❌ [로컬 진단 1/2] 도커 에뮬레이터 도달 실패 — docker start hanger-emu 필요');
+              return; // 도커가 꺼져있으면 자동 복구 무의미
+            }
+            try {
+              const testP = db.collection('_diag').doc('_probe').get();
+              const timeoutP = new Promise((_, rej) => setTimeout(() => rej(new Error('SDK timeout')), 15000));
+              await Promise.race([testP, timeoutP]);
+              console.info('✅ [로컬 진단 2/2] Firestore SDK 에뮬레이터 연결 OK');
+              return; // 정상. 복구 불필요
+            } catch (err) {
+              console.error('❌ [로컬 진단 2/2] Firestore SDK 연결 실패 (도커는 OK) →', err.message);
+              // 이미 복구 시도했으면 더 이상 시도 X. 앱이 그냥 동작하게 냅둠 (실제 앱 로직에서 재시도).
+              if (location.search.includes('_rc=1')) {
+                console.warn('   자동 복구 이미 시도됨 → 앱 계속 진행. 실제 로그인 실패 시 브라우저 재시작 권장.');
+                return;
+              }
+              console.error('   원인 추정: SW/캐시 문제. 자동 복구 시도.');
+              // 큰 배너 + 자동 복구
+              const banner = document.createElement('div');
+              banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#dc2626;color:#fff;padding:14px;font-size:14px;font-weight:700;z-index:99999;text-align:center';
+              banner.innerHTML = '⚠️ 로컬 Firestore SDK 연결 실패 — SW/cache만 정리하고, 저장된 로컬 데이터로 계속 진행합니다.';
+              document.body.appendChild(banner);
+              // 무한 루프 방지: URL 파라미터로 복구 시도 마킹
+              const alreadyRecovered = location.search.includes('_rc=1');
+              if (alreadyRecovered) {
+                banner.innerHTML = '⚠️ 자동 복구 시도 후에도 연결 실패. 브라우저 완전 종료 후 재시작 필요 (도커 재시작도 확인).';
+                return;
+              }
+              try {
+                // 로컬 캐시 복구가 앱의 로컬 폴백 데이터와 로그인 유지 설정까지 날리지 않도록 보존한다.
+                const keepLocalStorage = {};
+                Object.keys(localStorage).filter((key) => key.indexOf('sh_') === 0).forEach((key) => {
+                  const value = localStorage.getItem(key);
+                  if (value !== null) keepLocalStorage[key] = value;
+                });
+                if (navigator.serviceWorker) {
+                  const regs = await navigator.serviceWorker.getRegistrations();
+                  for (const r of regs) await r.unregister();
+                }
+                if (typeof caches !== 'undefined') {
+                  const keys = await caches.keys();
+                  for (const k of keys) await caches.delete(k);
+                }
+                // 같은 창 로컬 QA에서는 로그인/앱 상태 보존이 더 중요하다.
+                // 전체 clear 금지: sh_*와 세션을 날리면 새로고침 로그아웃/부팅 꼬임이 생긴다.
+                Object.keys(keepLocalStorage).forEach((key) => {
+                  localStorage.setItem(key, keepLocalStorage[key]);
+                });
+              } catch (_) {}
+              // 자동 reload 금지: 같은 창에서 폴백(localStorage sh_* -> window._mem)으로 계속 진행한다.
+            }
+          }, 100);
         } catch(e) { console.error('[Emulator] Firestore 연결 실패:', e.message); }
       } else {
         console.log('☁️ [PRODUCTION MODE] 운영 Firestore 사용');
@@ -165,22 +254,38 @@
             const counts = (req && req.data && req.data.counts) || (req && req.counts) || {};
             const ids = {};
             for (const [key, n] of Object.entries(counts)) {
-              const ref = db.collection('hanger_data').doc('_seq_' + key);
-              await db.runTransaction(async (tx) => {
-                const snap = await tx.get(ref);
-                const cur = (snap.exists && snap.data().value) || 0;
+              try {
+                const ref = db.collection('hanger_data').doc('_seq_' + key);
+                await db.runTransaction(async (tx) => {
+                  const snap = await tx.get(ref);
+                  const cur = (snap.exists && snap.data().value) || 0;
+                  const arr = [];
+                  for (let i = 1; i <= n; i++) arr.push(cur + i);
+                  ids[key] = arr;
+                  tx.set(ref, { value: cur + n });
+                });
+              } catch (e) {
+                console.warn('[LOCAL EMULATOR MODE] getNextIds Firestore 실패 → localStorage seq fallback', key, e && e.message);
+                const seqKey = '_seq_' + key;
+                const cur = _localSeqFloor(key);
                 const arr = [];
                 for (let i = 1; i <= n; i++) arr.push(cur + i);
                 ids[key] = arr;
-                tx.set(ref, { value: cur + n });
-              });
+                try { localStorage.setItem('sh_' + seqKey, JSON.stringify(cur + n)); } catch (_) {}
+              }
             }
             return { data: { success: true, ids } };
           },
           getEmailById: async (req) => {
             const id = (req && req.data && req.data.id) || (req && req.id);
-            const snap = await db.collection('hanger_data').doc('accounts').get();
-            const accounts = (snap.exists && snap.data().value) || [];
+            let accounts = [];
+            try {
+              const snap = await db.collection('hanger_data').doc('accounts').get();
+              accounts = (snap.exists && snap.data().value) || [];
+            } catch (e) {
+              console.warn('[LOCAL EMULATOR MODE] getEmailById Firestore 실패 → localStorage accounts fallback', e && e.message);
+              accounts = _readLocalShValue('accounts') || [];
+            }
             const acc = accounts.find(a => a && a.id === id);
             return { data: { email: acc ? acc.email : null } };
           }
@@ -191,6 +296,46 @@
           getEmailById:           fnApp.httpsCallable('getEmailById'),
           getNextIds:             fnApp.httpsCallable('getNextIds')
         };
+      }
+
+      function _readLocalShValue(key) {
+        try {
+          const raw = localStorage.getItem('sh_' + key);
+          return raw == null ? null : JSON.parse(raw);
+        } catch (_) {
+          return null;
+        }
+      }
+      function _readAllLocalShValues() {
+        const result = {};
+        try {
+          Object.keys(localStorage).forEach((lk) => {
+            if (lk.indexOf('sh_') !== 0) return;
+            try {
+              result[lk.slice(3)] = JSON.parse(localStorage.getItem(lk));
+            } catch (_) {}
+          });
+        } catch (_) {}
+        return result;
+      }
+      function _localSeqFloor(key) {
+        const fromSeq = Number(_readLocalShValue('_seq_' + key) || 0);
+        const arr = _readLocalShValue(key);
+        let fromArray = 0;
+        if (Array.isArray(arr)) {
+          fromArray = arr.reduce((m, x) => Math.max(m, Number(x && x.id) || 0), 0);
+        }
+        if (key === 'order_items') {
+          const orders = _readLocalShValue('orders') || [];
+          if (Array.isArray(orders)) {
+            orders.forEach((o) => {
+              (o && (o.drawerItems || o.items) || []).forEach((oi) => {
+                fromArray = Math.max(fromArray, Number(oi && oi.id) || 0);
+              });
+            });
+          }
+        }
+        return Math.max(fromSeq, fromArray);
       }
 
       window._FS = {
@@ -207,7 +352,7 @@
           try {
             const snap = await db.collection('hanger_data').doc(key).get();
             return snap.exists ? snap.data().value : null;
-          } catch(e) { console.warn('[Firestore get 실패]', key, e.message); return null; }
+          } catch(e) { console.warn('[Firestore get 실패]', key, e.message); return _isLocalEmu ? _readLocalShValue(key) : null; }
         },
         async getAll() {
           try {
@@ -215,7 +360,7 @@
             const result = {};
             snaps.forEach(d => { result[d.id] = d.data().value; });
             return result;
-          } catch(e) { console.warn('[Firestore getAll 실패]', e.message); return {}; }
+          } catch(e) { console.warn('[Firestore getAll 실패]', e.message); return _isLocalEmu ? _readAllLocalShValues() : {}; }
         },
         // ── [2026-07-03] 컬렉션 단건 방식 (race-free + 1MB 한계 없음) ──
         // 발주서(hanger_orders)와 같은 패턴. 각 문서 별도 write.

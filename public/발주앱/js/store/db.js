@@ -752,7 +752,7 @@ const DEFAULT_ITEMS=[
   {name:'속서랍 4단',       category:'서랍장',drawerType:'inner',currentStock:0},
   {name:'겉서랍 아일랜드',  category:'서랍장',drawerType:'outer',currentStock:0},
   {name:'속서랍 아일랜드',  category:'서랍장',drawerType:'inner',currentStock:0},
-  // 옵션 (발주 기록만, 재고 미적용)
+  // 옵션 (활성 품목은 재고 관리 대상)
   {name:'거울장',              category:'옵션',currentStock:0},
   {name:'디바이더',            category:'옵션',currentStock:0},
   {name:'이불장',              category:'옵션',currentStock:0},
@@ -765,7 +765,17 @@ const DEFAULT_ITEMS=[
 function initData(){
   initAccounts();
   if(DB.get('items',[]).length===0){
-    DB.set('items',DEFAULT_ITEMS.map((it,i)=>({id:i+1,...it,isActive:true,createdAt:new Date().toISOString()})));
+    DB.set('items',DEFAULT_ITEMS.map((it,i)=>({
+      id:i+1,
+      ...it,
+      ...(it.category==='옵션'?{
+        trackStock:true,
+        stockSiheung:0,stockPyeongtaek:0,stockOsan:0,
+        colorStockSiheung:{},colorStockPyeongtaek:{},colorStockOsan:{}
+      }:{}),
+      isActive:true,
+      createdAt:new Date().toISOString()
+    })));
     DB.set('_seq_items',DEFAULT_ITEMS.length);
     DB.set('orders',[]);
     DB.set('purchase_requests',[]);
@@ -1338,6 +1348,33 @@ function initData(){
       // localStorage만 업데이트 (Firestore 직접 쓰기 금지 — syncFromServer 역업로드로 처리)
       if(_changed){DB.set('items',_items);console.log('[복구] 누락 품목 추가됨');}
     }
+    // 활성 옵션 전체를 재고 관리 대상으로 전환.
+    // 기존 재고 값은 보존하고, 없는 창고/색상 필드만 0/빈 객체로 초기화한다.
+    {
+      const _items=DB.get('items',[]);
+      const _OPTION_STOCK_EXCLUDE=['이불장손잡이(1구)'];
+      let _changed=false;
+      _items.forEach(item=>{
+        if(item.category!=='옵션'||item.isActive===false)return;
+        if(_OPTION_STOCK_EXCLUDE.includes(item.name)){
+          if(item.trackStock!==false){item.trackStock=false;_changed=true;}
+          return;
+        }
+        if(item.trackStock!==true){item.trackStock=true;_changed=true;}
+        if(item.stockSiheung===undefined){item.stockSiheung=0;_changed=true;}
+        if(item.stockPyeongtaek===undefined){item.stockPyeongtaek=0;_changed=true;}
+        if(item.stockOsan===undefined){item.stockOsan=0;_changed=true;}
+        if(item.colorStockSiheung===undefined){item.colorStockSiheung={};_changed=true;}
+        if(item.colorStockPyeongtaek===undefined){item.colorStockPyeongtaek={};_changed=true;}
+        if(item.colorStockOsan===undefined){item.colorStockOsan={};_changed=true;}
+        const orderable=(item.stockSiheung||0)+(item.stockPyeongtaek||0);
+        if(item.currentStock!==orderable){item.currentStock=orderable;_changed=true;}
+      });
+      if(_changed){
+        DB.set('items',_items);
+        console.log('[옵션 재고 관리 활성화] 활성 옵션 trackStock=true');
+      }
+    }
     // ── 모든 마이그레이션 완료 — 잠금 해제 후 items Firestore 최종 1회 동기화 ──
     window._itemsInitLock = false;
     {
@@ -1521,17 +1558,19 @@ async function saveOrder(payload, saveMode='발주확정'){
     // 마이그레이션 보정
     if(item.stockSiheung===undefined)item.stockSiheung=item.currentStock||0;
     if(item.stockPyeongtaek===undefined)item.stockPyeongtaek=0;
-    const orderColor=drawerItem.color||payload.sharedColor||'';
+    const orderColor=item.noColor?'':(drawerItem.color||payload.sharedColor||'');
     const whStock=getWarehouseStock(item,warehouse,orderColor);
-    const shortage=isTrackStock(item)?calcShortage(requiredQty,whStock):0;
-    savedDrawerItems.push({id:_popId('order_items'),orderId,itemId,requiredQty,color:orderColor,currentStockSnapshot:whStock,shortageQty:shortage,warehouse,createdAt:now,handleOption:drawerItem.handleOption||'basic',displayName:drawerItem.displayName||'',note:drawerItem.note||'',subTypeChecked:drawerItem.subTypeChecked||[]});
+    const inventoryTracked=isTrackStock(item);
+    const inventoryDeducted=inventoryTracked&&(effectiveSaveMode==='발주대기'||effectiveSaveMode==='발주확정');
+    const shortage=inventoryTracked?calcShortage(requiredQty,whStock):0;
+    savedDrawerItems.push({id:_popId('order_items'),orderId,itemId,requiredQty,color:orderColor,currentStockSnapshot:whStock,shortageQty:shortage,warehouse,inventoryTracked,inventoryDeducted,createdAt:now,handleOption:drawerItem.handleOption||'basic',displayName:drawerItem.displayName||'',note:drawerItem.note||'',subTypeChecked:drawerItem.subTypeChecked||[]});
     if(shortage>0){
       // [2026-07-24 Codex-재검토-Critical-1] color 저장 — 다른 색상 입고에 오인 자동완료 방지
       prs.push({id:_popId('purchase_requests'),orderId,itemId,requiredQty,color:orderColor||'',currentStockSnapshot:whStock,shortageQty:shortage,warehouse,status:'대기',createdAt:now,updatedAt:now});
       shortageCount++;
     }
     // 서랍장 실재고 차감 — 발주대기·발주확정 모두 발주 넣는 시점에 즉시 차감 (임시저장은 미차감)
-    if(isTrackStock(item)&&(effectiveSaveMode==='발주대기'||effectiveSaveMode==='발주확정')){
+    if(inventoryDeducted){
       const whKey=getWhKey(warehouse);
       const cwKey=getColorWhKey(warehouse);
       let before, afterVal;
@@ -1583,7 +1622,7 @@ async function saveOrder(payload, saveMode='발주확정'){
     createdAt:_eo?(_eo.createdAt||now):now,updatedAt:now,
     orderNum,
     status:effectiveSaveMode,
-    stockDeducted:effectiveSaveMode==='발주대기'||effectiveSaveMode==='발주확정',
+    stockDeducted:savedDrawerItems.some(oi=>oi.inventoryDeducted===true),
     createdBy:_eo?(_eo.createdBy||currentUser?.id||''):(currentUser?currentUser.id:''),  // 등록자 ID
     statusHistory:_eo?(_eo.statusHistory||[{status:effectiveSaveMode,changedBy:currentUser?currentUser.id:'',changedByName:currentUser?currentUser.name:'',changedAt:now,note:'발주서 수정'}]):[{status:effectiveSaveMode,changedBy:currentUser?currentUser.id:'',changedByName:currentUser?currentUser.name:'',changedAt:now,note:'발주서 등록'}],
     // 하위 호환

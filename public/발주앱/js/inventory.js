@@ -1,6 +1,16 @@
 // ── 재고 관리 / 발주 필요 목록 / 재고 로그 ──
 // 의존: js/store/db.js, js/utils/uiUtils.js, js/price.js
 
+// 품목별 재고 색상 목록. 개별 옵션 색상 → 품목코드 색상 → 공통 가구 색상 순으로 사용한다.
+// noColor 품목은 창고 합계 재고만 관리한다.
+function inventoryColorsForItem(item){
+  if(!item||item.noColor)return[];
+  if(Array.isArray(item.colorOptions)&&item.colorOptions.length>0)return[...new Set(item.colorOptions)];
+  const mapped=Object.keys(item.colorProdCdMap||{}).filter(color=>color&&item.colorProdCdMap[color]&&item.colorProdCdMap[color]!=='N/A');
+  if(mapped.length>0)return mapped;
+  return SHELF_COLORS;
+}
+
 // 발주 필요 목록
 let prFilterStatus='',prFilterItem='',prFilterOrderNum='',prFilterDateFrom='',prFilterDateTo='',prSortBy='';
 function renderPurchaseRequests(){
@@ -84,7 +94,7 @@ function renderPurchaseRequests(){
   const hasFilter=!!(prFilterStatus||prFilterItem||prFilterOrderNum||prFilterDateFrom||prFilterDateTo);
   let tableHtml='';
   if(prs.length===0){
-    tableHtml=`<div class="empty"><i class="fas fa-clipboard-check"></i><p>${hasFilter?'검색 결과가 없습니다.':'발주 필요 목록이 없습니다. 서랍장 재고가 충분한 상태입니다.'}</p></div>`;
+    tableHtml=`<div class="empty"><i class="fas fa-clipboard-check"></i><p>${hasFilter?'검색 결과가 없습니다.':'발주 필요 목록이 없습니다. 관리 품목 재고가 충분한 상태입니다.'}</p></div>`;
   }else{
     tableHtml=`<div class="table-wrap"><table><thead><tr><th>품목명</th><th class="td-center">구분</th><th>현장</th><th class="td-center">필요</th><th class="td-center">당시재고</th><th class="td-center">부족</th><th class="td-center">생성일</th><th class="td-center">상태</th><th class="td-center">처리</th></tr></thead><tbody>
     ${prs.map(pr=>{
@@ -167,7 +177,7 @@ function bulkComplete(){
 // ── 발주자 전용 재고 현황 페이지 ──
 // ── 발주자 전용: 재고 부족 페이지 ──
 function renderShortageView(){
-  const items=getItems().filter(i=>i.isActive&&i.category==='서랍장');
+  const items=getItems().filter(i=>i.isActive&&isTrackStock(i));
   const logs=getLogs();
   const lastLog={};
   logs.forEach(l=>{if(!lastLog[l.itemId]||l.createdAt>lastLog[l.itemId])lastLog[l.itemId]=l.createdAt;});
@@ -197,7 +207,7 @@ function renderShortageView(){
 
   document.getElementById('content').innerHTML=`
     <div class="section-title">재고 부족 현황</div>
-    <div class="section-sub">서랍장 품목의 재고 상태를 확인합니다. (재고 없음 → 부족 주의 → 충분 순)</div>
+    <div class="section-sub">재고 관리 품목의 상태를 확인합니다. (재고 없음 → 부족 주의 → 충분 순)</div>
     <div style="display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap">
       <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:var(--r);padding:12px 20px;min-width:110px">
         <p style="font-size:11px;font-weight:700;color:#dc2626;margin-bottom:3px">재고 없음</p>
@@ -224,7 +234,9 @@ function renderShortageView(){
 let _stockViewSearch='';
 function renderStockView(){
   // +손잡이 제외
-  let items=getItems().filter(i=>i.isActive&&i.category==='서랍장'&&i.drawerType!=='handle');
+  let items=getItems().filter(i=>i.isActive&&isTrackStock(i)&&i.drawerType!=='handle');
+  const categoryOrder={'서랍장':0,'옵션':1,'상부자재':2,'옷봉':3,'선반':4,'코너선반':5};
+  items.sort((a,b)=>(categoryOrder[a.category]??99)-(categoryOrder[b.category]??99));
   if(_stockViewSearch)items=items.filter(i=>i.name.includes(_stockViewSearch));
   const siheungTotal=items.reduce((s,i)=>s+(i.stockSiheung!==undefined?i.stockSiheung:i.currentStock),0);
   const pyeongtaekTotal=items.reduce((s,i)=>s+(i.stockPyeongtaek||0),0);
@@ -240,7 +252,7 @@ function renderStockView(){
     const orderableTotal=sTotal+pTotal;
     const itemBg=orderableTotal===0?'background:#fef2f2':orderableTotal<=3?'background:#fffbeb':'';
 
-    const colorRows=SHELF_COLORS.map(color=>{
+    const colorRows=inventoryColorsForItem(item).map(color=>{
       const sC=(item.colorStockSiheung||{})[color]||0;
       const pC=(item.colorStockPyeongtaek||{})[color]||0;
       const oC=(item.colorStockOsan||{})[color]||0;
@@ -274,7 +286,7 @@ function renderStockView(){
 
   document.getElementById('content').innerHTML=`
     <div class="section-title">재고 현황</div>
-    <div class="section-sub">서랍장 품목의 창고별 · 색상별 현재 재고입니다.</div>
+    <div class="section-sub">서랍장·옵션 품목의 창고별 · 색상별 현재 재고입니다.</div>
     <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
       <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:var(--r);padding:12px 20px">
         <p style="font-size:11px;font-weight:700;color:#3b82f6;margin-bottom:2px">시흥 재고</p>
@@ -292,7 +304,7 @@ function renderStockView(){
     </div>
     <div class="card">
       <div class="card-header">
-        <h3>서랍장 재고 (창고별 · 색상별)</h3>
+        <h3>관리 품목 재고 (창고별 · 색상별)</h3>
         <input class="form-input" id="sv-search-input" placeholder="품목명 검색" value="${_stockViewSearch}" style="max-width:150px;padding:5px 8px;font-size:12px"/>
       </div>
       <p style="font-size:12px;color:#94a3b8;padding:0 16px 8px">품목 행을 클릭하면 색상별 재고를 확인할 수 있습니다. <span style="color:#c2410c">*오산은 발주 대상 아님 (재고 관리 전용).</span></p>
@@ -352,7 +364,7 @@ function renderStockLogs(){
   const last7=new Date();last7.setDate(last7.getDate()-7);
   const recent7=selLogs.filter(l=>new Date(l.createdAt)>=last7).length;
   const lastLog=selLogs[0];
-  const itemOpts=items.filter(i=>i.isActive&&i.category==='서랍장'&&i.drawerType!=='handle').map(i=>`<option value="${i.id}"${stockLogItem===String(i.id)?' selected':''}>${i.name}</option>`).join('');
+  const itemOpts=items.filter(i=>i.isActive&&isTrackStock(i)&&i.drawerType!=='handle').map(i=>`<option value="${i.id}"${stockLogItem===String(i.id)?' selected':''}>${i.name}</option>`).join('');
   const typeOpts=['입고','출고','조정','발주차감','발주수정재반영','취소롤백'].map(t=>`<option value="${t}"${stockLogType===t?' selected':''}>${t}</option>`).join('');
   const PER=20;
   const totalFiltered=filtered.length;
@@ -451,38 +463,69 @@ function renderInventory(filterItemId){
         #inv-stock-table { display:block !important; width:100% !important; }
         #inv-stock-table thead { display:none !important; }
         #inv-stock-table tbody { display:block !important; }
-        /* 색상별 서브 행 숨김 */
-        #inv-stock-table tr.inv-color-row { display:none !important; }
         /* 메인 행 → 카드 */
         #inv-stock-table tr.inv-main-row {
           display:grid !important;
-          grid-template-columns:1fr auto;
-          grid-template-rows:auto auto auto auto;
-          gap:6px 8px;
+          grid-template-columns:auto auto auto 1fr;
+          grid-template-rows:auto auto auto;
+          gap:6px 18px;
           padding:12px;
           margin-bottom:6px;
           background:#fff;
           border:1px solid var(--border);
           border-radius:8px;
+          cursor:pointer;
         }
         #inv-stock-table tr.inv-main-row td { display:block !important; padding:0 !important; border:none !important; }
-        /* [2026-07-24 Codex-Medium-5] 오산 컬럼 추가 후 열 순서: 1=품목 2=구분 3=시흥 4=평택 5=오산 6=발주가능 7=처리 */
-        /* Row 1: 품목명(좌) | 발주가능 합계(우, 큰 글씨) */
-        #inv-stock-table tr.inv-main-row td:nth-child(1) { grid-column:1; grid-row:1; font-size:14px; font-weight:700; }
-        #inv-stock-table tr.inv-main-row td:nth-child(6) { grid-column:2; grid-row:1; justify-self:end; }
+        /* [2026-07-28] 열 순서: 1=품목 2=구분 3=시흥 4=평택 5=오산 6=발주가능 7=처리 */
+        /* Row 1: 품목명 (좌 2열) | 발주가능 (우) */
+        #inv-stock-table tr.inv-main-row td:nth-child(1) { grid-column:1/4; grid-row:1; font-size:14px; font-weight:700; display:flex !important; align-items:center; gap:4px; }
+        #inv-stock-table tr.inv-main-row td:nth-child(1)::before { content:"▶"; color:#94a3b8; font-size:9px; }
+        #inv-stock-table tr.inv-main-row.expanded td:nth-child(1)::before { content:"▼"; }
+        #inv-stock-table tr.inv-main-row td:nth-child(6) { grid-column:4; grid-row:1; justify-self:end; }
         #inv-stock-table tr.inv-main-row td:nth-child(6)::before { content:"발주가능 "; color:var(--text-3); font-size:11px; }
         /* 구분 chip 숨김 (공간 절약) */
         #inv-stock-table tr.inv-main-row td:nth-child(2) { display:none !important; }
-        /* Row 2: 시흥(좌) | 평택(우) */
-        #inv-stock-table tr.inv-main-row td:nth-child(3) { grid-column:1; grid-row:2; font-size:12px; }
-        #inv-stock-table tr.inv-main-row td:nth-child(3)::before { content:"시흥 "; color:var(--text-3); font-size:11px; }
-        #inv-stock-table tr.inv-main-row td:nth-child(4) { grid-column:2; grid-row:2; justify-self:end; font-size:12px; }
-        #inv-stock-table tr.inv-main-row td:nth-child(4)::before { content:"평택 "; color:var(--text-3); font-size:11px; }
-        /* Row 3: 오산 (좌, 참고용 회색) */
-        #inv-stock-table tr.inv-main-row td:nth-child(5) { grid-column:1/-1; grid-row:3; font-size:11px; color:var(--text-3); }
-        #inv-stock-table tr.inv-main-row td:nth-child(5)::before { content:"오산 (참고) "; color:var(--text-3); font-size:11px; }
-        /* Row 4: 처리 버튼 */
-        #inv-stock-table tr.inv-main-row td:nth-child(7) { grid-column:1/-1; grid-row:4; margin-top:4px; padding-top:6px !important; border-top:1px solid #f1f5f9; }
+        /* Row 2: 시흥 | 평택 | 오산 (왼쪽으로 모아 표시) */
+        #inv-stock-table tr.inv-main-row td:nth-child(3),
+        #inv-stock-table tr.inv-main-row td:nth-child(4),
+        #inv-stock-table tr.inv-main-row td:nth-child(5) { grid-row:2; font-size:12px; text-align:left; white-space:nowrap; justify-self:start; }
+        #inv-stock-table tr.inv-main-row td:nth-child(3) { grid-column:1; }
+        #inv-stock-table tr.inv-main-row td:nth-child(3)::before { content:"시흥 "; color:#1e40af; font-size:11px; font-weight:800; }
+        #inv-stock-table tr.inv-main-row td:nth-child(4) { grid-column:2; }
+        #inv-stock-table tr.inv-main-row td:nth-child(4)::before { content:"평택 "; color:#065f46; font-size:11px; font-weight:800; }
+        #inv-stock-table tr.inv-main-row td:nth-child(5) { grid-column:3; }
+        #inv-stock-table tr.inv-main-row td:nth-child(5)::before { content:"오산* "; color:#c2410c; font-size:11px; font-weight:800; }
+        /* Row 3: 처리 버튼 (3열 전체) */
+        #inv-stock-table tr.inv-main-row td:nth-child(7) { grid-column:1/-1; grid-row:3; margin-top:4px; padding-top:6px !important; border-top:1px solid #f1f5f9; }
+
+        /* 색상별 서브 행 — 기본 숨김, 부모 확장 시 표시 */
+        #inv-stock-table tr.inv-color-row { display:none !important; }
+        #inv-stock-table tr.inv-color-row.expanded {
+          display:grid !important;
+          grid-template-columns:1fr 1fr 1fr 1fr;
+          gap:4px 6px;
+          padding:6px 12px;
+          margin-bottom:4px;
+          margin-top:-4px;
+          background:#f8fafc;
+          border:1px solid #e2e8f0;
+          border-top:none;
+          border-radius:0 0 8px 8px;
+          font-size:11px;
+        }
+        #inv-stock-table tr.inv-color-row.expanded td { display:block !important; padding:0 !important; border:none !important; }
+        /* 색상 서브: 1=색상명 | 2=시흥 | 3=평택 | 4=오산 (5,6,7 숨김) */
+        #inv-stock-table tr.inv-color-row.expanded td:nth-child(1) { grid-column:1; font-weight:600; color:var(--text-2); }
+        #inv-stock-table tr.inv-color-row.expanded td:nth-child(2) { display:none !important; }
+        #inv-stock-table tr.inv-color-row.expanded td:nth-child(3) { grid-column:2; text-align:center; }
+        #inv-stock-table tr.inv-color-row.expanded td:nth-child(3)::before { content:"시 "; color:#94a3b8; font-size:10px; }
+        #inv-stock-table tr.inv-color-row.expanded td:nth-child(4) { grid-column:3; text-align:center; }
+        #inv-stock-table tr.inv-color-row.expanded td:nth-child(4)::before { content:"평 "; color:#94a3b8; font-size:10px; }
+        #inv-stock-table tr.inv-color-row.expanded td:nth-child(5) { grid-column:4; text-align:center; color:var(--text-3); }
+        #inv-stock-table tr.inv-color-row.expanded td:nth-child(5)::before { content:"오 "; color:#94a3b8; font-size:10px; }
+        #inv-stock-table tr.inv-color-row.expanded td:nth-child(6),
+        #inv-stock-table tr.inv-color-row.expanded td:nth-child(7) { display:none !important; }
 
         /* 재고 기록 표 — 카드형 */
         #inv-log-table { display:block !important; width:100% !important; }
@@ -518,7 +561,9 @@ function renderInventory(filterItemId){
     `;
     document.head.appendChild(s);
   }
-  const allItems=getItems().filter(i=>i.isActive&&i.category==='서랍장'&&i.drawerType!=='handle');
+  const allItems=getItems().filter(i=>i.isActive&&isTrackStock(i)&&i.drawerType!=='handle');
+  const categoryOrder={'서랍장':0,'옵션':1,'상부자재':2,'옷봉':3,'선반':4,'코너선반':5};
+  allItems.sort((a,b)=>(categoryOrder[a.category]??99)-(categoryOrder[b.category]??99));
   // 현재고 표 필터 적용
   let items=allItems;
   if(invItemSearch)items=items.filter(i=>i.name.includes(invItemSearch));
@@ -539,7 +584,7 @@ function renderInventory(filterItemId){
     const orderableTotal=sTotal+pTotal;
     const rowBg=orderableTotal===0?'background:#fef2f2':orderableTotal<=3?'background:#fffbeb':'';
     // 색상별 행 생성
-    const colorRows=SHELF_COLORS.map(color=>{
+    const colorRows=inventoryColorsForItem(item).map(color=>{
       const sC=(item.colorStockSiheung||{})[color]||0;
       const pC=(item.colorStockPyeongtaek||{})[color]||0;
       const oC=(item.colorStockOsan||{})[color]||0;
@@ -791,7 +836,8 @@ function openInvModal(itemId,type){
   const pStock=item.stockPyeongtaek||0;
   const oStock=item.stockOsan||0;
   // 색상별 재고 요약 표시 (오산 포함)
-  const colorSummary=SHELF_COLORS.map(c=>{
+  const inventoryColors=inventoryColorsForItem(item);
+  const colorSummary=inventoryColors.map(c=>{
     const cs=item.colorStockSiheung||{};
     const cp=item.colorStockPyeongtaek||{};
     const co=item.colorStockOsan||{};
@@ -808,11 +854,11 @@ function openInvModal(itemId,type){
   document.getElementById('inv-date').value=new Date().toISOString().slice(0,10);
   document.getElementById('inv-memo').value='';
   document.getElementById('inv-preview').innerHTML='';
-  // 색상 선택 (서랍장 품목: 색상 필수)
+  // 품목별 색상 선택. noColor 품목은 창고 합계 재고로 처리한다.
   const colorGroup=document.getElementById('inv-color-group');
   const colorSel=document.getElementById('inv-color');
-  colorGroup.style.display='';
-  colorSel.innerHTML='<option value="">색상 선택 (필수)</option>'+SHELF_COLORS.map(c=>`<option value="${c}">${c}</option>`).join('');
+  colorGroup.style.display=inventoryColors.length>0?'':'none';
+  colorSel.innerHTML='<option value="">색상 선택 (필수)</option>'+inventoryColors.map(c=>`<option value="${c}">${c}</option>`).join('');
   colorSel.value='';
   // 창고 선택 초기화 (시흥 기본)
   invSelectWarehouse('시흥');
@@ -820,7 +866,10 @@ function openInvModal(itemId,type){
   btn.className='btn '+(type==='입고'?'btn-primary':type==='출고'?'btn-danger':'btn-outline');
   btn.textContent=type+' 처리';
   openModal('inv-modal');
-  setTimeout(()=>colorSel.focus(),100);
+  setTimeout(()=>{
+    const focusTarget=inventoryColors.length>0?colorSel:document.getElementById('inv-qty');
+    if(focusTarget)focusTarget.focus();
+  },100);
 }
 
 function updateInvPreview(){
@@ -858,8 +907,9 @@ async function submitInventory(){
   const warehouse=document.getElementById('inv-warehouse')?.value||'시흥';
   const logDate=document.getElementById('inv-date')?.value||'';
   const color=document.getElementById('inv-color')?.value||'';
+  const item=getItem(itemId);
   if(!logDate){toast('날짜를 입력해주세요.','error');return;}
-  if(!color){toast('색상을 선택해주세요.','error');return;}
+  if(inventoryColorsForItem(item).length>0&&!color){toast('색상을 선택해주세요.','error');return;}
   if(!qtyStr){toast('수량을 입력해주세요.','error');return;}
   // [Medium 방어] parseInt는 '1e5'→1, '1.9'→1 조용한 절삭 → 정수만 명시적으로 허용
   // Number.isSafeInteger로 정밀도 손실(2^53 초과) 방어 (재고량이 이런 값일 리 없지만 안전)

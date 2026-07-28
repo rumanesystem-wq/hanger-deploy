@@ -572,9 +572,10 @@ function _openOrderModalRender(initialData){
   const drawerBody=document.getElementById('drawer-body');
   drawerBody.innerHTML=drawerItems.map(item=>{
     const isDrawer=item.category==='서랍장';
+    const tracksStock=isTrackStock(item);
     const hasItemColor=!!item.hasColor;
     const customColors=item.colorOptions&&item.colorOptions.length>0?item.colorOptions:null;
-    const da=`data-item-id="${item.id}" data-item-name="${item.name}" data-stock="${item.currentStock}" data-is-drawer="${isDrawer}"`;
+    const da=`data-item-id="${item.id}" data-item-name="${item.name}" data-stock="${item.currentStock}" data-tracks-stock="${tracksStock}"`;
     const price=getActivePriceForItem(item.name);
     const colorSelectStyle=`border:1px solid var(--border);border-radius:4px;padding:5px 8px;font-size:12px;width:100%;min-width:80px`;
     // colorOptions 있거나 hasColor인 품목은 개별 색상 선택 (공통색 미사용)
@@ -599,10 +600,10 @@ function _openOrderModalRender(initialData){
           <option value="handle">+손잡이</option>
         </select>`
       :`<span style="font-size:11px;color:var(--text-3)">-</span>`;
-    // 현재고 td (서랍장만 표시 — 창고+색상 기준)
-    const curStockTd=isDrawer?(()=>{
+    // 현재고 td (모든 재고 추적 품목 — 창고+색상 기준)
+    const curStockTd=tracksStock?(()=>{
       const initWh=(document.getElementById('o-warehouse')||{}).value||'시흥';
-      const initColor=(document.getElementById('shared-color-sel')||{}).value||'';
+      const initColor=needsOwnColor||item.noColor?'':((document.getElementById('shared-color-sel')||{}).value||'');
       if(!initColor){
         // 색상 미선택 시: 창고 합계 재고 표시 (전체 색상 합)
         const whKey=getWhKey(initWh);
@@ -615,7 +616,7 @@ function _openOrderModalRender(initialData){
       </td>`;
     })():`<td class="td-center" style="color:var(--text-3);font-size:12px">-</td>`;
     // 차감 후 부족 td (수량 변경 시 갱신 — id 부여)
-    const shortageTd=isDrawer
+    const shortageTd=tracksStock
       ?`<td class="td-shortage" id="oshortage-${item.id}"><span class="sh-ok">부족없음</span></td>`
       :`<td class="td-center" style="color:var(--text-3);font-size:12px">-</td>`;
     // 실제길이 입력 (선반바 등 hasNote 품목)
@@ -674,16 +675,25 @@ function _openOrderModalRender(initialData){
   drawerBody.querySelectorAll('.drawer-qty').forEach(inp=>{
     inp.addEventListener('input',()=>{
       const stock=parseInt(inp.dataset.stock);
-      const isDrawer=inp.dataset.isDrawer==='true';
+      const tracksStock=inp.dataset.tracksStock==='true';
       const val=parseInt(inp.value)||0;
       const shortageEl=document.getElementById('oshortage-'+inp.dataset.itemId);
-      if(isDrawer){
+      if(tracksStock){
         const s=calcShortage(val,stock);
         if(shortageEl)shortageEl.innerHTML=s>0
           ?`<span class="sh-label">▼ 부족</span><span class="sh-val">${s}개</span>`
           :`<span class="sh-ok">부족없음</span>`;
       }else{if(shortageEl)shortageEl.innerHTML='';}
       updateDrawerRowAmount(inp);
+    });
+  });
+
+  // 개별 색상 옵션 변경 시 해당 품목의 현재고·부족량 즉시 갱신
+  drawerBody.querySelectorAll('.item-color-select').forEach(sel=>{
+    sel.addEventListener('change',()=>{
+      const curWh=(document.getElementById('o-warehouse')||{}).value||'시흥';
+      const sharedColor=(document.getElementById('shared-color-sel')||{}).value||'';
+      _refreshDrawerStockDisplay(curWh,sharedColor);
     });
   });
 
@@ -702,6 +712,7 @@ function _openOrderModalRender(initialData){
     });
   }
 
+  _refreshDrawerStockDisplay((document.getElementById('o-warehouse')||{}).value||'시흥',(document.getElementById('shared-color-sel')||{}).value||'');
   openModal('order-modal');
 } // end _openOrderModalRender
 
@@ -894,18 +905,23 @@ async function submitOrder(saveMode='발주확정'){
         _markRequired(ucCheck,'상부자재 색상을 선택해주세요.');
       }
     }
-    // 선반/서랍 색상: 선반·코너선반·서랍/옵션 중 하나라도 있을 때만
+    const dbItemsForVal=DB.get('items',[]);
+    // 공통 색상은 선반·코너선반 또는 개별 색상 선택기가 없는 색상 품목에만 필수
     const hasShelfOrCorner = shelfRowEntries.length > 0 || cornerEntries.length > 0;
-    const hasDrawer = Array.from(document.querySelectorAll('.drawer-qty'))
-      .some(inp => (parseInt(inp.value)||0) > 0);
-    if (hasShelfOrCorner || hasDrawer) {
+    const hasSharedColorItem = Array.from(document.querySelectorAll('.drawer-qty')).some(inp=>{
+      if((parseInt(inp.value)||0)<1)return false;
+      const itemId=parseInt(inp.dataset.itemId);
+      const dbItem=dbItemsForVal.find(i=>i.id===itemId);
+      const ownColor=document.querySelector(`.item-color-select[data-item-id="${itemId}"]`);
+      return !!dbItem&&!dbItem.noColor&&!ownColor;
+    });
+    if (hasShelfOrCorner || hasSharedColorItem) {
       const scCheck=document.getElementById('shared-color-sel');
       if(!scCheck||!scCheck.value){
         _markRequired(scCheck,'선반/코너선반/서랍/옵션 색상을 선택해주세요.');
       }
     }
     // hasColor 또는 colorOptions 품목 개별 색상 필수
-    const dbItemsForVal=DB.get('items',[]);
     document.querySelectorAll('.drawer-qty').forEach(inp=>{
       const qty=parseInt(inp.value)||0;
       if(qty<1)return;
@@ -998,8 +1014,8 @@ async function submitOrder(saveMode='발주확정'){
       const itemId=parseInt(inp.dataset.itemId);
       const itemColorEl=document.querySelector(`.item-color-select[data-item-id="${itemId}"]`);
       const sharedColorEl=document.getElementById('shared-color-sel');
-      const color=itemColorEl?itemColorEl.value:(sharedColorEl?sharedColorEl.value:'');
       const dbItem=getItems().find(i=>i.id===itemId);
+      const color=dbItem&&dbItem.noColor?'':(itemColorEl?itemColorEl.value:(sharedColorEl?sharedColorEl.value:''));
       const itemName=dbItem?dbItem.name:(inp.dataset.itemName||'');
       // 손잡이 옵션 읽기
       const tr=inp.closest('tr');

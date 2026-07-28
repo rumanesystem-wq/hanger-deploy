@@ -289,20 +289,16 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
     await page.locator('[data-nav="stock-view"]').first().click();
     await page.waitForTimeout(1500);
 
-    const row = await page.evaluate((name) => {
-      const rows = document.querySelectorAll("tr.sv-item-row");
-      for (const r of Array.from(rows)) {
-        if ((r as HTMLElement).textContent?.includes(name)) {
-          const cells = r.querySelectorAll("td");
-          return {
-            osan: cells[3]?.textContent?.trim(),
-            orderable: cells[4]?.textContent?.trim(),
-            style: (r as HTMLElement).getAttribute("style") || ""
-          };
-        }
-      }
-      return null;
-    }, target.name);
+    const row = await page.evaluate((targetId) => {
+      const r = document.querySelector(`tr.sv-item-row[data-sv-id="${targetId}"]`);
+      if (!r) return null;
+      const cells = r.querySelectorAll("td");
+      return {
+        osan: cells[3]?.textContent?.trim(),
+        orderable: cells[4]?.textContent?.trim(),
+        style: (r as HTMLElement).getAttribute("style") || ""
+      };
+    }, target.id);
 
     expect(row, "발주자 뷰에 대상 행 존재").not.toBeNull();
     expect(row!.orderable, "발주가능=0").toBe("0");
@@ -708,5 +704,429 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
     expect(r.saveErr, "saveOrder 거부됨").toMatch(/창고/);
     expect(r.callCount, "getNextIds 호출 0회 (검증이 서버 ID 발급 전에)").toBe(0);
     expect(r.ordersAfter, "orders 개수 불변").toBe(r.ordersBefore);
+  });
+
+  test("OPT-M1: 활성 옵션만 자동 재고 관리 전환 + 창고별 초기 재고 0", async ({ page }) => {
+    await loginAdmin(page);
+
+    const result = await page.evaluate(() => {
+      const items = window.DB.get("items", []);
+      items.push(
+        { id: 98991, name: "활성 옵션 마이그레이션", category: "옵션", isActive: true, currentStock: 99 },
+        { id: 98992, name: "비활성 옵션 마이그레이션", category: "옵션", isActive: false, currentStock: 99 },
+        { id: 98996, name: "이불장손잡이(1구)", category: "옵션", isActive: true, trackStock: true, currentStock: 99 }
+      );
+      window.DB.set("items", items);
+      initData();
+      const migrated = window.DB.get("items", []);
+      return {
+        active: migrated.find((i: any) => i.id === 98991),
+        inactive: migrated.find((i: any) => i.id === 98992),
+        excluded: migrated.find((i: any) => i.name === "이불장손잡이(1구)")
+      };
+    });
+
+    expect(result.active.trackStock).toBe(true);
+    expect(result.active.stockSiheung).toBe(0);
+    expect(result.active.stockPyeongtaek).toBe(0);
+    expect(result.active.stockOsan).toBe(0);
+    expect(result.active.colorStockSiheung).toEqual({});
+    expect(result.active.currentStock).toBe(0);
+    expect(result.inactive.trackStock, "비활성 옵션은 재고 관리 제외").toBeUndefined();
+    expect(result.excluded.trackStock, "이불장손잡이(1구)는 재고 관리 제외").toBe(false);
+  });
+
+  test("OPT-M2: 재고 관리 표에 옵션 표시 + 서랍장 뒤 정렬", async ({ page }) => {
+    await loginAdmin(page);
+    await page.evaluate(() => {
+      const items = window.DB.get("items", []);
+      items.push({
+        id: 98993,
+        name: "재고표 옵션 테스트",
+        category: "옵션",
+        isActive: true,
+        trackStock: true,
+        currentStock: 0,
+        stockSiheung: 0,
+        stockPyeongtaek: 0,
+        stockOsan: 0,
+        colorStockSiheung: {},
+        colorStockPyeongtaek: {},
+        colorStockOsan: {}
+      });
+      window.DB.set("items", items);
+    });
+
+    await page.locator('[data-nav="inventory"]').first().click();
+    await page.waitForSelector("#inv-stock-table");
+    const names = await page.locator("#inv-stock-table tr.inv-main-row .td-name").allTextContents();
+    const drawerIndex = names.findIndex((name) => name.includes("겉서랍 2단"));
+    const optionIndex = names.findIndex((name) => name.includes("재고표 옵션 테스트"));
+    expect(drawerIndex).toBeGreaterThanOrEqual(0);
+    expect(optionIndex).toBeGreaterThan(drawerIndex);
+  });
+
+  test("OPT-M3: 옵션 재고 부족 발주 → 부족량 기준 PR 자동 생성", async ({ page }) => {
+    await loginAdmin(page);
+    const result = await page.evaluate(async () => {
+      const itemId = 98994;
+      const items = window.DB.get("items", []);
+      items.push({
+        id: itemId,
+        name: "옵션 부족 PR 테스트",
+        category: "옵션",
+        isActive: true,
+        trackStock: true,
+        currentStock: 1,
+        stockSiheung: 1,
+        stockPyeongtaek: 0,
+        stockOsan: 0,
+        colorStockSiheung: {},
+        colorStockPyeongtaek: {},
+        colorStockOsan: {}
+      });
+      window.DB.set("items", items);
+      const saved = await window.saveOrder(
+        {
+          deliveryTo: "옵션 PR 테스트",
+          address: "테스트",
+          orderDate: "2026-07-28",
+          shipDate: "2026-07-29",
+          warehouse: "시흥",
+          drawerItems: [{ itemId, requiredQty: 5, color: "" }],
+          upperMaterials: [],
+          shelfItems: [],
+          rodItems: []
+        },
+        "발주대기"
+      );
+      const pr = window.DB.get("purchase_requests", []).find(
+        (p: any) => p.orderId === saved.orderId && p.itemId === itemId
+      );
+      return { shortageCount: saved.shortageCount, shortageQty: pr?.shortageQty };
+    });
+
+    expect(result.shortageCount).toBe(1);
+    expect(result.shortageQty).toBe(4);
+  });
+
+  test("OPT-M4: 무색 옵션은 공통 색상이 있어도 창고 합계 재고로 차감", async ({ page }) => {
+    await loginAdmin(page);
+
+    const result = await page.evaluate(async () => {
+      const itemId = 98995;
+      const items = window.DB.get("items", []);
+      items.push({
+        id: itemId,
+        name: "무색 옵션 차감 테스트",
+        category: "옵션",
+        isActive: true,
+        trackStock: true,
+        noColor: true,
+        currentStock: 10,
+        stockSiheung: 10,
+        stockPyeongtaek: 0,
+        stockOsan: 0,
+        colorStockSiheung: {},
+        colorStockPyeongtaek: {},
+        colorStockOsan: {}
+      });
+      window.DB.set("items", items);
+
+      const saved = await window.saveOrder(
+        {
+          deliveryTo: "무색 옵션 차감 테스트",
+          address: "테스트",
+          orderDate: "2026-07-28",
+          shipDate: "2026-07-29",
+          warehouse: "시흥",
+          sharedColor: "화이트 오크",
+          drawerItems: [{ itemId, requiredQty: 3, color: "" }],
+          upperMaterials: [],
+          shelfItems: [],
+          rodItems: []
+        },
+        "발주대기"
+      );
+
+      const item = window.DB.get("items", []).find((i: any) => i.id === itemId);
+      const order = window.DB.get("orders", []).find((o: any) => o.id === saved.orderId);
+      const line = order?.drawerItems?.[0];
+      return {
+        stockSiheung: item?.stockSiheung,
+        currentStock: item?.currentStock,
+        colorMap: item?.colorStockSiheung,
+        lineColor: line?.color
+      };
+    });
+
+    expect(result.stockSiheung).toBe(7);
+    expect(result.currentStock).toBe(7);
+    expect(result.colorMap).toEqual({});
+    expect(result.lineColor).toBe("");
+  });
+
+  test("OPT-R1: 신규 재고 추적 옵션 발주 취소 → 실제 차감분만 10→7→10 복구", async ({ page }) => {
+    await loginAdmin(page);
+
+    const result = await page.evaluate(async () => {
+      const itemId = 99001;
+      const items = window.DB.get("items", []);
+      items.push({
+        id: itemId,
+        name: "옵션 롤백 테스트",
+        category: "옵션",
+        isActive: true,
+        trackStock: true,
+        currentStock: 10,
+        stockSiheung: 10,
+        stockPyeongtaek: 0,
+        stockOsan: 0,
+        colorStockSiheung: {},
+        colorStockPyeongtaek: {},
+        colorStockOsan: {}
+      });
+      window.DB.set("items", items);
+
+      const saved = await window.saveOrder(
+        {
+          deliveryTo: "옵션 롤백 테스트",
+          address: "테스트",
+          orderDate: "2026-07-28",
+          shipDate: "2026-07-29",
+          warehouse: "시흥",
+          drawerItems: [{ itemId, requiredQty: 3, color: "" }],
+          upperMaterials: [],
+          shelfItems: [],
+          rodItems: []
+        },
+        "발주대기"
+      );
+
+      const afterSave = window.DB.get("items", []).find((i: any) => i.id === itemId)?.stockSiheung;
+      const savedOrder = window.DB.get("orders", []).find((o: any) => o.id === saved.orderId);
+      const savedLine = savedOrder?.drawerItems?.[0];
+      const trackedAtSave = savedLine?.inventoryTracked;
+      const deductedAtSave = savedLine?.inventoryDeducted;
+
+      await window.cancelOrder(saved.orderId, "옵션 롤백 회귀");
+
+      const afterCancel = window.DB.get("items", []).find((i: any) => i.id === itemId)?.stockSiheung;
+      const cancelledOrder = window.DB.get("orders", []).find((o: any) => o.id === saved.orderId);
+      return {
+        afterSave,
+        afterCancel,
+        trackedAtSave,
+        deductedAtSave,
+        deductedAfterCancel: cancelledOrder?.drawerItems?.[0]?.inventoryDeducted
+      };
+    });
+
+    expect(result.afterSave, "옵션 재고 차감").toBe(7);
+    expect(result.afterCancel, "취소 시 옵션 재고 복구").toBe(10);
+    expect(result.trackedAtSave, "신규 행 재고 추적 표식").toBe(true);
+    expect(result.deductedAtSave, "신규 행 실제 차감 표식").toBe(true);
+    expect(result.deductedAfterCancel, "취소 후 차감 상태 해제").toBe(false);
+  });
+
+  test("OPT-R2: 표식 없는 과거 옵션 주문 취소 → 차감 이력 없으므로 재고 불변", async ({ page }) => {
+    await loginAdmin(page);
+
+    const result = await page.evaluate(async () => {
+      const itemId = 99002;
+      const orderId = 99003;
+      const items = window.DB.get("items", []);
+      items.push({
+        id: itemId,
+        name: "과거 옵션 주문 테스트",
+        category: "옵션",
+        isActive: true,
+        trackStock: true,
+        currentStock: 10,
+        stockSiheung: 10,
+        stockPyeongtaek: 0,
+        stockOsan: 0,
+        colorStockSiheung: {},
+        colorStockPyeongtaek: {},
+        colorStockOsan: {}
+      });
+      window.DB.set("items", items);
+
+      const orders = window.DB.get("orders", []);
+      orders.push({
+        id: orderId,
+        orderNum: "LEGACY-OPTION-ROLLBACK",
+        status: "발주대기",
+        stockDeducted: true,
+        warehouse: "시흥",
+        createdBy: "admin",
+        createdAt: "2026-07-01T00:00:00.000Z",
+        statusHistory: [{ status: "발주대기", changedAt: "2026-07-01T00:00:00.000Z" }],
+        drawerItems: [{
+          id: 99004,
+          orderId,
+          itemId,
+          requiredQty: 3,
+          color: "",
+          warehouse: "시흥"
+        }]
+      });
+      await window.DB.set("orders", orders);
+
+      const before = window.DB.get("items", []).find((i: any) => i.id === itemId)?.stockSiheung;
+      await window.cancelOrder(orderId, "과거 주문 취소");
+      const after = window.DB.get("items", []).find((i: any) => i.id === itemId)?.stockSiheung;
+      return { before, after };
+    });
+
+    expect(result.before, "취소 전 옵션 재고").toBe(10);
+    expect(result.after, "과거 미차감 옵션은 허위 롤백 금지").toBe(10);
+  });
+
+  test("OPT-V1: noColor option confirm modal does not require shared color and still shows shortage", async ({ page }) => {
+    await loginAdmin(page);
+
+    const result = await page.evaluate(() => {
+      const itemId = 99010;
+      const items = window.DB.get("items", []);
+      items.push({
+        id: itemId,
+        name: "OPT confirm noColor shortage",
+        category: "옵션",
+        isActive: true,
+        trackStock: true,
+        noColor: true,
+        currentStock: 0,
+        stockSiheung: 0,
+        stockPyeongtaek: 0,
+        stockOsan: 0,
+        colorStockSiheung: {},
+        colorStockPyeongtaek: {},
+        colorStockOsan: {}
+      });
+      window.DB.set("items", items);
+
+      const oldToast = window.toast;
+      const oldRender = window.renderOrderDocument;
+      const oldOpen = window.openModal;
+      const oldClose = window.closeModal;
+      const oldSubmit = window.submitOrder;
+      const oldIsAdmin = window.isAdmin;
+      const toastCalls: string[] = [];
+      const opened: string[] = [];
+
+      document.body.innerHTML = `
+        <input id="o-delivery-to" value="tester">
+        <input id="o-address" value="addr">
+        <input id="o-date" value="2026-07-28">
+        <input id="o-ship-date" value="2026-07-29">
+        <select id="o-warehouse"><option value="시흥" selected>시흥</option></select>
+        <select id="shared-color-sel"><option value="" selected></option></select>
+        <input id="upper-common-color" value="">
+        <input id="o-drawer-memo" value="">
+        <input id="o-etc-memo" value="">
+        <input id="o-note" value="">
+        <table><tbody><tr>
+          <td><input class="drawer-qty" data-item-id="${itemId}" data-item-name="OPT confirm noColor shortage" data-stock="0" data-tracks-stock="true" value="2"></td>
+        </tr></tbody></table>
+        <div id="order-confirm-body"></div>
+        <button id="order-confirm-ok-btn"></button>
+      `;
+
+      window.rodEntries = [];
+      window.shelfRowEntries = [];
+      window.cornerEntries = [];
+      window.toast = (msg: string) => { toastCalls.push(String(msg)); };
+      window.renderOrderDocument = () => "<div>preview</div>";
+      window.openModal = (id: string) => { opened.push(id); };
+      window.closeModal = () => {};
+      window.submitOrder = () => {};
+      window.isAdmin = () => true;
+
+      try {
+        window.openOrderConfirmModal();
+        return {
+          toastCalls,
+          opened,
+          bodyText: document.getElementById("order-confirm-body")?.textContent || ""
+        };
+      } finally {
+        window.toast = oldToast;
+        window.renderOrderDocument = oldRender;
+        window.openModal = oldOpen;
+        window.closeModal = oldClose;
+        window.submitOrder = oldSubmit;
+        window.isAdmin = oldIsAdmin;
+      }
+    });
+
+    expect(result.toastCalls, "noColor 옵션은 공통색 미선택 toast가 없어야 함").toEqual([]);
+    expect(result.opened).toContain("order-confirm-modal");
+    expect(result.bodyText).toContain("OPT confirm noColor shortage");
+    expect(result.bodyText).toContain("2");
+  });
+
+  test("OPT-X1: inventory Excel export includes tracked option items", async ({ page }) => {
+    await loginAdmin(page);
+
+    const result = await page.evaluate(() => {
+      const itemId = 99020;
+      const items = window.DB.get("items", []);
+      items.push({
+        id: itemId,
+        name: "OPT excel tracked option",
+        category: "옵션",
+        isActive: true,
+        trackStock: true,
+        currentStock: 4,
+        stockSiheung: 4,
+        stockPyeongtaek: 0,
+        stockOsan: 1,
+        colorStockSiheung: {},
+        colorStockPyeongtaek: {},
+        colorStockOsan: {}
+      });
+      window.DB.set("items", items);
+
+      const oldXLSX = window.XLSX;
+      const oldDownload = window.xlsxDownload;
+      const oldToast = window.toast;
+      let captured: any[][] | null = null;
+      window.XLSX = {
+        utils: {
+          book_new: () => ({}),
+          aoa_to_sheet: (rows: any[][]) => {
+            captured = rows;
+            return {};
+          },
+          encode_cell: ({ r, c }: { r: number; c: number }) => `${r}:${c}`,
+          book_append_sheet: () => {}
+        }
+      };
+      window.xlsxDownload = () => {};
+      window.toast = () => {};
+
+      try {
+        window.downloadInventoryExcel();
+        const row = captured?.find((r) => r[0] === "OPT excel tracked option");
+        return { found: !!row, row };
+      } finally {
+        window.XLSX = oldXLSX;
+        window.xlsxDownload = oldDownload;
+        window.toast = oldToast;
+      }
+    });
+
+    expect(result.found).toBe(true);
+    expect(result.row?.slice(0, 8)).toEqual([
+      "OPT excel tracked option",
+      "옵션",
+      "-",
+      4,
+      0,
+      1,
+      4,
+      5
+    ]);
   });
 });

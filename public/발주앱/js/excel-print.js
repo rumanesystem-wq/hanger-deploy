@@ -285,7 +285,10 @@ function downloadOrderListExcel(){
 // ── 재고 현황 엑셀 다운로드 ──
 function downloadInventoryExcel(){
   if(typeof XLSX==='undefined'){toast('엑셀 라이브러리를 불러오는 중입니다. 잠시 후 다시 시도해주세요.','error');return;}
-  const items=getItems().filter(i=>i.isActive&&i.category==='서랍장'&&i.drawerType!=='handle');
+  const categoryOrder={'서랍장':0,'옵션':1,'상부자재':2,'옷봉':3,'선반':4,'코너선반':5};
+  const items=getItems()
+    .filter(i=>i.isActive&&isTrackStock(i)&&i.drawerType!=='handle')
+    .sort((a,b)=>(categoryOrder[a.category]??99)-(categoryOrder[b.category]??99)||a.name.localeCompare(b.name,'ko'));
   if(items.length===0){toast('재고 품목이 없습니다.','error');return;}
   // [2026-07-24 Codex-Medium-6] 창고별(시흥/평택/오산) + 발주가능(시흥+평택) + 물리합계 구분 출력
   const header=['품목명','구분','세부유형','시흥','평택','오산*','발주가능(시흥+평택)','물리합계','상태'];

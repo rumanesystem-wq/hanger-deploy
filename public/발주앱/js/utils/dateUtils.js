@@ -91,27 +91,37 @@ function orderSelectWarehouse(wh){
   const color=(document.getElementById('shared-color-sel')||{}).value||'';
   _refreshDrawerStockDisplay(wh,color);
 }
-// 창고+색상 기준으로 발주서 내 서랍장 재고 표시 일괄 갱신
+// 창고+색상 기준으로 발주서 내 모든 재고 추적 품목 표시 일괄 갱신
 function _refreshDrawerStockDisplay(wh,color){
   const items=getItems();
-  const noColor=!color; // 색상 미선택
   document.querySelectorAll('.drawer-qty[data-item-id]').forEach(inp=>{
     const itemId=parseInt(inp.dataset.itemId);
     const item=items.find(i=>i.id===itemId);
-    if(!item||item.category!=='서랍장')return;
+    if(!item||!isTrackStock(item))return;
     const tr=inp.closest('tr');if(!tr)return;
     const stockSpan=tr.querySelector('.cur-stock-val');
     const shortageEl=document.getElementById(`oshortage-${itemId}`);
-    if(noColor){
+    const ownColorSel=tr.querySelector('.item-color-select');
+    const effectiveColor=ownColorSel?ownColorSel.value:(item.noColor?'':color);
+    const colorRequired=!!ownColorSel||!item.noColor;
+    if(!effectiveColor){
       // 색상 미선택: 창고 합계 재고 표시
       const whKey2=getWhKey(wh);
       const total=item[whKey2]||0;
       inp.dataset.stock=total;
       if(stockSpan){stockSpan.textContent=total+'개';stockSpan.className='cur-stock-val'+(total===0?' zero':'');}
-      if(shortageEl)shortageEl.innerHTML='<span style="font-size:11px;color:var(--text-3)">색상 선택 필요</span>';
+      const qty=parseInt(inp.value)||0;
+      if(shortageEl){
+        if(colorRequired){
+          shortageEl.innerHTML='<span style="font-size:11px;color:var(--text-3)">색상 선택 필요</span>';
+        }else{
+          const shortage=Math.max(0,qty-total);
+          shortageEl.innerHTML=shortage>0?`<span class="sh-ng">부족 ${shortage}개</span>`:`<span class="sh-ok">부족없음</span>`;
+        }
+      }
       return;
     }
-    const stock=getWarehouseStock(item,wh,color);
+    const stock=getWarehouseStock(item,wh,effectiveColor);
     inp.dataset.stock=stock;
     if(stockSpan){stockSpan.textContent=stock+'개';stockSpan.className='cur-stock-val'+(stock===0?' zero':'');}
     const qty=parseInt(inp.value)||0;
@@ -181,5 +191,4 @@ function getDateValue(prefix){
 function setupDateInput(id){
   // 분리형으로 교체됐으므로 no-op (호환용)
 }
-
 

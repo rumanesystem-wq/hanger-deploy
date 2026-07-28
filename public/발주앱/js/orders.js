@@ -11,15 +11,29 @@ function _orderableWh(wh, fallback){
   throw new Error('발주 창고 데이터 오류: wh='+wh+', fallback='+fallback);
 }
 
+// 주문 행이 실제 재고 추적 대상으로 저장됐는지 판정.
+// 신규 행은 inventoryTracked를 명시한다.
+// 표식이 없는 과거 행은 당시부터 재고를 차감하던 서랍장만 하위 호환 처리한다.
+function _tracksInventoryLine(oi, item){
+  if(oi&&typeof oi.inventoryTracked==='boolean')return oi.inventoryTracked;
+  return !!item&&item.category==='서랍장';
+}
+
+// 현재 이 주문 행의 재고가 실제로 차감된 상태인지 판정.
+// 신규 행은 inventoryDeducted를 사용하고, 과거 서랍장 행만 주문 단위 플래그로 fallback한다.
+function _isInventoryLineDeducted(oi, item, order){
+  if(oi&&typeof oi.inventoryDeducted==='boolean')return oi.inventoryDeducted;
+  return !!(order&&order.stockDeducted&&_tracksInventoryLine(oi,item));
+}
+
 // [2026-07-24 Codex-3차 atomicity] 재고 mutation 전에 모든 아이템의 warehouse를 사전 검증.
 // 하나라도 실패면 즉시 throw → 어떤 items/logs/order 변경도 발생하지 않음.
-// 서랍장(재고 추적) 아이템만 검증 (재고 조작 대상만).
-// dbItems: DB.get('items') 결과 배열 (category 판정용, mutation 없음)
+// 실제 재고 추적 주문 행만 검증한다.
 function _assertOrderableWarehouses(oiList, orderWh, dbItems){
   for(const oi of (oiList||[])){
     const it=dbItems.find(x=>x.id===oi.itemId);
     if(!it) continue; // 삭제된 품목은 어차피 처리 안 됨
-    if(it.category!=='서랍장') continue; // 재고 조작 대상 아님
+    if(!_tracksInventoryLine(oi,it)) continue;
     // _orderableWh 호출 — 유효/fallback 판정, invalid이면 throw
     _orderableWh(oi.warehouse, orderWh);
   }
@@ -93,13 +107,13 @@ async function changeOrderStatus(orderId, newStatus){
     _items.forEach(oi=>{
       const iIdx=dbItems.findIndex(i=>i.id===oi.itemId);
       if(iIdx===-1)return;
-      if(dbItems[iIdx].category!=='서랍장')return;
+      if(!_tracksInventoryLine(oi,dbItems[iIdx]))return;
       if(dbItems[iIdx].stockSiheung===undefined)dbItems[iIdx].stockSiheung=dbItems[iIdx].currentStock||0;
       if(dbItems[iIdx].stockPyeongtaek===undefined)dbItems[iIdx].stockPyeongtaek=0;
       const wh=_orderableWh(oi.warehouse, confWh);
       const whKey=getWhKey(wh);
       const cwKey=getColorWhKey(wh);
-      const oiColor=oi.color||order.sharedColor||'';
+      const oiColor=dbItems[iIdx].noColor?'':(oi.color||order.sharedColor||'');
       let before, afterVal;
       if(oiColor){
         if(!dbItems[iIdx][cwKey])dbItems[iIdx][cwKey]={};
@@ -116,9 +130,11 @@ async function changeOrderStatus(orderId, newStatus){
       const logs=DB.get('logs',[]);
       logs.push({id:_logIds.shift(),itemId:oi.itemId,type:'발주차감',qty:-oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 확정`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:now});
       DB.set('logs',logs);
+      oi.inventoryTracked=true;
+      oi.inventoryDeducted=true;
     });
     DB.set('items',dbItems);
-    orders[idx].stockDeducted=true;
+    orders[idx].stockDeducted=_items.some(oi=>oi.inventoryDeducted===true);
   }
 
   // 취소/보관 시 재고 롤백
@@ -134,13 +150,13 @@ async function changeOrderStatus(orderId, newStatus){
     _items.forEach(oi=>{
       const iIdx=dbItems.findIndex(i=>i.id===oi.itemId);
       if(iIdx===-1)return;
-      if(dbItems[iIdx].category!=='서랍장')return;
+      if(!_isInventoryLineDeducted(oi,dbItems[iIdx],order))return;
       if(dbItems[iIdx].stockSiheung===undefined)dbItems[iIdx].stockSiheung=dbItems[iIdx].currentStock||0;
       if(dbItems[iIdx].stockPyeongtaek===undefined)dbItems[iIdx].stockPyeongtaek=0;
       const wh=_orderableWh(oi.warehouse, rollWh);
       const whKey=getWhKey(wh);
       const cwKey=getColorWhKey(wh);
-      const oiColor=oi.color||order.sharedColor||'';
+      const oiColor=dbItems[iIdx].noColor?'':(oi.color||order.sharedColor||'');
       let before, afterVal;
       if(oiColor){
         if(!dbItems[iIdx][cwKey])dbItems[iIdx][cwKey]={};
@@ -157,6 +173,8 @@ async function changeOrderStatus(orderId, newStatus){
       const logs=DB.get('logs',[]);
       logs.push({id:_logIds.shift(),itemId:oi.itemId,type:'취소롤백',qty:oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} ${newStatus}`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:now});
       DB.set('logs',logs);
+      oi.inventoryTracked=true;
+      oi.inventoryDeducted=false;
     });
     DB.set('items',dbItems);
     orders[idx].stockDeducted=false;
@@ -214,13 +232,13 @@ async function cancelOrder(orderId, cancelReason){
     _items.forEach(oi=>{
       const iIdx=items.findIndex(i=>i.id===oi.itemId);
       if(iIdx===-1)return;
-      if(items[iIdx].category==='서랍장'){
+      if(_isInventoryLineDeducted(oi,items[iIdx],order)){
         if(items[iIdx].stockSiheung===undefined)items[iIdx].stockSiheung=items[iIdx].currentStock||0;
         if(items[iIdx].stockPyeongtaek===undefined)items[iIdx].stockPyeongtaek=0;
         const wh=_orderableWh(oi.warehouse, orderWh);
         const whKey=getWhKey(wh);
         const cwKey=getColorWhKey(wh);
-        const oiColor=oi.color||order.sharedColor||'';
+        const oiColor=items[iIdx].noColor?'':(oi.color||order.sharedColor||'');
         let before, afterVal;
         if(oiColor){
           if(!items[iIdx][cwKey])items[iIdx][cwKey]={};
@@ -237,6 +255,8 @@ async function cancelOrder(orderId, cancelReason){
         const logs3=DB.get('logs',[]);
         logs3.push({id:_logIds.shift(),itemId:oi.itemId,type:'취소롤백',qty:oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 취소`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:rollbackNow});
         DB.set('logs',logs3);
+        oi.inventoryTracked=true;
+        oi.inventoryDeducted=false;
       }
     });
     DB.set('items',items);
@@ -295,6 +315,7 @@ async function uncancelOrder(orderId){
 
   // 재고 재차감 (stockDeducted가 false인 정상 케이스만)
   const shortages=[]; // {name, color, deficit}
+  let restoredAnyInventory=!!order.stockDeducted;
   if(!order.stockDeducted){
     const items=DB.get('items',[]);
     const restoreNow=new Date().toISOString();
@@ -308,13 +329,13 @@ async function uncancelOrder(orderId){
     _items.forEach(oi=>{
       const iIdx=items.findIndex(i=>i.id===oi.itemId);
       if(iIdx===-1)return;
-      if(items[iIdx].category==='서랍장'){
+      if(_tracksInventoryLine(oi,items[iIdx])){
         if(items[iIdx].stockSiheung===undefined)items[iIdx].stockSiheung=items[iIdx].currentStock||0;
         if(items[iIdx].stockPyeongtaek===undefined)items[iIdx].stockPyeongtaek=0;
         const wh=_orderableWh(oi.warehouse, orderWh);
         const whKey=getWhKey(wh);
         const cwKey=getColorWhKey(wh);
-        const oiColor=oi.color||order.sharedColor||'';
+        const oiColor=items[iIdx].noColor?'':(oi.color||order.sharedColor||'');
         let before, afterVal;
         if(oiColor){
           if(!items[iIdx][cwKey])items[iIdx][cwKey]={};
@@ -334,6 +355,9 @@ async function uncancelOrder(orderId){
         const logs3=DB.get('logs',[]);
         logs3.push({id:_logIds.shift(),itemId:oi.itemId,type:'취소되돌림',qty:oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 취소 되돌림`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:restoreNow});
         DB.set('logs',logs3);
+        oi.inventoryTracked=true;
+        oi.inventoryDeducted=true;
+        restoredAnyInventory=true;
       }
     });
     DB.set('items',items);
@@ -344,7 +368,7 @@ async function uncancelOrder(orderId){
   orders[idx].status=prevStatus;
   delete orders[idx].cancelReason;
   delete orders[idx].cancelledAt;
-  orders[idx].stockDeducted=true;
+  orders[idx].stockDeducted=restoredAnyInventory;
   orders[idx].updatedAt=restoreNow2;
   addStatusHistory(idx, orders, prevStatus, '취소 되돌림');
   // [2026-07-09] 유케이 사고 재발 방지: 저장 완료 확인
@@ -437,19 +461,24 @@ function openOrderConfirmModal(){
   }
   const hasShelfOrCorner = (typeof shelfRowEntries !== 'undefined' && shelfRowEntries.length > 0) ||
                            (typeof cornerEntries !== 'undefined' && cornerEntries.length > 0);
-  const hasDrawer = Array.from(document.querySelectorAll('.drawer-qty'))
-    .some(inp => (parseInt(inp.value)||0) > 0);
-  if (hasShelfOrCorner || hasDrawer) {
+  const dbItemsForVal=DB.get('items',[]);
+  const hasSharedColorItem = Array.from(document.querySelectorAll('.drawer-qty')).some(inp=>{
+    if((parseInt(inp.value)||0)<1)return false;
+    const itemId=parseInt(inp.dataset.itemId);
+    const dbItem=dbItemsForVal.find(i=>i.id===itemId);
+    const ownColor=document.querySelector(`.item-color-select[data-item-id="${itemId}"]`);
+    return !!dbItem&&!dbItem.noColor&&!ownColor;
+  });
+  if (hasShelfOrCorner || hasSharedColorItem) {
     const scCheck=document.getElementById('shared-color-sel');
     if(!scCheck||!scCheck.value){toast('선반/코너선반/서랍/옵션 색상을 선택해주세요.','error');return;}
   }
-  const dbItemsForVal=DB.get('items',[]);
   const colorMissingItems=[];
   document.querySelectorAll('.drawer-qty').forEach(inp=>{
     const qty=parseInt(inp.value)||0;if(qty<1)return;
     const itemId=parseInt(inp.dataset.itemId);
     const dbItem=dbItemsForVal.find(i=>i.id===itemId);
-    if(!dbItem||!dbItem.hasColor)return;
+    if(!dbItem||(!dbItem.hasColor&&!(dbItem.colorOptions&&dbItem.colorOptions.length>0)))return;
     const colorSel=document.querySelector(`.item-color-select[data-item-id="${itemId}"]`);
     if(!colorSel||!colorSel.value)colorMissingItems.push(dbItem.name);
   });
@@ -461,8 +490,10 @@ function openOrderConfirmModal(){
     const qty=parseInt(inp.value)||0;
     if(qty<1)return;
     const stock=parseInt(inp.dataset.stock)||0;
-    const isDrawer=inp.dataset.isDrawer==='true';
-    if(isDrawer){
+    const itemId=parseInt(inp.dataset.itemId);
+    const dbItem=dbItemsForVal.find(i=>i.id===itemId);
+    const tracksStock=inp.dataset.tracksStock==='true'||isTrackStock(dbItem);
+    if(tracksStock){
       const s=calcShortage(qty,stock);
       if(s>0)shortageList.push({name:inp.dataset.itemName||'?',shortage:s});
     }
@@ -1220,8 +1251,8 @@ function openOrderDetail(orderId){
         <td class="dn">${it.name} ${drawerBadge(it)}</td>
         <td class="dnum">${oi.requiredQty}개</td>
         <td style="text-align:center">${cbadge}</td>
-        <td class="dmuted">${it.category==='서랍장'?oi.currentStockSnapshot:'-'}</td>
-        <td style="text-align:center">${it.category==='서랍장'?(oi.shortageQty>0?`<span class="det-shortage-num">▼ ${oi.shortageQty}</span>`:'<span class="det-ok">✓ 충분</span>'):'<span style="color:#9ca3af;font-size:12px">-</span>'}</td>
+        <td class="dmuted">${_tracksInventoryLine(oi,it)?oi.currentStockSnapshot:'-'}</td>
+        <td style="text-align:center">${_tracksInventoryLine(oi,it)?(oi.shortageQty>0?`<span class="det-shortage-num">▼ ${oi.shortageQty}</span>`:'<span class="det-ok">✓ 충분</span>'):'<span style="color:#9ca3af;font-size:12px">-</span>'}</td>
       </tr>`;
     });
     drawerHtml=`<div class="det-section" style="margin-bottom:14px">
@@ -1531,13 +1562,13 @@ async function rollbackInventoryForEdit(order){
   if(drawerRows.length>0) _logIds=await _serverGetLogIds(drawerRows.length);
   drawerRows.forEach(oi=>{
     const iIdx=items.findIndex(i=>i.id===oi.itemId);
-    if(iIdx===-1||items[iIdx].category!=='서랍장')return;
+    if(iIdx===-1||!_isInventoryLineDeducted(oi,items[iIdx],order))return;
     if(items[iIdx].stockSiheung===undefined)items[iIdx].stockSiheung=items[iIdx].currentStock||0;
     if(items[iIdx].stockPyeongtaek===undefined)items[iIdx].stockPyeongtaek=0;
     const wh=_orderableWh(oi.warehouse, editWh);
     const whKey=getWhKey(wh);
     const cwKey=getColorWhKey(wh);
-    const oiColor=oi.color||order.sharedColor||'';
+    const oiColor=items[iIdx].noColor?'':(oi.color||order.sharedColor||'');
     let before, afterVal;
     if(oiColor){
       if(!items[iIdx][cwKey])items[iIdx][cwKey]={};
@@ -1560,6 +1591,8 @@ async function rollbackInventoryForEdit(order){
       createdBy:currentUser?currentUser.id:'',createdAt:now
     });
     DB.set('logs',logs);
+    oi.inventoryTracked=true;
+    oi.inventoryDeducted=false;
   });
   if(changed)DB.set('items',items);
   // stockDeducted=false 표시 — 이중 롤백 방지
