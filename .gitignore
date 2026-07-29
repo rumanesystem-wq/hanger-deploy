@@ -28,3 +28,5 @@ functions/ecount-products.txt
 test-results/
 playwright-report/
 /functions/_tmp_*.js
+# 운영 스냅샷 (배포 전후 갯수 비교용, 개인정보 포함 가능 — 로컬만 보관)
+.snapshots/
