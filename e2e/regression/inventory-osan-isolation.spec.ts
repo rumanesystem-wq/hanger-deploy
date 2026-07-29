@@ -83,6 +83,11 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
     await resetAndSeed();
   });
 
+  // [2026-07-29] 테스트 전체 종료 후 잔여물 정리 — 사용자가 브라우저 열었을 때 테스트 데이터 안 보이게
+  test.afterAll(async () => {
+    await resetAndSeed();
+  });
+
   test("C1: 오산 입고(색상 정상 선택) → 시흥 대기 PR 미변경 + before/after 정확 검증", async ({ page }) => {
     await loginAdmin(page);
     const target = await firstDrawerItem(page);
