@@ -1600,7 +1600,7 @@ async function rollbackInventoryForEdit(order){
   const idx=orders.findIndex(o=>o.id===order.id);
   if(idx!==-1&&orders[idx].stockDeducted){
     orders[idx].stockDeducted=false;
-    DB.set('orders',orders);
+    await DB.set('orders',orders);
   }
 }
 
