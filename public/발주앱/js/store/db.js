@@ -843,6 +843,7 @@ function initData(){
     DB.set('logs',[]);
   } else {
     // items Firestore write 잠금 — 마이그레이션 중 중간 상태가 Firestore에 올라가지 않도록
+    const _itemsInitBase=DB.get('items',[]);
     window._itemsInitLock = true;
     // 마이그레이션: 선반바(ABS) 400이 서랍/옵션 목록에 잘못 들어간 경우만 제거 (상부자재는 유지)
     {const _items=DB.get('items',[]);const _before=_items.length;
@@ -1441,15 +1442,16 @@ function initData(){
     {
       const _finalItems=DB.get('items',[]);
       if(window._FS&&_finalItems.length>0){
-        // 안전 가드: 서버 품목이 로컬보다 많으면 덮어쓰기 금지 (옛 PC가 좋은 데이터 지우는 버그 차단)
+        // 안전 가드: 서버 최신값에 부팅 마이그레이션으로 바뀐 필드만 반영한다.
+        // 재고/품목 전체를 직접 set하지 않아, 운영 재고가 로컬 부팅값으로 덮이는 사고를 막는다.
         window._FS.get('items').then(remote=>{
-          const remoteLen=Array.isArray(remote)?remote.length:0;
-          if(_finalItems.length>=remoteLen){
-            window._FS.set('items',_finalItems).catch(e=>console.warn('[items 최종 동기화 실패]',e.message));
-            console.log(`[items 최종 동기화] ${_finalItems.length}개 → Firestore`);
-          }else{
-            console.warn(`[items 동기화 차단] 로컬 ${_finalItems.length} < 서버 ${remoteLen} — 서버 데이터 보호`);
+          if(!Array.isArray(remote)){
+            throw new Error('items 서버 응답 비배열');
           }
+          const merged=_mergeItemsByLocalChanges(remote,_itemsInitBase,_finalItems);
+          window._mem['items']=merged;
+          window._FS.set('items',merged).catch(e=>console.warn('[items 최종 동기화 실패]',e.message));
+          console.log(`[items 최종 동기화] 서버 최신값 기준 ${merged.length}개 병합 → Firestore`);
         }).catch(e=>console.warn('[items 동기화 조회 실패]',e.message));
       }
     }
