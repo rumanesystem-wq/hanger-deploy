@@ -576,7 +576,15 @@ function renderInventory(filterItemId){
 
   // 현재고 표 — 색상별 행 표시
   // [2026-07-24] 오산 창고 컬럼 추가 (재고 관리 전용, 발주 대상 아님)
+  // [2026-07-30] 카테고리 바뀔 때 구분 헤더 삽입 (예: 서랍장 뒤에 옵션 시작 표시)
+  let _prevCat=null;
   const tableRows=items.map(item=>{
+    let _divider='';
+    if(item.category!==_prevCat){
+      const catCount=items.filter(x=>x.category===item.category).length;
+      _divider=`<tr class="inv-cat-divider"><td colspan="7" style="background:#f1f5f9;padding:8px 14px;font-size:12px;font-weight:800;color:#334155;border-top:2px solid #cbd5e1">━━ ${item.category} (${catCount}개) ━━</td></tr>`;
+      _prevCat=item.category;
+    }
     const sTotal=item.stockSiheung!==undefined?item.stockSiheung:item.currentStock;
     const pTotal=item.stockPyeongtaek||0;
     const oTotal=item.stockOsan||0;
@@ -601,7 +609,7 @@ function renderInventory(filterItemId){
         <td></td>
       </tr>`;
     }).join('');
-    return `<tr class="inv-main-row" style="${rowBg}">
+    return `${_divider}<tr class="inv-main-row" style="${rowBg}">
       <td class="td-name">${item.name}</td>
       <td class="td-center">${drawerBadge(item)}</td>
       <td class="td-center"><span class="td-num" style="font-size:14px;font-weight:700;color:${sTotal===0?'#dc2626':sTotal<=3?'#d97706':'#1e40af'}">${sTotal}</span></td>
