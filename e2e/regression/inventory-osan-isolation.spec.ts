@@ -65,6 +65,16 @@ async function loginOrderer(page: Page) {
   }, { timeout: 10000 });
 }
 
+async function fillInventoryQty(page: Page, color: string, qty: string) {
+  const bulkVisible = await page.locator("#inv-bulk-group").isVisible();
+  if (bulkVisible) {
+    await page.locator(`.inv-bulk-qty[data-color="${color}"]`).fill(qty);
+  } else {
+    await page.selectOption("#inv-color", color);
+    await page.fill("#inv-qty", qty);
+  }
+}
+
 async function firstDrawerItem(page: Page): Promise<{ id: number; name: string }> {
   const r = await page.evaluate(() => {
     const items = window.DB.get("items", []).filter(
@@ -127,8 +137,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
     await page.waitForSelector("#inv-modal", { state: "visible" });
     await page.waitForSelector("#inv-wh-osan", { state: "visible" });
     await page.locator("#inv-wh-osan").click();
-    await page.selectOption("#inv-color", COLOR);
-    await page.fill("#inv-qty", "3");
+    await fillInventoryQty(page, COLOR, "3");
     await page.locator("#inv-submit-btn").click();
     await page.waitForSelector("#inv-modal", { state: "hidden", timeout: 10000 });
 
@@ -432,8 +441,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
     await page.waitForSelector("#inv-modal", { state: "visible" });
     await page.waitForTimeout(500);
     await page.locator("#inv-wh-siheung").click();
-    await page.selectOption("#inv-color", "솔리드"); // 다른 색상
-    await page.fill("#inv-qty", "10");
+    await fillInventoryQty(page, "솔리드", "10"); // 다른 색상
     await page.locator("#inv-submit-btn").click();
     await page.waitForTimeout(2500);
 
@@ -469,8 +477,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
     await page.waitForSelector("#inv-modal", { state: "visible" });
     await page.waitForTimeout(500);
     await page.locator("#inv-wh-siheung").click();
-    await page.selectOption("#inv-color", COLOR);
-    await page.fill("#inv-qty", "3");
+    await fillInventoryQty(page, COLOR, "3");
     await page.locator("#inv-submit-btn").click();
     await page.waitForTimeout(2500);
 
@@ -504,8 +511,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
     await page.waitForSelector("#inv-modal", { state: "visible" });
     await page.waitForTimeout(500);
     await page.locator("#inv-wh-siheung").click();
-    await page.selectOption("#inv-color", COLOR);
-    await page.fill("#inv-qty", "3");
+    await fillInventoryQty(page, COLOR, "3");
     await page.locator("#inv-submit-btn").click();
     await page.waitForTimeout(2500);
 

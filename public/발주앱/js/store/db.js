@@ -1463,8 +1463,14 @@ async function _seedDemoStock(){
   const items=DB.get('items',[]);
   const drawerItems=items.filter(i=>i.category==='서랍장'&&i.isActive);
   if(!drawerItems.length)return;
-  // 이미 색상별 재고가 하나라도 있으면 스킵
-  if(drawerItems.some(i=>i.colorStockSiheung&&Object.keys(i.colorStockSiheung).length>0))return;
+  // 이미 어느 창고든 재고가 하나라도 있으면 스킵
+  // 오산-only 재고도 실제 재고이므로 데모 시흥 재고로 덮으면 안 된다.
+  if(drawerItems.some(i=>
+    (i.stockSiheung||0)>0||(i.stockPyeongtaek||0)>0||(i.stockOsan||0)>0||
+    Object.keys(i.colorStockSiheung||{}).length>0||
+    Object.keys(i.colorStockPyeongtaek||{}).length>0||
+    Object.keys(i.colorStockOsan||{}).length>0
+  ))return;
   // 색상별 기본 재고 (시흥 창고, 품목마다 조금씩 다르게)
   const colorSeeds=[
     {color:'화이트 오크', base:8},

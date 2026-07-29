@@ -80,6 +80,106 @@ async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
   return{before,after,warehouse:wh};
 }
 
+async function processInventoryBatch({itemId,type,entries,memo,warehouse,logDate}){
+  const items=DB.get('items',[]),logs=DB.get('logs',[]);
+  const idx=items.findIndex(i=>i.id===itemId);
+  if(idx===-1)throw new Error('품목을 찾을 수 없습니다.');
+  const item=items[idx];
+  if(!isTrackStock(item))throw new Error('재고 관리 대상 품목만 재고를 처리할 수 있습니다.');
+  if(item.noColor)throw new Error('색상 없는 품목은 기존 재고 처리 화면을 사용해주세요.');
+
+  const wh=warehouse||'시흥';
+  if(!['시흥','평택','오산'].includes(wh))throw new Error('올바른 창고를 선택해주세요.');
+  if(!['입고','출고','조정'].includes(type))throw new Error('올바른 재고 처리 구분이 아닙니다.');
+  const whKey=getWhKey(wh);
+  const cwKey=getColorWhKey(wh);
+  const allowedColors=new Set(inventoryColorsForItem(item));
+  const seenColors=new Set();
+  const ops=(entries||[])
+    .map(e=>({color:String(e.color||''),qty:Number(e.qty)}))
+    .filter(e=>e.color&&Number.isFinite(e.qty)&&e.qty!==0);
+
+  if(ops.length===0)throw new Error('처리할 색상 수량을 입력해주세요.');
+  for(const op of ops){
+    if(!allowedColors.has(op.color))throw new Error(`[${op.color}] 이 품목에 없는 색상입니다.`);
+    if(seenColors.has(op.color))throw new Error(`[${op.color}] 색상이 중복 입력되었습니다.`);
+    seenColors.add(op.color);
+    if(!Number.isInteger(op.qty)||!Number.isSafeInteger(op.qty))throw new Error(`[${op.color}] 수량은 정수만 입력 가능합니다.`);
+    if((type==='입고'||type==='출고')&&op.qty<1)throw new Error(`[${op.color}] 입고/출고 수량은 1 이상이어야 합니다.`);
+    if(type==='조정'&&op.qty<0)throw new Error(`[${op.color}] 조정 후 재고는 0 이상이어야 합니다.`);
+  }
+
+  if(!items[idx][cwKey])items[idx][cwKey]={};
+  if(items[idx].stockSiheung===undefined)items[idx].stockSiheung=items[idx].currentStock||0;
+  if(items[idx].stockPyeongtaek===undefined)items[idx].stockPyeongtaek=0;
+  if(items[idx].stockOsan===undefined)items[idx].stockOsan=0;
+  if(items[idx].colorStockSiheung===undefined)items[idx].colorStockSiheung={};
+  if(items[idx].colorStockPyeongtaek===undefined)items[idx].colorStockPyeongtaek={};
+  if(items[idx].colorStockOsan===undefined)items[idx].colorStockOsan={};
+
+  // 저장 전 전체 dry-run: 하나라도 실패하면 로그번호 발급/재고 변경을 시작하지 않는다.
+  const planned=ops.map(op=>{
+    const before=items[idx][cwKey][op.color]||0;
+    let after;
+    if(type==='입고')after=before+op.qty;
+    else if(type==='출고'){
+      if(op.qty>before)throw new Error(`[${op.color}] 출고 수량(${op.qty})이 ${wh} 재고(${before})를 초과합니다.`);
+      after=before-op.qty;
+    }else{
+      after=op.qty;
+    }
+    return{color:op.color,qty:op.qty,before,after};
+  });
+
+  const _logIds=await _serverGetLogIds(planned.length);
+  const results=[];
+  planned.forEach((op,i)=>{
+    items[idx][cwKey][op.color]=op.after;
+    results.push({id:_logIds[i],...op});
+  });
+
+  items[idx][whKey]=Object.values(items[idx][cwKey]).reduce((s,v)=>s+(v||0),0);
+  items[idx].currentStock=(items[idx].stockSiheung||0)+(items[idx].stockPyeongtaek||0);
+  await DB.set('items',items);
+
+  const logTs=logDate?(logDate+'T00:00:00.000Z'):new Date().toISOString();
+  results.forEach(r=>{
+    logs.push({id:r.id,itemId,type,qty:type==='조정'?r.after-r.before:r.qty,beforeStock:r.before,afterStock:r.after,warehouse:wh,color:r.color,memo:memo||'',createdAt:logTs});
+  });
+  DB.set('logs',logs);
+
+  if(type==='입고' && wh !== '오산'){
+    const prs=DB.get('purchase_requests',[]);
+    let changed=false;
+    const _now=new Date().toISOString();
+    for(const r of results){
+      let remaining=r.qty;
+      const candidates=prs
+        .filter(p=>{
+          if(p.itemId!==itemId||p.status!=='대기')return false;
+          const whMatch=!p.warehouse||p.warehouse===wh;
+          const colorMatch=!p.color||p.color===r.color;
+          return whMatch&&colorMatch;
+        })
+        .sort((a,b)=>new Date(a.createdAt||0)-new Date(b.createdAt||0));
+      for(const p of candidates){
+        const need=p.shortageQty||p.requiredQty||0;
+        if(need<=0)continue;
+        if(need>remaining)break;
+        p.status='발주완료';
+        p.updatedAt=_now;
+        p.autoCompleted=true;
+        remaining-=need;
+        changed=true;
+        if(remaining<=0)break;
+      }
+    }
+    if(changed)DB.set('purchase_requests',prs);
+  }
+
+  return{count:results.length,warehouse:wh,results};
+}
+
 // 라우터
 let currentView='';
 const NAV_ADMIN=[

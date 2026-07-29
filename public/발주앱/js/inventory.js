@@ -451,7 +451,7 @@ function renderStockLogs(){
 }
 
 // 재고 관리 (관리자·서랍장만)
-let invModalState={itemId:null,type:'입고'};
+let invModalState={itemId:null,type:'입고',bulk:false};
 function renderInventory(filterItemId){
   if(!requireAdmin())return;
   // 모바일 카드형 CSS 1회 등록
@@ -825,10 +825,76 @@ function invSelectWarehouse(wh){
   // [2026-07-24] 오산 버튼 처리 (재고 관리 전용)
   if(oBtn){oBtn.style.background=wh==='오산'?'var(--primary)':'';oBtn.style.color=wh==='오산'?'#fff':'';oBtn.style.borderColor=wh==='오산'?'var(--primary)':'';}
   updateInvPreview();
+  updateInvBulkPreview();
+}
+
+function invEscape(s){
+  if(typeof escapeHtml==='function')return escapeHtml(s);
+  return String(s||'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+function renderInvBulkRows(item,type,colors){
+  const wh=document.getElementById('inv-warehouse')?.value||'시흥';
+  const label=type==='조정'?'조정 후 수량':'수량';
+  return colors.map(color=>{
+    const before=getWarehouseStock(item,wh,color)||0;
+    const safeColor=invEscape(color);
+    return `<div class="inv-bulk-row" data-color="${safeColor}" style="display:grid;grid-template-columns:1.2fr .8fr 1fr .8fr;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #e5e7eb">
+      <div style="font-weight:700;color:var(--text)">${safeColor}</div>
+      <div style="font-size:13px;color:var(--text-3)">현재 <span class="inv-bulk-before" style="font-weight:800;color:var(--text)">${before}</span></div>
+      <input type="text" inputmode="numeric" pattern="[0-9]*" class="form-input inv-bulk-qty" data-color="${safeColor}" placeholder="${label}" oninput="updateInvBulkPreview()" style="height:36px;font-weight:700"/>
+      <div class="inv-bulk-after" style="font-size:13px;text-align:right;color:var(--text-3)">-</div>
+    </div>`;
+  }).join('');
+}
+
+function updateInvBulkPreview(){
+  if(!invModalState.bulk)return;
+  const item=getItem(invModalState.itemId);if(!item)return;
+  const wh=document.getElementById('inv-warehouse')?.value||'시흥';
+  const type=invModalState.type;
+  let count=0,totalDiff=0,hasError=false;
+  document.querySelectorAll('.inv-bulk-row').forEach(row=>{
+    const color=row.dataset.color||'';
+    const input=row.querySelector('.inv-bulk-qty');
+    const beforeEl=row.querySelector('.inv-bulk-before');
+    const afterEl=row.querySelector('.inv-bulk-after');
+    const before=getWarehouseStock(item,wh,color)||0;
+    if(beforeEl)beforeEl.textContent=before;
+    const raw=(input?.value||'').trim();
+    if(!raw){if(afterEl){afterEl.textContent='-';afterEl.style.color='var(--text-3)';}return;}
+    const qty=Number(raw);
+    if(!Number.isFinite(qty)||!Number.isInteger(qty)||!Number.isSafeInteger(qty)||qty<0){
+      hasError=true;
+      if(afterEl){afterEl.textContent='정수만';afterEl.style.color='#dc2626';}
+      return;
+    }
+    let after=type==='입고'?before+qty:type==='출고'?before-qty:qty;
+    if(type==='출고'&&qty>before){
+      hasError=true;
+      if(afterEl){afterEl.textContent='재고부족';afterEl.style.color='#dc2626';}
+      return;
+    }
+    count++;
+    totalDiff+=after-before;
+    if(afterEl){
+      afterEl.innerHTML=`→ <strong>${after}</strong>`;
+      afterEl.style.color=after<before?'#dc2626':'#16a34a';
+    }
+  });
+  const preview=document.getElementById('inv-preview');
+  if(!preview)return;
+  if(hasError){
+    preview.innerHTML='<div class="preview-box" style="color:#dc2626">입력값 중 처리할 수 없는 색상이 있습니다.</div>';
+  }else if(count>0){
+    preview.innerHTML=`<div class="preview-box">[${wh}] ${count}개 색상 처리 예정 <span style="color:${totalDiff<0?'#dc2626':'#16a34a'};font-weight:800">(${totalDiff>0?'+':''}${totalDiff})</span></div>`;
+  }else{
+    preview.innerHTML='';
+  }
 }
 
 function openInvModal(itemId,type){
-  invModalState={itemId,type};
+  invModalState={itemId,type,bulk:false};
   const item=getItem(itemId);
   const typeColor=type==='입고'?'#1e40af':type==='출고'?'#991b1b':'#713f12';
   document.getElementById('inv-modal-title').innerHTML=`<span style="color:${typeColor}">${type}</span> 처리`;
@@ -837,6 +903,7 @@ function openInvModal(itemId,type){
   const oStock=item.stockOsan||0;
   // 색상별 재고 요약 표시 (오산 포함)
   const inventoryColors=inventoryColorsForItem(item);
+  invModalState.bulk=inventoryColors.length>0;
   const colorSummary=inventoryColors.map(c=>{
     const cs=item.colorStockSiheung||{};
     const cp=item.colorStockPyeongtaek||{};
@@ -857,17 +924,24 @@ function openInvModal(itemId,type){
   // 품목별 색상 선택. noColor 품목은 창고 합계 재고로 처리한다.
   const colorGroup=document.getElementById('inv-color-group');
   const colorSel=document.getElementById('inv-color');
-  colorGroup.style.display=inventoryColors.length>0?'':'none';
+  const qtyGroup=document.getElementById('inv-qty')?.closest('.form-group');
+  const bulkGroup=document.getElementById('inv-bulk-group');
+  const bulkList=document.getElementById('inv-bulk-list');
+  colorGroup.style.display=invModalState.bulk?'none':(inventoryColors.length>0?'':'none');
+  if(qtyGroup)qtyGroup.style.display=invModalState.bulk?'none':'';
+  if(bulkGroup)bulkGroup.style.display=invModalState.bulk?'':'none';
+  if(bulkList)bulkList.innerHTML=invModalState.bulk?renderInvBulkRows(item,type,inventoryColors):'';
   colorSel.innerHTML='<option value="">색상 선택 (필수)</option>'+inventoryColors.map(c=>`<option value="${c}">${c}</option>`).join('');
   colorSel.value='';
   // 창고 선택 초기화 (시흥 기본)
   invSelectWarehouse('시흥');
+  updateInvBulkPreview();
   const btn=document.getElementById('inv-submit-btn');
   btn.className='btn '+(type==='입고'?'btn-primary':type==='출고'?'btn-danger':'btn-outline');
   btn.textContent=type+' 처리';
   openModal('inv-modal');
   setTimeout(()=>{
-    const focusTarget=inventoryColors.length>0?colorSel:document.getElementById('inv-qty');
+    const focusTarget=invModalState.bulk?document.querySelector('.inv-bulk-qty'):(inventoryColors.length>0?colorSel:document.getElementById('inv-qty'));
     if(focusTarget)focusTarget.focus();
   },100);
 }
@@ -902,6 +976,7 @@ async function submitInventory(){
   // [Critical 방어] 이미 처리 중이면 무시 (Enter 연타·더블 클릭 시 재고 배수 반영 방지)
   if (_invSubmitting) return;
   const{itemId,type}=invModalState;
+  if(invModalState.bulk)return submitInventoryBulk();
   const qtyStr=document.getElementById('inv-qty').value;
   const memo=document.getElementById('inv-memo').value.trim();
   const warehouse=document.getElementById('inv-warehouse')?.value||'시흥';
@@ -930,3 +1005,37 @@ async function submitInventory(){
   finally{ _invSubmitting = false; }
 }
 document.getElementById('inv-qty').addEventListener('keydown',e=>{if(e.key==='Enter')submitInventory();});
+
+async function submitInventoryBulk(){
+  if(_invSubmitting)return;
+  const{itemId,type}=invModalState;
+  const memo=document.getElementById('inv-memo').value.trim();
+  const warehouse=document.getElementById('inv-warehouse')?.value||'시흥';
+  const logDate=document.getElementById('inv-date')?.value||'';
+  if(!logDate){toast('날짜를 입력해주세요.','error');return;}
+  const entries=[];
+  document.querySelectorAll('.inv-bulk-qty').forEach(input=>{
+    const raw=(input.value||'').trim();
+    if(!raw)return;
+    entries.push({color:input.dataset.color||'',qty:Number(raw)});
+  });
+  if(entries.length===0){toast('처리할 색상 수량을 입력해주세요.','error');return;}
+  for(const e of entries){
+    if(!Number.isFinite(e.qty)||!Number.isInteger(e.qty)||!Number.isSafeInteger(e.qty)){
+      toast(`[${e.color}] 수량은 정수만 입력 가능합니다.`,'error');return;
+    }
+    if((type==='입고'||type==='출고')&&e.qty<1){toast(`[${e.color}] 입고/출고 수량은 1 이상이어야 합니다.`,'error');return;}
+    if(type==='조정'&&e.qty<0){toast(`[${e.color}] 조정 후 재고는 0 이상이어야 합니다.`,'error');return;}
+  }
+  _invSubmitting=true;
+  try{
+    const result=await processInventoryBatch({itemId,type,entries,memo,warehouse,logDate});
+    closeModal('inv-modal');
+    toast(`[${result.warehouse}] ${result.count}개 색상 ${type} 처리 완료`,'success');
+    renderInventory(stockLogItem?parseInt(stockLogItem):undefined);
+  }catch(e){toast(e.message,'error');}
+  finally{_invSubmitting=false;}
+}
+document.addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&e.target&&e.target.classList&&e.target.classList.contains('inv-bulk-qty'))submitInventory();
+});
