@@ -41,7 +41,7 @@ async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
     items[idx][whKey]=after;
   }
   items[idx].currentStock=(items[idx].stockSiheung||0)+(items[idx].stockPyeongtaek||0);
-  DB.set('items',items);
+  await DB.set('items',items);
   const logTs=logDate?(logDate+'T00:00:00.000Z'):new Date().toISOString();
   logs.push({id:_logIds[0],itemId,type,qty:type==='조정'?n-before:n,beforeStock:before,afterStock:after,warehouse:wh,color:color||'',memo:memo||'',createdAt:logTs});
   DB.set('logs',logs);
@@ -2958,7 +2958,7 @@ async function _bootSequence(){
     await migrateLegacyLocalOnce();
     if(window._fbAuth&&window._fbAuth.currentUser){ await loadUserPrefs(); }
     initData();
-    _seedDemoStock();
+    await _seedDemoStock();
     setLoginTab('orderer');
     ['login-pw','reg-pw','reg-pw2','setup-pw','setup-pw2'].forEach(wrapPwToggle);
     initLoginPrefs_();

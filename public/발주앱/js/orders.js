@@ -133,7 +133,7 @@ async function changeOrderStatus(orderId, newStatus){
       oi.inventoryTracked=true;
       oi.inventoryDeducted=true;
     });
-    DB.set('items',dbItems);
+    await DB.set('items',dbItems);
     orders[idx].stockDeducted=_items.some(oi=>oi.inventoryDeducted===true);
   }
 
@@ -176,7 +176,7 @@ async function changeOrderStatus(orderId, newStatus){
       oi.inventoryTracked=true;
       oi.inventoryDeducted=false;
     });
-    DB.set('items',dbItems);
+    await DB.set('items',dbItems);
     orders[idx].stockDeducted=false;
     // 관련 PR 취소
     const prs=DB.get('purchase_requests',[]);
@@ -259,7 +259,7 @@ async function cancelOrder(orderId, cancelReason){
         oi.inventoryDeducted=false;
       }
     });
-    DB.set('items',items);
+    await DB.set('items',items);
   }
 
   // 발주서 상태 취소로 변경
@@ -360,7 +360,7 @@ async function uncancelOrder(orderId){
         restoredAnyInventory=true;
       }
     });
-    DB.set('items',items);
+    await DB.set('items',items);
   }
 
   // 발주서 상태 복원
@@ -1594,7 +1594,7 @@ async function rollbackInventoryForEdit(order){
     oi.inventoryTracked=true;
     oi.inventoryDeducted=false;
   });
-  if(changed)DB.set('items',items);
+  if(changed)await DB.set('items',items);
   // stockDeducted=false 표시 — 이중 롤백 방지
   const orders=DB.get('orders',[]);
   const idx=orders.findIndex(o=>o.id===order.id);

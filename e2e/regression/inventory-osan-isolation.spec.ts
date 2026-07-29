@@ -106,14 +106,16 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
     }, { tid: target.id, color: COLOR });
 
     // [Codex 4차] 입고 전 baseline snapshot
-    const before = await page.evaluate((tid) => {
+    const before = await page.evaluate(async (tid) => {
       const item = window.DB.get("items", []).find((i: any) => i.id === tid);
+      const serverItems = window._FS && window._FS.get ? await window._FS.get("items") : [];
+      const serverItem = Array.isArray(serverItems) ? serverItems.find((i: any) => i.id === tid) : null;
       const logs = window.DB.get("logs", []).filter((l: any) => l.itemId === tid);
       return {
-        osan: item ? item.stockOsan || 0 : 0,
-        siheung: item ? (item.stockSiheung !== undefined ? item.stockSiheung : item.currentStock) : 0,
-        pyeongtaek: item ? item.stockPyeongtaek || 0 : 0,
-        currentStock: item ? item.currentStock || 0 : 0,
+        osan: serverItem ? serverItem.stockOsan || 0 : (item ? item.stockOsan || 0 : 0),
+        siheung: serverItem ? (serverItem.stockSiheung !== undefined ? serverItem.stockSiheung : serverItem.currentStock) : (item ? (item.stockSiheung !== undefined ? item.stockSiheung : item.currentStock) : 0),
+        pyeongtaek: serverItem ? serverItem.stockPyeongtaek || 0 : (item ? item.stockPyeongtaek || 0 : 0),
+        currentStock: serverItem ? (serverItem.currentStock || 0) : (item ? item.currentStock || 0 : 0),
         osanInLogs: logs.filter((l: any) => l.warehouse === "오산" && l.type === "입고").length
       };
     }, target.id);
@@ -278,7 +280,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
       items[idx].colorStockOsan = { [color]: 5 };
       items[idx].currentStock = 0;
       // 로컬 반영 + Firestore 저장 완료 대기
-      window.DB.set("items", items);
+      await window.DB.set("items", items);
       if (window._FS && window._FS.set) {
         await window._FS.set("items", items);
       }
@@ -316,7 +318,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
     const target = await firstDrawerItem(page);
 
     // 대상 아이템: 시흥·평택 0, 오산 7. 다른 아이템(id=2)은 정상 재고 유지 → 필터에 제외 확인용
-    await page.evaluate(({ tid, color }) => {
+    await page.evaluate(async ({ tid, color }) => {
       const items = window.DB.get("items", []);
       const idx = items.findIndex((i: any) => i.id === tid);
       if (idx === -1) return;
@@ -327,7 +329,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
       items[idx].colorStockPyeongtaek = {};
       items[idx].colorStockOsan = { [color]: 7 };
       items[idx].currentStock = 0;
-      window.DB.set("items", items);
+      await window.DB.set("items", items);
     }, { tid: target.id, color: COLOR });
 
     await page.locator('[data-nav="inventory"]').first().click();
@@ -384,7 +386,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
     const target = await firstDrawerItem(page);
 
     // 재고 0으로 만들고 saveOrder → shortage 유도 → PR 생성
-    await page.evaluate(({ tid, color }) => {
+    await page.evaluate(async ({ tid, color }) => {
       const items = window.DB.get("items", []);
       const idx = items.findIndex((i: any) => i.id === tid);
       if (idx === -1) return;
@@ -393,7 +395,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
       items[idx].colorStockSiheung = { [color]: 0 };
       items[idx].colorStockPyeongtaek = {};
       items[idx].currentStock = 0;
-      window.DB.set("items", items);
+      await window.DB.set("items", items);
     }, { tid: target.id, color: COLOR });
 
     const saveResult = await page.evaluate(async ({ tid, color }) => {
@@ -714,14 +716,14 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
   test("OPT-M1: 활성 옵션만 자동 재고 관리 전환 + 창고별 초기 재고 0", async ({ page }) => {
     await loginAdmin(page);
 
-    const result = await page.evaluate(() => {
+    const result = await page.evaluate(async () => {
       const items = window.DB.get("items", []);
       items.push(
         { id: 98991, name: "활성 옵션 마이그레이션", category: "옵션", isActive: true, currentStock: 99 },
         { id: 98992, name: "비활성 옵션 마이그레이션", category: "옵션", isActive: false, currentStock: 99 },
         { id: 98996, name: "이불장손잡이(1구)", category: "옵션", isActive: true, trackStock: true, currentStock: 99 }
       );
-      window.DB.set("items", items);
+      await window.DB.set("items", items);
       initData();
       const migrated = window.DB.get("items", []);
       return {
@@ -743,7 +745,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
 
   test("OPT-M2: 재고 관리 표에 옵션 표시 + 서랍장 뒤 정렬", async ({ page }) => {
     await loginAdmin(page);
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       const items = window.DB.get("items", []);
       items.push({
         id: 98993,
@@ -759,7 +761,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
         colorStockPyeongtaek: {},
         colorStockOsan: {}
       });
-      window.DB.set("items", items);
+      await window.DB.set("items", items);
     });
 
     await page.locator('[data-nav="inventory"]').first().click();
@@ -790,7 +792,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
         colorStockPyeongtaek: {},
         colorStockOsan: {}
       });
-      window.DB.set("items", items);
+      await window.DB.set("items", items);
       const saved = await window.saveOrder(
         {
           deliveryTo: "옵션 PR 테스트",
@@ -836,7 +838,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
         colorStockPyeongtaek: {},
         colorStockOsan: {}
       });
-      window.DB.set("items", items);
+      await window.DB.set("items", items);
 
       const saved = await window.saveOrder(
         {
@@ -891,7 +893,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
         colorStockPyeongtaek: {},
         colorStockOsan: {}
       });
-      window.DB.set("items", items);
+      await window.DB.set("items", items);
 
       const saved = await window.saveOrder(
         {
@@ -955,7 +957,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
         colorStockPyeongtaek: {},
         colorStockOsan: {}
       });
-      window.DB.set("items", items);
+      await window.DB.set("items", items);
 
       const orders = window.DB.get("orders", []);
       orders.push({
@@ -991,7 +993,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
   test("OPT-V1: noColor option confirm modal does not require shared color and still shows shortage", async ({ page }) => {
     await loginAdmin(page);
 
-    const result = await page.evaluate(() => {
+    const result = await page.evaluate(async () => {
       const itemId = 99010;
       const items = window.DB.get("items", []);
       items.push({
@@ -1009,7 +1011,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
         colorStockPyeongtaek: {},
         colorStockOsan: {}
       });
-      window.DB.set("items", items);
+      await window.DB.set("items", items);
 
       const oldToast = window.toast;
       const oldRender = window.renderOrderDocument;
@@ -1074,7 +1076,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
   test("OPT-X1: inventory Excel export includes tracked option items", async ({ page }) => {
     await loginAdmin(page);
 
-    const result = await page.evaluate(() => {
+    const result = await page.evaluate(async () => {
       const itemId = 99020;
       const items = window.DB.get("items", []);
       items.push({
@@ -1091,7 +1093,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
         colorStockPyeongtaek: {},
         colorStockOsan: {}
       });
-      window.DB.set("items", items);
+      await window.DB.set("items", items);
 
       const oldXLSX = window.XLSX;
       const oldDownload = window.xlsxDownload;
@@ -1133,5 +1135,81 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
       4,
       5
     ]);
+  });
+
+  test("INV-G1: stale local items cannot overwrite newer server inventory", async ({ page }) => {
+    await loginAdmin(page);
+
+    const result = await page.evaluate(async () => {
+      const oldFS = window._FS;
+      const prev = [
+        { id: 99101, name: "guard local changed", category: "서랍장", isActive: true, stockSiheung: 10, stockPyeongtaek: 0, currentStock: 10 },
+        { id: 99102, name: "guard server newer", category: "서랍장", isActive: true, stockSiheung: 5, stockPyeongtaek: 0, currentStock: 5 }
+      ];
+      const server = [
+        { id: 99101, name: "guard local changed", category: "서랍장", isActive: true, stockSiheung: 10, stockPyeongtaek: 0, currentStock: 10 },
+        { id: 99102, name: "guard server newer", category: "서랍장", isActive: true, stockSiheung: 99, stockPyeongtaek: 0, currentStock: 99 }
+      ];
+      const next = [
+        { ...prev[0], stockSiheung: 7, currentStock: 7 },
+        { ...prev[1] }
+      ];
+      let written: any[] | null = null;
+      window._mem.items = prev;
+      window._FS = {
+        ...oldFS,
+        get: async (key: string) => key === "items" ? server : oldFS.get(key),
+        set: async (key: string, value: any) => {
+          if (key === "items") written = value;
+          else await oldFS.set(key, value);
+        }
+      };
+      try {
+        await window.DB.set("items", next);
+        const byId = new Map((written || []).map((i: any) => [i.id, i]));
+        return {
+          localChanged: byId.get(99101)?.stockSiheung,
+          serverNewerPreserved: byId.get(99102)?.stockSiheung
+        };
+      } finally {
+        window._FS = oldFS;
+      }
+    });
+
+    expect(result.localChanged).toBe(7);
+    expect(result.serverNewerPreserved).toBe(99);
+  });
+
+  test("INV-G2: items save is blocked when server items cannot be read", async ({ page }) => {
+    await loginAdmin(page);
+
+    const result = await page.evaluate(async () => {
+      const oldFS = window._FS;
+      const prev = [{ id: 99201, name: "guard fail closed", category: "서랍장", isActive: true, stockSiheung: 10 }];
+      const next = [{ ...prev[0], stockSiheung: 1 }];
+      let setCalled = false;
+      let err = "";
+      window._mem.items = prev;
+      window._FS = {
+        ...oldFS,
+        get: async (key: string) => key === "items" ? null : oldFS.get(key),
+        set: async (key: string, value: any) => {
+          if (key === "items") setCalled = true;
+          else await oldFS.set(key, value);
+        }
+      };
+      try {
+        await window.DB.set("items", next);
+      } catch (e: any) {
+        err = e?.message || String(e);
+      } finally {
+        window._FS = oldFS;
+      }
+      return { setCalled, err, memStock: window._mem.items?.[0]?.stockSiheung };
+    });
+
+    expect(result.setCalled).toBe(false);
+    expect(result.err).toContain("items");
+    expect(result.memStock).toBe(10);
   });
 });

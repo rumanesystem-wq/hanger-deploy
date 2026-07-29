@@ -18,6 +18,9 @@ const DB={
   get(k,d=[]){
     try{
       const val=(window._mem&&Object.prototype.hasOwnProperty.call(window._mem,k))?window._mem[k]:null;
+      if(k==='items'&&Array.isArray(val)){
+        try{return JSON.parse(JSON.stringify(val));}catch{return val.map(i=>({...i}));}
+      }
       return val!==null&&val!==undefined?val:d;
     }catch{return d;}
   },
@@ -27,6 +30,31 @@ const DB={
     // 6/8 사고: stale 캐시(DB.get) → DB.set 시 서버 통째 덮어쓰기로 발주서 손실.
     // orders 만 서버 재조회(3초 타임아웃) + _mergeById 후 set 진행. 실패 시 저장 차단 + 토스트.
     // 호출처가 await 안 해도 토스트로 알림, 메모리 미러 미반영 → 새로고침 시 서버값으로 자가 복구.
+    if(k==='items' && Array.isArray(v) && window._FS && !window._itemsInitLock){
+      const self=this;
+      const prev=(window._mem&&Array.isArray(window._mem[k]))?window._mem[k]:[];
+      return (async()=>{
+        try{
+          const server=await Promise.race([
+            window._FS.get('items'),
+            new Promise((_,rj)=>setTimeout(()=>rj(new Error('TIMEOUT')),10000))
+          ]);
+          if(server===null||server===undefined){
+            throw new Error('[안전망] items 서버 재조회 실패(null) — fail-closed, 저장 차단');
+          }
+          if(!Array.isArray(server)){
+            throw new Error('[안전망] items 서버 응답 비배열 — fail-closed, 저장 차단');
+          }
+          const merged=_mergeItemsByLocalChanges(server,prev,v);
+          return self._setInternal(k,merged);
+        }catch(e){
+          console.error('[안전망] items 저장 차단 — 서버 재조회 실패:',e&&e.message);
+          if(typeof toast==='function')toast('서버 연결 확인 필요. 재고/품목 저장이 차단되었습니다.','error');
+          throw e;
+        }
+      })();
+    }
+
     if(k==='orders' && Array.isArray(v) && window._FS){
       const self=this;
       return (async()=>{
@@ -175,6 +203,39 @@ function _mergeById(local, remote){
 }
 // (핫픽스 C 20260611) watchData / shipping에서 호출하기 위해 글로벌 노출
 window._mergeById = _mergeById;
+
+function _stableJson(v){
+  try{return JSON.stringify(v);}catch{return String(v);}
+}
+function _mergeItemsByLocalChanges(serverItems,prevItems,nextItems){
+  const serverById=new Map((serverItems||[]).filter(i=>i&&i.id!=null).map(i=>[i.id,i]));
+  const prevById=new Map((prevItems||[]).filter(i=>i&&i.id!=null).map(i=>[i.id,i]));
+  const result=new Map();
+  (serverItems||[]).forEach(item=>{if(item&&item.id!=null)result.set(item.id,{...item});});
+  (nextItems||[]).forEach(next=>{
+    if(!next||next.id==null)return;
+    const server=serverById.get(next.id);
+    const prev=prevById.get(next.id);
+    if(!server){
+      result.set(next.id,{...next});
+      return;
+    }
+    if(!prev){
+      result.set(next.id,{...server,...next});
+      return;
+    }
+    const merged={...server};
+    const keys=new Set([...Object.keys(prev),...Object.keys(next)]);
+    keys.forEach(key=>{
+      if(_stableJson(prev[key])===_stableJson(next[key]))return;
+      if(Object.prototype.hasOwnProperty.call(next,key))merged[key]=next[key];
+      else delete merged[key];
+    });
+    result.set(next.id,merged);
+  });
+  return [...result.values()].sort((a,b)=>(a.id||0)-(b.id||0));
+}
+window._mergeItemsByLocalChanges=_mergeItemsByLocalChanges;
 
 // ── Firestore → 메모리(window._mem) 서버우선 동기화 (앱 시작 1회) ──
 // 서버=진실. getAll 성공 시 서버값 채택. 서버 미수신 시에만 로컬 폴백(읽기).
@@ -1396,7 +1457,7 @@ function initData(){
 }
 
 // 테스트용 재고 시드 (색상별로 다른 수량 — 이미 데이터 있으면 스킵)
-function _seedDemoStock(){
+async function _seedDemoStock(){
   const items=DB.get('items',[]);
   const drawerItems=items.filter(i=>i.category==='서랍장'&&i.isActive);
   if(!drawerItems.length)return;
@@ -1427,7 +1488,7 @@ function _seedDemoStock(){
     items[iIdx].currentStock=items[iIdx].stockSiheung+items[iIdx].stockPyeongtaek;
     changed=true;
   });
-  if(changed)DB.set('items',items);
+  if(changed)await DB.set('items',items);
 }
 
 // 핵심 로직
@@ -1592,7 +1653,7 @@ async function saveOrder(payload, saveMode='발주확정'){
     }
   });
   // 차감된 재고 저장
-  DB.set('items',dbItems);
+  await DB.set('items',dbItems);
 
   const orderDoc={
     id:orderId,
