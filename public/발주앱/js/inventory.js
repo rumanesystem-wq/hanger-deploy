@@ -774,8 +774,22 @@ function renderInventory(filterItemId){
     </div>`;
 
   // 이벤트 바인딩 — 현재고 표 필터
+  // [2026-07-30] 검색 재렌더로 포커스 잃는 문제 방어: 재렌더 후 자동 포커스 복원 + 커서 끝으로
   const invSearch=document.getElementById('inv-item-search');
-  if(invSearch)invSearch.addEventListener('input',e=>{invItemSearch=e.target.value;renderInventory();});
+  if(invSearch){
+    // 재렌더 직후 포커스 복원 (직전 렌더가 검색 때문이었다면)
+    if(window._invSearchWasFocused){
+      window._invSearchWasFocused=false;
+      const len=invSearch.value.length;
+      invSearch.focus();
+      try{invSearch.setSelectionRange(len,len);}catch(_){}
+    }
+    invSearch.addEventListener('input',e=>{
+      invItemSearch=e.target.value;
+      window._invSearchWasFocused=true; // 다음 렌더에서 복원 트리거
+      renderInventory();
+    });
+  }
   const invZeroChk=document.getElementById('inv-only-zero');
   if(invZeroChk)invZeroChk.addEventListener('change',e=>{invOnlyZero=e.target.checked;invOnlyLow=false;renderInventory();});
   const invLowChk=document.getElementById('inv-only-low');
