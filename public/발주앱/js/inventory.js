@@ -5,10 +5,28 @@
 // noColor 품목은 창고 합계 재고만 관리한다.
 function inventoryColorsForItem(item){
   if(!item||item.noColor)return[];
-  if(Array.isArray(item.colorOptions)&&item.colorOptions.length>0)return[...new Set(item.colorOptions)];
-  const mapped=Object.keys(item.colorProdCdMap||{}).filter(color=>color&&item.colorProdCdMap[color]&&item.colorProdCdMap[color]!=='N/A');
-  if(mapped.length>0)return mapped;
-  return SHELF_COLORS;
+  let colors;
+  if(Array.isArray(item.colorOptions)&&item.colorOptions.length>0)colors=item.colorOptions;
+  else{
+    const mapped=Object.keys(item.colorProdCdMap||{}).filter(color=>color&&item.colorProdCdMap[color]&&item.colorProdCdMap[color]!=='N/A');
+    colors=mapped.length>0?mapped:SHELF_COLORS;
+  }
+  const seen=new Set();
+  const normalized=[];
+  colors.forEach(color=>{
+    const c=typeof normalizeStockColor==='function'?normalizeStockColor(color):color;
+    if(!seen.has(c)){seen.add(c);normalized.push(c);}
+  });
+  const order=Array.isArray(SHELF_COLORS)?SHELF_COLORS:[];
+  normalized.sort((a,b)=>{
+    const ai=order.indexOf(a),bi=order.indexOf(b);
+    if(ai!==-1||bi!==-1)return(ai===-1?99:ai)-(bi===-1?99:bi);
+    return a.localeCompare(b,'ko');
+  });
+  return normalized;
+}
+function inventoryColorStock(map,color){
+  return typeof getColorStock==='function'?getColorStock(map,color):((map||{})[color]||0);
 }
 
 // 발주 필요 목록
@@ -253,9 +271,9 @@ function renderStockView(){
     const itemBg=orderableTotal===0?'background:#fef2f2':orderableTotal<=3?'background:#fffbeb':'';
 
     const colorRows=inventoryColorsForItem(item).map(color=>{
-      const sC=(item.colorStockSiheung||{})[color]||0;
-      const pC=(item.colorStockPyeongtaek||{})[color]||0;
-      const oC=(item.colorStockOsan||{})[color]||0;
+      const sC=inventoryColorStock(item.colorStockSiheung||{},color);
+      const pC=inventoryColorStock(item.colorStockPyeongtaek||{},color);
+      const oC=inventoryColorStock(item.colorStockOsan||{},color);
       // [2026-07-24 Codex-High-3] 색상 합계도 발주 가능 재고 기준 (시흥+평택). 오산 별도 컬럼 표시.
       const tot=sC+pC;
       const sColor=sC===0?'#9ca3af':sC<=2?'#d97706':'#1e40af';
@@ -616,9 +634,9 @@ function renderInventory(filterItemId){
     const rowBg=orderableTotal===0?'background:#fef2f2':orderableTotal<=3?'background:#fffbeb':'';
     // 색상별 행 생성
     const colorRows=inventoryColorsForItem(item).map(color=>{
-      const sC=(item.colorStockSiheung||{})[color]||0;
-      const pC=(item.colorStockPyeongtaek||{})[color]||0;
-      const oC=(item.colorStockOsan||{})[color]||0;
+      const sC=inventoryColorStock(item.colorStockSiheung||{},color);
+      const pC=inventoryColorStock(item.colorStockPyeongtaek||{},color);
+      const oC=inventoryColorStock(item.colorStockOsan||{},color);
       // [2026-07-24 Codex-High-4] 색상 합계도 발주 가능 재고(시흥+평택)만
       const tot=sC+pC;
       const cColor=tot===0?'#9ca3af':tot<=3?'#d97706':'var(--text)';
@@ -964,7 +982,7 @@ function openInvModal(itemId,type){
     const cs=item.colorStockSiheung||{};
     const cp=item.colorStockPyeongtaek||{};
     const co=item.colorStockOsan||{};
-    const tot=(cs[c]||0)+(cp[c]||0)+(co[c]||0);
+    const tot=inventoryColorStock(cs,c)+inventoryColorStock(cp,c)+inventoryColorStock(co,c);
     return tot>0?`${c}:${tot}`:null;
   }).filter(Boolean).join(', ');
   document.getElementById('inv-modal-info').innerHTML=

@@ -141,7 +141,7 @@ function aggressiveNormalize(name){
 
 // 앱 색상명 → colorProdCdMap/이카운트 조회용 키 변환
 // 앱: 샴페인골드  /  이카운트·DB 입력: 골드  → 동일 취급
-const COLOR_KEY_ALIAS={'샴페인골드':'골드'};
+const COLOR_KEY_ALIAS={'샴페인골드':'골드','솔리드':'솔리드화이트','화이트 오크':'화이트오크'};
 function resolveColorKey(color){
   return COLOR_KEY_ALIAS[color]||color;
 }

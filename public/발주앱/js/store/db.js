@@ -1627,7 +1627,8 @@ async function saveOrder(payload, saveMode='발주확정'){
     // 마이그레이션 보정
     if(item.stockSiheung===undefined)item.stockSiheung=item.currentStock||0;
     if(item.stockPyeongtaek===undefined)item.stockPyeongtaek=0;
-    const orderColor=item.noColor?'':(drawerItem.color||payload.sharedColor||'');
+    let orderColor=item.noColor?'':(drawerItem.color||payload.sharedColor||'');
+    if(orderColor&&typeof normalizeStockColor==='function')orderColor=normalizeStockColor(orderColor);
     const whStock=getWarehouseStock(item,warehouse,orderColor);
     const inventoryTracked=isTrackStock(item);
     const inventoryDeducted=inventoryTracked&&(effectiveSaveMode==='발주대기'||effectiveSaveMode==='발주확정');
@@ -1645,10 +1646,11 @@ async function saveOrder(payload, saveMode='발주확정'){
       let before, afterVal;
       if(orderColor){
         if(!item[cwKey])item[cwKey]={};
-        before=item[cwKey][orderColor]||0;
+        before=typeof getColorStock==='function'?getColorStock(item[cwKey],orderColor):(item[cwKey][orderColor]||0);
         afterVal=Math.max(0,before-requiredQty);
-        item[cwKey][orderColor]=afterVal;
-        item[whKey]=Object.values(item[cwKey]).reduce((s,v)=>s+(v||0),0);
+        if(typeof setColorStock==='function')setColorStock(item[cwKey],orderColor,afterVal);
+        else item[cwKey][orderColor]=afterVal;
+        item[whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(item[cwKey]):Object.values(item[cwKey]).reduce((s,v)=>s+(v||0),0);
       } else {
         before=item[whKey];
         afterVal=Math.max(0,before-requiredQty);

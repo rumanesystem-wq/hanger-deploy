@@ -23,6 +23,50 @@ function getOrders(){return DB.get('orders',[]);}
 function getPRs(){return DB.get('purchase_requests',[]);}
 function getLogs(){return DB.get('logs',[]);}
 function getItem(id){return getItems().find(i=>i.id===id);}
+const STOCK_COLOR_ALIAS={'솔리드화이트':'솔리드','솔리드':'솔리드','화이트오크':'화이트 오크','화이트 오크':'화이트 오크'};
+function normalizeStockColor(color){return STOCK_COLOR_ALIAS[color]||color;}
+function stockColorAliases(color){
+  const normalized=normalizeStockColor(color);
+  const aliases=Object.keys(STOCK_COLOR_ALIAS).filter(k=>STOCK_COLOR_ALIAS[k]===normalized);
+  if(!aliases.includes(color))aliases.push(color);
+  if(!aliases.includes(normalized))aliases.push(normalized);
+  return [...new Set(aliases)];
+}
+function getColorStock(map,color){
+  if(!map||!color)return 0;
+  return stockColorAliases(color).reduce((s,k)=>s+(Number(map[k])||0),0);
+}
+function normalizeColorStockMap(map){
+  if(!map||typeof map!=='object')return{map:{},changed:false};
+  let changed=false;
+  const next={};
+  Object.entries(map).forEach(([color,val])=>{
+    const normalized=normalizeStockColor(color);
+    next[normalized]=(next[normalized]||0)+(Number(val)||0);
+    if(normalized!==color)changed=true;
+  });
+  Object.keys(map).forEach(k=>{if(map[k]!==next[k])changed=true;});
+  Object.keys(next).forEach(k=>{if(map[k]!==next[k])changed=true;});
+  return{map:next,changed};
+}
+function setColorStock(map,color,value){
+  if(!map||!color)return;
+  const normalized=normalizeStockColor(color);
+  stockColorAliases(color).forEach(k=>{if(k!==normalized&&map[k]!==undefined)delete map[k];});
+  map[normalized]=value;
+}
+function sumColorStockMap(map){
+  const normalized=normalizeColorStockMap(map).map;
+  return Object.values(normalized).reduce((s,v)=>s+(Number(v)||0),0);
+}
+function getColorAliasValue(map,color){
+  if(!map||!color)return undefined;
+  const keys=[color,normalizeStockColor(color),...stockColorAliases(color)].filter(Boolean);
+  for(const key of [...new Set(keys)]){
+    if(map[key]!==undefined)return map[key];
+  }
+  return undefined;
+}
 // 창고명 → DB 재고 필드명 변환 헬퍼
 // [2026-07-24] 오산 창고 추가 (재고 관리 전용, 발주에는 안 나옴)
 function getWhKey(wh){
@@ -52,7 +96,7 @@ function getWarehouseStock(item,warehouse,color){
   const cwKey=getColorWhKey(warehouse||'시흥');
   if(color){
     const cMap=item[cwKey]||{};
-    return cMap[color]||0;
+    return getColorStock(cMap,color);
   }
   // color 미지정: 창고 전체 합계
   if(warehouse==='평택')return item.stockPyeongtaek||0;

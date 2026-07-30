@@ -113,14 +113,16 @@ async function changeOrderStatus(orderId, newStatus){
       const wh=_orderableWh(oi.warehouse, confWh);
       const whKey=getWhKey(wh);
       const cwKey=getColorWhKey(wh);
-      const oiColor=dbItems[iIdx].noColor?'':(oi.color||order.sharedColor||'');
+      let oiColor=dbItems[iIdx].noColor?'':(oi.color||order.sharedColor||'');
+      if(oiColor&&typeof normalizeStockColor==='function')oiColor=normalizeStockColor(oiColor);
       let before, afterVal;
       if(oiColor){
         if(!dbItems[iIdx][cwKey])dbItems[iIdx][cwKey]={};
-        before=dbItems[iIdx][cwKey][oiColor]||0;
+        before=typeof getColorStock==='function'?getColorStock(dbItems[iIdx][cwKey],oiColor):(dbItems[iIdx][cwKey][oiColor]||0);
         afterVal=Math.max(0,before-oi.requiredQty);
-        dbItems[iIdx][cwKey][oiColor]=afterVal;
-        dbItems[iIdx][whKey]=Object.values(dbItems[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
+        if(typeof setColorStock==='function')setColorStock(dbItems[iIdx][cwKey],oiColor,afterVal);
+        else dbItems[iIdx][cwKey][oiColor]=afterVal;
+        dbItems[iIdx][whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(dbItems[iIdx][cwKey]):Object.values(dbItems[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
       } else {
         before=dbItems[iIdx][whKey];
         afterVal=Math.max(0,before-oi.requiredQty);
@@ -156,14 +158,16 @@ async function changeOrderStatus(orderId, newStatus){
       const wh=_orderableWh(oi.warehouse, rollWh);
       const whKey=getWhKey(wh);
       const cwKey=getColorWhKey(wh);
-      const oiColor=dbItems[iIdx].noColor?'':(oi.color||order.sharedColor||'');
+      let oiColor=dbItems[iIdx].noColor?'':(oi.color||order.sharedColor||'');
+      if(oiColor&&typeof normalizeStockColor==='function')oiColor=normalizeStockColor(oiColor);
       let before, afterVal;
       if(oiColor){
         if(!dbItems[iIdx][cwKey])dbItems[iIdx][cwKey]={};
-        before=dbItems[iIdx][cwKey][oiColor]||0;
+        before=typeof getColorStock==='function'?getColorStock(dbItems[iIdx][cwKey],oiColor):(dbItems[iIdx][cwKey][oiColor]||0);
         afterVal=before+oi.requiredQty;
-        dbItems[iIdx][cwKey][oiColor]=afterVal;
-        dbItems[iIdx][whKey]=Object.values(dbItems[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
+        if(typeof setColorStock==='function')setColorStock(dbItems[iIdx][cwKey],oiColor,afterVal);
+        else dbItems[iIdx][cwKey][oiColor]=afterVal;
+        dbItems[iIdx][whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(dbItems[iIdx][cwKey]):Object.values(dbItems[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
       } else {
         before=dbItems[iIdx][whKey];
         afterVal=before+oi.requiredQty;
@@ -238,14 +242,16 @@ async function cancelOrder(orderId, cancelReason){
         const wh=_orderableWh(oi.warehouse, orderWh);
         const whKey=getWhKey(wh);
         const cwKey=getColorWhKey(wh);
-        const oiColor=items[iIdx].noColor?'':(oi.color||order.sharedColor||'');
+        let oiColor=items[iIdx].noColor?'':(oi.color||order.sharedColor||'');
+        if(oiColor&&typeof normalizeStockColor==='function')oiColor=normalizeStockColor(oiColor);
         let before, afterVal;
         if(oiColor){
           if(!items[iIdx][cwKey])items[iIdx][cwKey]={};
-          before=items[iIdx][cwKey][oiColor]||0;
+          before=typeof getColorStock==='function'?getColorStock(items[iIdx][cwKey],oiColor):(items[iIdx][cwKey][oiColor]||0);
           afterVal=before+oi.requiredQty;
-          items[iIdx][cwKey][oiColor]=afterVal;
-          items[iIdx][whKey]=Object.values(items[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
+          if(typeof setColorStock==='function')setColorStock(items[iIdx][cwKey],oiColor,afterVal);
+          else items[iIdx][cwKey][oiColor]=afterVal;
+          items[iIdx][whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(items[iIdx][cwKey]):Object.values(items[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
         } else {
           before=items[iIdx][whKey];
           afterVal=before+oi.requiredQty;
@@ -335,14 +341,16 @@ async function uncancelOrder(orderId){
         const wh=_orderableWh(oi.warehouse, orderWh);
         const whKey=getWhKey(wh);
         const cwKey=getColorWhKey(wh);
-        const oiColor=items[iIdx].noColor?'':(oi.color||order.sharedColor||'');
+        let oiColor=items[iIdx].noColor?'':(oi.color||order.sharedColor||'');
+        if(oiColor&&typeof normalizeStockColor==='function')oiColor=normalizeStockColor(oiColor);
         let before, afterVal;
         if(oiColor){
           if(!items[iIdx][cwKey])items[iIdx][cwKey]={};
-          before=items[iIdx][cwKey][oiColor]||0;
+          before=typeof getColorStock==='function'?getColorStock(items[iIdx][cwKey],oiColor):(items[iIdx][cwKey][oiColor]||0);
           afterVal=before-oi.requiredQty; // 마이너스 허용
-          items[iIdx][cwKey][oiColor]=afterVal;
-          items[iIdx][whKey]=Object.values(items[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
+          if(typeof setColorStock==='function')setColorStock(items[iIdx][cwKey],oiColor,afterVal);
+          else items[iIdx][cwKey][oiColor]=afterVal;
+          items[iIdx][whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(items[iIdx][cwKey]):Object.values(items[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
         } else {
           before=items[iIdx][whKey]||0;
           afterVal=before-oi.requiredQty;
@@ -1568,14 +1576,16 @@ async function rollbackInventoryForEdit(order){
     const wh=_orderableWh(oi.warehouse, editWh);
     const whKey=getWhKey(wh);
     const cwKey=getColorWhKey(wh);
-    const oiColor=items[iIdx].noColor?'':(oi.color||order.sharedColor||'');
+    let oiColor=items[iIdx].noColor?'':(oi.color||order.sharedColor||'');
+    if(oiColor&&typeof normalizeStockColor==='function')oiColor=normalizeStockColor(oiColor);
     let before, afterVal;
     if(oiColor){
       if(!items[iIdx][cwKey])items[iIdx][cwKey]={};
-      before=items[iIdx][cwKey][oiColor]||0;
+      before=typeof getColorStock==='function'?getColorStock(items[iIdx][cwKey],oiColor):(items[iIdx][cwKey][oiColor]||0);
       afterVal=before+(oi.requiredQty||0);
-      items[iIdx][cwKey][oiColor]=afterVal;
-      items[iIdx][whKey]=Object.values(items[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
+      if(typeof setColorStock==='function')setColorStock(items[iIdx][cwKey],oiColor,afterVal);
+      else items[iIdx][cwKey][oiColor]=afterVal;
+      items[iIdx][whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(items[iIdx][cwKey]):Object.values(items[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
     } else {
       before=items[iIdx][whKey];
       afterVal=before+(oi.requiredQty||0);

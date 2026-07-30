@@ -9,6 +9,7 @@ async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
   const item=items[idx];
   if(!isTrackStock(item))throw new Error('재고 관리 대상 품목만 재고를 처리할 수 있습니다.');
   if(item.noColor)color='';
+  else if(color&&typeof normalizeStockColor==='function')color=normalizeStockColor(color);
   // 서버에서 로그 id 1개 발급 — 실패 시 즉시 throw(상태 변경 전)
   const _logIds=await _serverGetLogIds(1);
   const wh=warehouse||'시흥';
@@ -25,13 +26,14 @@ async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
   if(color){
     // 색상별 재고 처리
     if(!items[idx][cwKey])items[idx][cwKey]={};
-    before=items[idx][cwKey][color]||0;
+    before=typeof getColorStock==='function'?getColorStock(items[idx][cwKey],color):(items[idx][cwKey][color]||0);
     if(type==='입고')after=before+n;
     else if(type==='출고'){if(n>before)throw new Error(`출고 수량(${n})이 [${color}] ${wh} 재고(${before})를 초과합니다.`);after=before-n;}
     else{if(n<0)throw new Error('조정 후 재고는 0 이상이어야 합니다.');after=n;}
-    items[idx][cwKey][color]=after;
+    if(typeof setColorStock==='function')setColorStock(items[idx][cwKey],color,after);
+    else items[idx][cwKey][color]=after;
     // 창고 합계 재계산
-    items[idx][whKey]=Object.values(items[idx][cwKey]).reduce((s,v)=>s+(v||0),0);
+    items[idx][whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(items[idx][cwKey]):Object.values(items[idx][cwKey]).reduce((s,v)=>s+(v||0),0);
   } else {
     // 색상 미지정: 창고 전체 처리 (기존 방식)
     before=item[whKey];
@@ -96,7 +98,7 @@ async function processInventoryBatch({itemId,type,entries,memo,warehouse,logDate
   const allowedColors=new Set(inventoryColorsForItem(item));
   const seenColors=new Set();
   const ops=(entries||[])
-    .map(e=>({color:String(e.color||''),qty:Number(e.qty)}))
+    .map(e=>({color:typeof normalizeStockColor==='function'?normalizeStockColor(String(e.color||'')):String(e.color||''),qty:Number(e.qty)}))
     .filter(e=>e.color&&Number.isFinite(e.qty)&&e.qty!==0);
 
   if(ops.length===0)throw new Error('처리할 색상 수량을 입력해주세요.');
@@ -119,7 +121,7 @@ async function processInventoryBatch({itemId,type,entries,memo,warehouse,logDate
 
   // 저장 전 전체 dry-run: 하나라도 실패하면 로그번호 발급/재고 변경을 시작하지 않는다.
   const planned=ops.map(op=>{
-    const before=items[idx][cwKey][op.color]||0;
+    const before=typeof getColorStock==='function'?getColorStock(items[idx][cwKey],op.color):(items[idx][cwKey][op.color]||0);
     let after;
     if(type==='입고')after=before+op.qty;
     else if(type==='출고'){
@@ -134,11 +136,12 @@ async function processInventoryBatch({itemId,type,entries,memo,warehouse,logDate
   const _logIds=await _serverGetLogIds(planned.length);
   const results=[];
   planned.forEach((op,i)=>{
-    items[idx][cwKey][op.color]=op.after;
+    if(typeof setColorStock==='function')setColorStock(items[idx][cwKey],op.color,op.after);
+    else items[idx][cwKey][op.color]=op.after;
     results.push({id:_logIds[i],...op});
   });
 
-  items[idx][whKey]=Object.values(items[idx][cwKey]).reduce((s,v)=>s+(v||0),0);
+  items[idx][whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(items[idx][cwKey]):Object.values(items[idx][cwKey]).reduce((s,v)=>s+(v||0),0);
   items[idx].currentStock=(items[idx].stockSiheung||0)+(items[idx].stockPyeongtaek||0);
   await DB.set('items',items);
 
@@ -594,8 +597,8 @@ function renderDashboard(){
       const itemBg=(sTotal+pTotal)===0?'background:#fef2f2':(sTotal+pTotal)<=3?'background:#fffbeb':'';
       const colorList=typeof inventoryColorsForItem==='function'?inventoryColorsForItem(item):SHELF_COLORS;
       const colorDetail=colorList.map(color=>{
-        const sC=(item.colorStockSiheung||{})[color]||0;
-        const pC=(item.colorStockPyeongtaek||{})[color]||0;
+        const sC=typeof getColorStock==='function'?getColorStock(item.colorStockSiheung||{},color):((item.colorStockSiheung||{})[color]||0);
+        const pC=typeof getColorStock==='function'?getColorStock(item.colorStockPyeongtaek||{},color):((item.colorStockPyeongtaek||{})[color]||0);
         const tot=sC+pC;
         return `<tr class="sv-color-row sv-cr-${item.id}" style="display:none;background:#fafafa">
           <td style="padding-left:20px;font-size:11px;color:#374151">
@@ -2074,7 +2077,12 @@ function renderItems(){
       const escapedName=item.name.replace(/"/g,'&quot;');
       const isDrawerItem=!item.noColor&&(item.category==='서랍장'||item.category==='옵션'||item.category==='상부자재'||item.category==='선반'||item.category==='옷봉'||item.category==='코너선반');
       const colorMap=item.colorProdCdMap||{};
-      const colorSetCount=Object.values(colorMap).filter(v=>v&&v!=='N/A').length;
+      const normalizedColorMap={};
+      Object.entries(colorMap).forEach(([c,v])=>{
+        const key=typeof normalizeStockColor==='function'?normalizeStockColor(c):c;
+        if(v&&v!=='N/A')normalizedColorMap[key]=v;
+      });
+      const colorSetCount=Object.keys(normalizedColorMap).length;
       const prodCdCellInner=isDrawerItem
         ?`<button class="btn btn-outline btn-xs item-color-prodcd-btn" data-item-id="${item.id}" style="border-color:#7c3aed;color:#7c3aed;white-space:nowrap;font-size:11px">${colorSetCount>0?`<i class="fas fa-check-circle" style="color:#7c3aed;margin-right:3px"></i>${colorSetCount}색상 설정됨`:'<i class="fas fa-plus" style="margin-right:3px"></i>색상별 코드 설정'}</button>`
         :`<button class="btn btn-outline btn-xs ${item.noColor?'item-color-prodcd-btn':'item-prodcd-open-btn'}" data-item-id="${item.id}" style="border-color:#7c3aed;color:#7c3aed;white-space:nowrap;font-size:11px">
@@ -2467,9 +2475,20 @@ function openColorProdCdModal(itemId){
     if(subTypes){
       mainContent = subTypes.map(st => {
         const stMap = _subTypeMap[st.name] || {};
+        const seenStColors = new Set();
+        const stColors = Array.isArray(st.colors)
+          ? st.colors.map(c=>typeof normalizeStockColor==='function'?normalizeStockColor(c):c).filter(c=>{
+              if(seenStColors.has(c))return false;
+              seenStColors.add(c);
+              return true;
+            })
+          : st.colors;
         const inner = st.colors === null
           ? renderSingleRow(st.name, stMap['_single']||'')
-          : st.colors.map(c => renderColorRow(c, stMap[c]==='N/A'?'':stMap[c]||'', stMap[c]==='N/A', st.name)).join('');
+          : stColors.map(c => {
+              const saved = typeof getColorAliasValue==='function'?getColorAliasValue(stMap,c):stMap[c];
+              return renderColorRow(c, saved==='N/A'?'':saved||'', saved==='N/A', st.name);
+            }).join('');
         return `<div style="margin-bottom:24px">
           <div style="font-size:13px;font-weight:700;color:#1e293b;padding:6px 10px;background:#f8fafc;border-radius:8px;margin-bottom:10px;border-left:3px solid #7c3aed">${st.name}</div>
           ${inner}
@@ -2494,8 +2513,17 @@ function openColorProdCdModal(itemId){
         </div>
       </div>`;
     } else {
-      const colors = item.colorOptions || CATEGORY_COLORS[item.category] || SHELF_COLORS;
-      mainContent = colors.map(c => renderColorRow(c, colorMap[c]==='N/A'?'':colorMap[c]||'', colorMap[c]==='N/A', '')).join('');
+      const baseColors = item.colorOptions || CATEGORY_COLORS[item.category] || SHELF_COLORS;
+      const seenColors = new Set();
+      const colors = baseColors.map(c=>typeof normalizeStockColor==='function'?normalizeStockColor(c):c).filter(c=>{
+        if(seenColors.has(c))return false;
+        seenColors.add(c);
+        return true;
+      });
+      mainContent = colors.map(c => {
+        const saved = typeof getColorAliasValue==='function'?getColorAliasValue(colorMap,c):colorMap[c];
+        return renderColorRow(c, saved==='N/A'?'':saved||'', saved==='N/A', '');
+      }).join('');
     }
 
     // 댐퍼/비규격 단일 코드 행 렌더링
@@ -2654,7 +2682,10 @@ function saveColorProdCdMap(){
   }
   const map={};
   // 해당없음(N/A) 먼저 적용
-  SHELF_COLORS.forEach(color=>{ if(_colorProdCdMap[color]==='N/A') map[color]='N/A'; });
+  SHELF_COLORS.forEach(color=>{
+    const saved=typeof getColorAliasValue==='function'?getColorAliasValue(_colorProdCdMap,color):_colorProdCdMap[color];
+    if(saved==='N/A') map[color]='N/A';
+  });
   document.querySelectorAll('.color-search-inp').forEach(inp=>{
     const color=inp.dataset.color;
     if(map[color]==='N/A') return; // 해당없음은 유지
