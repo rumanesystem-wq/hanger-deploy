@@ -459,9 +459,32 @@ function renderInventory(filterItemId){
     const s = document.createElement('style');
     s.id = '_inv-mobile-css';
     s.textContent = `
+      .inv-stock-card { overflow: visible; }
+      .inv-stock-card > .card-header {
+        position: sticky;
+        top: 56px;
+        z-index: 45;
+        background: #fff;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, .08);
+      }
+      .inv-stock-card .table-wrap { overflow: visible; }
+      #inv-stock-table thead th {
+        position: sticky;
+        top: 111px;
+        z-index: 40;
+        background: #f8fafc;
+        box-shadow: 0 1px 0 var(--border), 0 2px 6px rgba(15, 23, 42, .06);
+      }
       @media (max-width: 640px) {
+        .inv-stock-card > .card-header {
+          top: 52px;
+          align-items: flex-start;
+          gap: 8px;
+        }
+        .inv-stock-card .table-wrap { overflow: visible !important; }
         #inv-stock-table { display:block !important; width:100% !important; }
         #inv-stock-table thead { display:none !important; }
+        #inv-stock-table thead th { position: static; top: auto; box-shadow: none; }
         #inv-stock-table tbody { display:block !important; }
         /* 메인 행 → 카드 */
         #inv-stock-table tr.inv-main-row {
@@ -728,7 +751,7 @@ function renderInventory(filterItemId){
     </div>
 
     <!-- 현재고 표 -->
-    <div class="card" style="margin-bottom:24px">
+    <div class="card inv-stock-card" style="margin-bottom:24px">
       <div class="card-header">
         <h3>품목별 현재고 (창고별)</h3>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
