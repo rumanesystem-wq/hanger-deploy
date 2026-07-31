@@ -41,12 +41,20 @@ async function fetchCompletedOrders(filter) {
   const allOrders = (typeof DB !== 'undefined' && typeof DB.get === 'function')
     ? DB.get('orders', [])
     : [];
+  const invoiceMap = await _fetchSettlementInvoiceMap();
   // [2026-07-03] 옛 오염 데이터(0026-XX-XX, 26-XX-XX)도 필터 통과하도록 정규화 후 비교
   const _norm = (s) => (typeof window !== 'undefined' && typeof window.normalizeDateStr === 'function')
     ? window.normalizeDateStr(s) : s;
   return allOrders.filter(o => {
     if (!o) return false;
-    // 출고완료 + 발주확정(=UI '출고확정') 둘 다 매출 인식 (운영 워크플로우)
+    if (!_canViewSettlementOrder(o)) return false;
+    const adminView = (typeof isAdmin === 'function') && isAdmin();
+    // 관리자 정산: 명세서 자동발급 실패 건도 누락되면 매출이 사라지므로 표시한다.
+    // 발주자 정산: 관리자가 전송한 거래명세서가 있는 건만 표시한다.
+    if (!adminView && (!o.orderNum || !invoiceMap[o.orderNum])) return false;
+    // 새 구조: 출고완료(=출고확정)만 매출 인식
+    // 기존 운영/테스트 데이터 호환: 예전에는 내부값 '발주확정'을 화면상 출고확정처럼 썼으므로,
+    // 이미 거래명세서가 있는 발주확정 건은 정산에 포함한다.
     if (o.status !== '출고완료' && o.status !== '발주확정') return false;
     // [2026-07-03] 정산도 발주일 기준으로 통일 (원장과 일치)
     // 방어: orderDate가 '0000-00-00'이면 shipDate 폴백 (옛 데이터 사라짐 방지)
@@ -57,7 +65,49 @@ async function fetchCompletedOrders(filter) {
     if (filter.ordererSearch && !(o.deliveryTo || '').includes(filter.ordererSearch)) return false;
     if (filter.warehouse && o.warehouse !== filter.warehouse) return false;
     return true;
+  }).map(o => _applySettlementInvoiceAmount(o, o.orderNum ? invoiceMap[o.orderNum] : null));
+}
+
+async function _fetchSettlementInvoiceMap() {
+  let invoices = [];
+  if (typeof DB !== 'undefined' && typeof DB.get === 'function') {
+    invoices = DB.get('invoices', []);
+  }
+  if ((!Array.isArray(invoices) || invoices.length === 0) && typeof window !== 'undefined' && window._FS && typeof window._FS.get === 'function') {
+    try {
+      invoices = await window._FS.get('invoices');
+    } catch (e) {
+      console.warn('[settlement] invoices fetch 실패:', e && e.message);
+    }
+  }
+  const map = {};
+  const adminView = (typeof isAdmin === 'function') && isAdmin();
+  (Array.isArray(invoices) ? invoices : []).forEach(inv => {
+    if (!inv || !inv.orderNum || inv.cancelled) return;
+    if (!adminView && inv.sentToCustomer !== true) return;
+    map[inv.orderNum] = inv;
   });
+  return map;
+}
+
+function _applySettlementInvoiceAmount(order, invoice) {
+  if (!invoice) return order;
+  return {
+    ...order,
+    totalSupply: typeof invoice.totalSupply === 'number' ? invoice.totalSupply : order.totalSupply,
+    totalVat: typeof invoice.totalVat === 'number' ? invoice.totalVat : order.totalVat,
+    totalAmount: typeof invoice.totalAmount === 'number' ? invoice.totalAmount : order.totalAmount,
+  };
+}
+
+function _canViewSettlementOrder(o) {
+  if (typeof isAdmin === 'function' && isAdmin()) return true;
+  const user = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
+  if (!user) return false;
+  if (o.createdBy) return o.createdBy === user.id;
+  const deliveryName = String(user.deliveryName || user.name || '').trim();
+  const orderDelivery = String(o.deliveryTo || o.siteName || '').trim();
+  return !!deliveryName && orderDelivery === deliveryName;
 }
 
 /**
@@ -69,6 +119,9 @@ async function fetchCompletedOrders(filter) {
  * @returns {Promise<void>}
  */
 async function updateOrder(orderId, patch) {
+  if (typeof isAdmin !== 'function' || !isAdmin()) {
+    throw new Error('관리자만 정산 정보를 수정할 수 있습니다.');
+  }
   // Codex 3차 보강 (Low): 실제 DB 우선 — DB.get('orders')에서 찾아 patch 후 DB.set
   // DB.set이 stale 캐시 차단 + hanger_orders 단건 듀얼 라이트까지 처리
   if (typeof DB !== 'undefined' && typeof DB.get === 'function' && typeof DB.set === 'function') {

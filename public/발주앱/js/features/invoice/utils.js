@@ -159,7 +159,7 @@ function orderToInvoice(order) {
   // 옷봉 2400 (가격표에서 조회)
   if (order.rod2400Required > 0) {
     const qty = order.rod2400Required;
-    const r = resolveUnit(null, '옷봉 2400');
+    const r = resolveUnit(order.rodUnitPrice, '옷봉 2400');
     const supply = Math.floor(qty * r.unitPrice);
     const vat    = Math.round(supply * 0.1);
     items.push({ name: '옷봉 2400', spec: '', qty, unitPrice: r.unitPrice, supply, vat, priceUnknown: r.priceUnknown });

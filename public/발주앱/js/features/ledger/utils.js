@@ -104,7 +104,8 @@ function buildLedgerEvents(orders, payments, invoiceMap) {
  * @returns {CustomerStats}
  */
 function calcCustomerStats(name, allOrders, allPayments, invoiceMap) {
-  // A.1: 출고완료/발주확정 + 거래명세서 있음
+  // A.1: 출고확정 + 거래명세서 있음
+  // 기존 데이터 호환: 예전 내부값 '발주확정'도 거래명세서가 있으면 출고확정 건으로 취급
   const orders = allOrders.filter(o =>
     o.deliveryTo === name
     && (o.status === '출고완료' || o.status === '발주확정')

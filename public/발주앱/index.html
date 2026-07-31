@@ -348,11 +348,24 @@
             throw new Error('[Firestore set 실패] '+key+': '+(e&&e.message));
           }
         },
-        async get(key) {
+        async get(key, opts) {
           try {
-            const snap = await db.collection('hanger_data').doc(key).get();
+            // [2026-07-31 라운드4 A-CACHE] enablePersistence 켜져있어 기본 get은 IndexedDB 캐시 반환 가능.
+            // 저장/취소 baseline 검사에서 캐시 stale이 나오면 CAS 자체 무력화됨.
+            // opts.fromServer=true 이면 서버 강제 + fromCache 감지 시 throw.
+            const forceServer = !!(opts && opts.fromServer);
+            const snap = forceServer
+              ? await db.collection('hanger_data').doc(key).get({ source: 'server' })
+              : await db.collection('hanger_data').doc(key).get();
+            if (forceServer && snap.metadata && snap.metadata.fromCache) {
+              throw new Error('서버 응답이 캐시로 폴백되었습니다. 네트워크 확인 후 다시 시도해주세요. ('+key+')');
+            }
             return snap.exists ? snap.data().value : null;
-          } catch(e) { console.warn('[Firestore get 실패]', key, e.message); return _isLocalEmu ? _readLocalShValue(key) : null; }
+          } catch(e) {
+            if (opts && opts.fromServer) throw e;
+            console.warn('[Firestore get 실패]', key, e.message);
+            return _isLocalEmu ? _readLocalShValue(key) : null;
+          }
         },
         async getAll() {
           try {
@@ -850,7 +863,13 @@
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px" class="order-info-grid">
         <div class="form-group" style="margin-bottom:0">
           <label>납품처 <span class="req">*</span></label>
-          <input type="text" class="form-input input-locked" id="o-delivery-to" placeholder="자동 입력됨" readonly tabindex="-1"/>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="text" class="form-input input-locked" id="o-delivery-to" placeholder="자동 입력됨" readonly tabindex="-1" style="flex:1;min-width:0"/>
+            <input type="hidden" id="o-orderer-id" value=""/>
+            <button type="button" class="btn btn-primary btn-sm" id="o-orderer-pick-btn" onclick="openOrdererPickerModal()" style="display:none;white-space:nowrap">
+              <i class="fas fa-search"></i> 업체 선택
+            </button>
+          </div>
         </div>
         <div class="form-group" style="margin-bottom:0">
           <label>발주일 <span class="req">*</span></label>
@@ -1034,8 +1053,23 @@
       <div class="modal-footer" style="flex-wrap:wrap">
         <button class="btn btn-outline" onclick="confirmCloseOrderModal()" style="min-width:0">취소</button>
         <button class="btn btn-outline" onclick="submitOrder('임시저장')" style="color:#64748b;border-color:#cbd5e1;min-width:0"><i class="fas fa-floppy-disk"></i> 임시저장</button>
+        <button class="btn btn-outline" id="order-pending-btn" onclick="openOrderConfirmModal('발주대기')" style="border-color:#2563eb;color:#1d4ed8;font-weight:800;min-width:0"><i class="fas fa-check"></i> 발주 넣기</button>
         <button class="btn btn-primary" id="order-submit-btn" onclick="openOrderConfirmModal()" style="min-width:0"><i class="fas fa-check"></i> <span id="order-submit-label">발주 넣기</span></button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- 관리자 대리 발주: 업체 선택 팝업 -->
+<div class="modal-overlay" id="orderer-picker-modal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-header">
+      <span class="modal-title"><i class="fas fa-building" style="color:var(--primary-light);margin-right:8px"></i>발주 업체 선택</span>
+      <button class="modal-close" onclick="closeOrdererPickerModal()"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="modal-body" style="padding:16px 20px">
+      <input type="text" class="form-input" id="orderer-picker-search" placeholder="업체명 / 아이디 / 이메일 검색" oninput="renderOrdererPickerList()" style="margin-bottom:12px"/>
+      <div id="orderer-picker-list" style="display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto"></div>
     </div>
   </div>
 </div>

@@ -74,7 +74,8 @@ const DB={
           }
           const serverArr=server;
           const merged=_mergeById(serverArr, v);
-          const result=self._setInternal(k, merged);
+          const result=self._setInternal(k, merged,{skipRemote:true});
+          await window._FS.set(k, merged);
           // ── (Phase 1 듀얼 라이트 20260611) 변경된 발주서만 hanger_orders/{orderNum}에도 단건 저장 ──
           // 옛 경로(hanger_data/orders 배열) 성공 후에만 새 경로 시도. best-effort, 옛 경로 안전 우선.
           // 일일 비교 함수로 차집합 모니터링 후 단계 4에서 읽기 전환 예정.
@@ -109,7 +110,7 @@ const DB={
     return this._setInternal(k,v);
   },
 
-  _setInternal(k,v){
+  _setInternal(k,v,opts={}){
     let toStore=v;
 
     // ── 보호 키: 항상 병합 (절대 줄어들지 않음) ──
@@ -131,7 +132,7 @@ const DB={
     window._mem[k]=toStore;
 
     // Firestore에 저장 — items는 initData 마이그레이션 중 잠금 (race condition 방지)
-    if(window._FS && !(k==='items' && window._itemsInitLock)){
+    if(window._FS && !(opts&&opts.skipRemote) && !(k==='items' && window._itemsInitLock)){
       window._FS.set(k,toStore).catch(e=>console.warn('[Firestore sync 실패]',k,e.message));
     }
   },
@@ -429,6 +430,141 @@ function setLoginTab(tab){
   document.getElementById('login-id').focus();
 }
 
+// ── 로컬 전용 테스트 계정 전환기 ─────────────────────────────
+// 운영 안전장치:
+// 1) localhost/127.0.0.1 에서만 버튼 생성
+// 2) 함수 실행 시에도 다시 한 번 localhost 검사
+function isLocalTestHost_(){
+  const h=location.hostname;
+  return h==='localhost'||h==='127.0.0.1'||h==='[::1]';
+}
+
+const LOCAL_TEST_SWITCH_ACCOUNTS=[
+  {id:'admin',email:'admin@local.test',label:'관리자',password:'123456',role:'admin',color:'#4f35f5'},
+];
+
+function localTestEsc_(s){
+  return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+function getLocalTestSwitchAccounts_(){
+  const accounts=(typeof DB!=='undefined'&&typeof DB.get==='function')?DB.get('accounts',[]):[];
+  const orderers=accounts
+    .filter(a=>a&&a.role==='orderer')
+    .sort((a,b)=>String(a.deliveryName||a.name||a.id||'').localeCompare(String(b.deliveryName||b.name||b.id||''),'ko'))
+    .map(a=>({
+      id:a.id,
+      email:a.email||'',
+      label:a.deliveryName||a.name||a.id,
+      password:'123456',
+      role:'orderer',
+    }));
+  return [...LOCAL_TEST_SWITCH_ACCOUNTS, ...orderers];
+}
+
+function initLocalTestAccountSwitcher(){
+  if(!isLocalTestHost_())return;
+  if(document.getElementById('local-test-account-switcher'))return;
+
+  const style=document.createElement('style');
+  style.id='local-test-account-switcher-style';
+  style.textContent=`
+    #local-test-account-switcher{position:fixed;left:12px;bottom:14px;z-index:99998;border:0;border-radius:9px;background:#17213a;color:#fff;padding:10px 14px;font-size:13px;font-weight:800;box-shadow:0 10px 28px rgba(15,23,42,.28);cursor:pointer}
+    #local-test-account-switcher:hover{filter:brightness(1.08)}
+    #local-test-account-modal{position:fixed;inset:0;z-index:99999;background:rgba(15,23,42,.42);display:none;align-items:center;justify-content:flex-start;padding-left:20px}
+    #local-test-account-modal.active{display:flex}
+    .local-test-account-card{width:min(330px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto;background:#fff;border-radius:18px;box-shadow:0 22px 60px rgba(15,23,42,.32);padding:22px}
+    .local-test-account-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+    .local-test-account-title{font-size:18px;font-weight:900;color:#111827}
+    .local-test-account-close{border:0;background:none;color:#94a3b8;font-size:28px;line-height:1;cursor:pointer}
+    .local-test-account-help{font-size:12px;line-height:1.5;color:#64748b;margin-bottom:14px}
+    .local-test-account-list{display:flex;flex-direction:column;gap:10px}
+    .local-test-account-item{width:100%;border:0;border-radius:12px;background:#079968;color:#fff;text-align:left;padding:13px 15px;font-size:18px;font-weight:900;cursor:pointer;line-height:1.2}
+    .local-test-account-item small{display:block;margin-top:4px;font-size:12px;font-weight:800;opacity:.86}
+    .local-test-account-item:hover{filter:brightness(1.06)}
+  `;
+  document.head.appendChild(style);
+
+  const btn=document.createElement('button');
+  btn.id='local-test-account-switcher';
+  btn.type='button';
+  btn.innerHTML='<i class="fas fa-sync-alt"></i> 계정 전환';
+  btn.onclick=openLocalTestAccountSwitcher;
+  document.body.appendChild(btn);
+
+  const modal=document.createElement('div');
+  modal.id='local-test-account-modal';
+  modal.innerHTML=`
+    <div class="local-test-account-card">
+      <div class="local-test-account-head">
+        <div class="local-test-account-title">테스트 계정 전환</div>
+        <button type="button" class="local-test-account-close" onclick="closeLocalTestAccountSwitcher()">×</button>
+      </div>
+      <div class="local-test-account-help">로컬 전용. 로그아웃·로그인 자동 처리. 새로고침 없이 바로 적용.</div>
+      <div id="local-test-account-list" class="local-test-account-list"></div>
+    </div>
+  `;
+  modal.addEventListener('click',e=>{if(e.target===modal)closeLocalTestAccountSwitcher();});
+  document.body.appendChild(modal);
+  renderLocalTestAccountList();
+}
+
+async function openLocalTestAccountSwitcher(){
+  if(!isLocalTestHost_())return;
+  if(typeof syncFromServer==='function'){
+    try{await syncFromServer();}catch(_e){}
+  }
+  renderLocalTestAccountList();
+  document.getElementById('local-test-account-modal')?.classList.add('active');
+}
+
+function closeLocalTestAccountSwitcher(){
+  document.getElementById('local-test-account-modal')?.classList.remove('active');
+}
+
+function renderLocalTestAccountList(){
+  if(!isLocalTestHost_())return;
+  const list=document.getElementById('local-test-account-list');
+  if(!list)return;
+  const accounts=DB.get('accounts',[]);
+  list.innerHTML=getLocalTestSwitchAccounts_().map(acc=>{
+    const real=accounts.find(a=>a.id===acc.id);
+    const name=real?(real.deliveryName||real.name||acc.label):acc.label;
+    const bg=acc.color||'#079968';
+    return `<button type="button" class="local-test-account-item" style="background:${bg}" onclick="switchLocalTestAccount('${acc.id}')">
+      ${localTestEsc_(acc.label)} <small>${localTestEsc_(acc.id)}${real?' · '+localTestEsc_(name):' · 계정 없음'}</small>
+    </button>`;
+  }).join('');
+}
+
+async function switchLocalTestAccount(id){
+  if(!isLocalTestHost_())return;
+  const cfg=getLocalTestSwitchAccounts_().find(a=>a.id===id);
+  if(!cfg){toast('테스트 계정을 찾을 수 없습니다.','error');return;}
+  const accounts=DB.get('accounts',[]);
+  const acc=accounts.find(a=>a.id===cfg.id);
+  const loginId=acc?cfg.id:(cfg.role==='orderer'?cfg.email:cfg.id);
+  try{
+    setLoginTab(((acc&&acc.role)||cfg.role)==='admin'?'admin':'orderer');
+    document.getElementById('login-id').value=loginId;
+    document.getElementById('login-pw').value=cfg.password;
+    const rememberEl=document.getElementById('remember-id');
+    const autoEl=document.getElementById('auto-login');
+    if(rememberEl)rememberEl.checked=false;
+    if(autoEl)autoEl.checked=false;
+    closeLocalTestAccountSwitcher();
+    await doLogin();
+  }catch(e){
+    console.warn('[로컬 계정 전환 실패]',e);
+    toast('계정 전환 중 오류가 발생했습니다.','error');
+  }
+}
+
+window.initLocalTestAccountSwitcher=initLocalTestAccountSwitcher;
+window.openLocalTestAccountSwitcher=openLocalTestAccountSwitcher;
+window.closeLocalTestAccountSwitcher=closeLocalTestAccountSwitcher;
+window.switchLocalTestAccount=switchLocalTestAccount;
+
 async function doLogin(){
   const id=document.getElementById('login-id').value.trim();
   const pw=document.getElementById('login-pw').value;
@@ -624,8 +760,7 @@ function showApp(){
   renderNav();
   const _savedView=(typeof getUserPref==='function')?getUserPref('lastView',''):'';
   const _hashView=location.hash.slice(1);
-  // M1 보강 (Codex): settlement 추가 — 발주자 lastView 복구 시 정산 페이지 차단
-  const _ADMIN_VIEWS=new Set(['items','inventory','price-settings','accounts','purchase-requests','logs','shortage-view','settlement']);
+  const _ADMIN_VIEWS=new Set(['items','inventory','price-settings','accounts','purchase-requests','logs','shortage-view']);
   const _raw=_hashView||_savedView||'dashboard';
   const _restoreView=(!isAdmin()&&_ADMIN_VIEWS.has(_raw))?'dashboard':_raw;
   navigate(_restoreView,{addHistory:false});
@@ -1561,16 +1696,176 @@ async function _serverGetLogIds(count){
   return arr;
 }
 
+// [2026-07-31 라운드3] PC간 동시 취소 방지 (A4)
+// localStorage 락은 브라우저 격리라 PC-A / PC-B 동시 취소 클릭 시 무의미.
+// Firestore transaction으로 `hanger_data/cancel_locks` 문서에 orderId 마커를 얹어,
+// 다른 PC의 tx가 이미 커밋된 마커를 보고 abort하게 한다.
+// 크래시로 마커가 남으면 30초 후 stale로 간주해 새 tx가 덮어씀.
+async function _acquireServerCancelLock(orderId, actorId){
+  let fs=null;
+  try{ fs=firebase.app('hanger').firestore(); }catch(_e){ try{ fs=firebase.firestore(); }catch(_e2){ fs=null; } }
+  if(!fs) return {ok:false,reason:'no-firestore'};
+  const ref=fs.collection('hanger_data').doc('cancel_locks');
+  // 자기 락 stale 임계 (실제 취소 작업 90초 안 넘음, 넘으면 재시도 요구)
+  const STALE_MS=90000;
+  // 남의 락 GC 임계: 5분 초과 시에만 정리 (활성 취소 침범 절대 금지). 팀 검토 3 HIGH 방어(2차).
+  const GC_MS=300000;
+  try{
+    await fs.runTransaction(async(tx)=>{
+      const snap=await tx.get(ref);
+      const map=(snap.exists&&snap.data()&&snap.data().value)?{...snap.data().value}:{};
+      const nowMs=(new Date()).getTime();
+      // 안전 GC: 5분 넘게 방치된 것만 정리. 90초 stale이라도 다른 PC가 아직 진행 중일 여지 남김.
+      for(const k of Object.keys(map)){
+        const v=map[k];
+        if(!v||typeof v.at!=='number'||(nowMs-v.at)>=GC_MS){ delete map[k]; }
+      }
+      const cur=map[orderId];
+      // 자기 orderId 락 확인: 5분 이내지만 90초 넘어 만료된 상태면 재획득 허용 (원 소유자만의 판단)
+      if(cur){
+        if(typeof cur.at==='number'&&(nowMs-cur.at)<STALE_MS){
+          const e=new Error('LOCKED_BY_OTHER');
+          e.holder=cur.by||'';
+          throw e;
+        }
+      }
+      map[orderId]={by:actorId||'',at:nowMs};
+      tx.set(ref,{value:map,updatedAt:new Date().toISOString()});
+    });
+    return {ok:true};
+  }catch(e){
+    if(e&&e.message==='LOCKED_BY_OTHER'){
+      return {ok:false,reason:'locked',holder:e.holder||''};
+    }
+    return {ok:false,reason:'tx-error',err:(e&&e.message)||String(e)};
+  }
+}
+async function _releaseServerCancelLock(orderId){
+  let fs=null;
+  try{ fs=firebase.app('hanger').firestore(); }catch(_e){ try{ fs=firebase.firestore(); }catch(_e2){ fs=null; } }
+  if(!fs) return;
+  const ref=fs.collection('hanger_data').doc('cancel_locks');
+  try{
+    await fs.runTransaction(async(tx)=>{
+      const snap=await tx.get(ref);
+      if(!snap.exists) return;
+      const map=snap.data().value||{};
+      if(map[orderId]){ delete map[orderId]; tx.set(ref,{value:map,updatedAt:new Date().toISOString()}); }
+    });
+  }catch(_e){ /* 락 해제 실패는 30초 만료로 자연 회수됨 */ }
+}
+if(typeof window!=='undefined'){
+  window._acquireServerCancelLock=_acquireServerCancelLock;
+  window._releaseServerCancelLock=_releaseServerCancelLock;
+}
+
+// [2026-07-31 라운드4 SAVE-RACE] saveOrder도 PC간 격리 필요.
+// 재고 차감이 있는 저장(발주대기/발주확정/출고완료)만 락 걸어 이중 차감 방지.
+// 임시저장은 재고 안 건드리므로 락 불필요.
+// 단일 글로벌 락으로 시작 — 두 PC 동시 발주는 흔치 않고, baseline 이 이미 방어망이라 순차 처리로 충분.
+async function _acquireServerSaveLock(actorId){
+  let fs=null;
+  try{ fs=firebase.app('hanger').firestore(); }catch(_e){ try{ fs=firebase.firestore(); }catch(_e2){ fs=null; } }
+  if(!fs) return {ok:false,reason:'no-firestore'};
+  const ref=fs.collection('hanger_data').doc('save_locks');
+  const STALE_MS=60000;
+  const GC_MS=300000;
+  try{
+    await fs.runTransaction(async(tx)=>{
+      const snap=await tx.get(ref);
+      const map=(snap.exists&&snap.data()&&snap.data().value)?{...snap.data().value}:{};
+      const nowMs=(new Date()).getTime();
+      for(const k of Object.keys(map)){
+        const v=map[k];
+        if(!v||typeof v.at!=='number'||(nowMs-v.at)>=GC_MS){ delete map[k]; }
+      }
+      const cur=map['global'];
+      if(cur&&typeof cur.at==='number'&&(nowMs-cur.at)<STALE_MS){
+        const e=new Error('SAVE_LOCKED_BY_OTHER');
+        e.holder=cur.by||'';
+        throw e;
+      }
+      map['global']={by:actorId||'',at:nowMs};
+      tx.set(ref,{value:map,updatedAt:new Date().toISOString()});
+    });
+    return {ok:true};
+  }catch(e){
+    if(e&&e.message==='SAVE_LOCKED_BY_OTHER'){
+      return {ok:false,reason:'locked',holder:e.holder||''};
+    }
+    return {ok:false,reason:'tx-error',err:(e&&e.message)||String(e)};
+  }
+}
+async function _releaseServerSaveLock(){
+  let fs=null;
+  try{ fs=firebase.app('hanger').firestore(); }catch(_e){ try{ fs=firebase.firestore(); }catch(_e2){ fs=null; } }
+  if(!fs) return;
+  const ref=fs.collection('hanger_data').doc('save_locks');
+  try{
+    await fs.runTransaction(async(tx)=>{
+      const snap=await tx.get(ref);
+      if(!snap.exists) return;
+      const map=snap.data().value||{};
+      if(map['global']){ delete map['global']; tx.set(ref,{value:map,updatedAt:new Date().toISOString()}); }
+    });
+  }catch(_e){ /* 만료로 자연 회수 */ }
+}
+if(typeof window!=='undefined'){
+  window._acquireServerSaveLock=_acquireServerSaveLock;
+  window._releaseServerSaveLock=_releaseServerSaveLock;
+}
+
+// [2026-07-31] 더블클릭·병렬 저장 방지 (신규 발주가 두 번 차감되는 사고 차단)
+// 편집 경로는 _withOrderLock으로 이미 보호되지만, 신규 저장은 orderId가 없어 잠금 대상이 없다.
+// 함수 진입 즉시 in-flight 플래그를 세워, 첫 호출이 끝나기 전 두 번째 호출은 즉시 튕긴다.
+let _saveOrderInFlight=false;
 async function saveOrder(payload, saveMode='발주확정'){
+  if(_saveOrderInFlight){
+    throw new Error('저장이 진행 중입니다. 완료 후 다시 시도해주세요.');
+  }
+  _saveOrderInFlight=true;
+  let _saveLockAcquired=false;
+  try{
+  // [2026-07-31 라운드4 SAVE-RACE] 재고 차감 모드면 PC간 서버 락 획득.
+  // 임시저장은 재고 안 건드리므로 락 없음. baseline과 함께 이중 방어.
+  const _isDeductMode=(saveMode==='발주대기'||saveMode==='발주확정'||saveMode==='출고완료');
+  if(_isDeductMode&&typeof window._acquireServerSaveLock==='function'){
+    const _actorSave=(typeof currentUser!=='undefined'&&currentUser)?currentUser.id:'';
+    const _lockRes=await window._acquireServerSaveLock(_actorSave);
+    if(!_lockRes||!_lockRes.ok){
+      if(_lockRes&&_lockRes.reason==='locked'){
+        throw new Error('다른 사용자가 저장 중입니다. 잠시 후 다시 시도해주세요.');
+      }
+      throw new Error('저장 잠금 획득 실패. 새로고침 후 다시 시도해주세요.');
+    }
+    _saveLockAcquired=true;
+  }
   // payload: {deliveryTo, address, orderDate, shipDate, note, warehouse,
   //           upperMaterials:[{name,white,black,silver,note}],
   //           shelfItems:[{name,white,maple,walnut,gray}],
   //           drawerItems:[{itemId,requiredQty}],
   //           drawerMemo, etcMemo}
-  const dbItems=DB.get('items',[]),orders=DB.get('orders',[]),prs=DB.get('purchase_requests',[]);
+  let dbItems=DB.get('items',[]);const orders=DB.get('orders',[]),prs=DB.get('purchase_requests',[]);
   // 수정 모드: _editOverride로 원래 id/orderNum/status/등록자/등록일 유지
   // [2026-07-15 Critical 1] _editOverride 클리어를 저장 성공 후로 이동 — 실패 시 재시도가 편집 모드 유지되도록 (중복 발주서 생성 방지)
   const _eo=window._editOverride||null;
+  let _originalOrderForEdit=_eo?orders.find(o=>o&&o.id===_eo.id):null;
+
+  // [2026-07-31] 대리발주 권한 우회 차단 (A6 강화)
+  // id 뿐 아니라 name/email/flag 등 어떤 proxy 관련 필드라도 있으면 관리자 요구.
+  // 콘솔에서 saveOrder({proxyOrdererName:'X'}) 처럼 id만 비운 우회 차단.
+  if(payload){
+    const _proxyKeys=['proxyOrdererId','proxyOrdererName','proxyOrdererEmail','proxyOrdererDeliveryName','proxyCreatedByAdmin','proxyOrderer'];
+    const _hasProxy=_proxyKeys.some(k=>{
+      const v=payload[k];
+      return v!==undefined&&v!==null&&v!==''&&v!==false;
+    });
+    if(_hasProxy){
+      if(typeof isAdmin!=='function' || !isAdmin()){
+        throw new Error('대리 발주는 관리자만 등록할 수 있습니다.');
+      }
+    }
+  }
 
   // [2026-07-24 Codex-재검토-Critical-2] warehouse 검증을 서버 ID 발급 전에 수행
   // - 임시저장만 빈 창고 허용 (선택 미완료 상태)
@@ -1591,10 +1886,119 @@ async function saveOrder(payload, saveMode='발주확정'){
   }
 
   // ── 서버 단일 ID 발급 (PC간 번호 충돌 방지) ──
+  // [2026-07-31 라운드2] CAS 강화:
+  //  ② 편집 모드에서 서버 orders 재조회 → _originalOrderForEdit 최신화, 이미 취소면 throw (A5)
+  //  ③ 관련 item 전체(=색상 지도 통째)를 baseline으로 비교 → 다른 색상 동시 변경도 감지 (A2)
+  //  ④ 통과 시 serverItems를 반환 → downstream mutation의 시작점을 로컬 stale이 아닌 서버 최신값으로 (A1·A3)
+  async function _assertFreshBeforeOrderSave(){
+    if(!window._FS||typeof window._FS.get!=='function')return null;
+    // A5: 편집 모드면 서버 orders 재조회
+    if(_eo){
+      let serverOrders;
+      try{
+        serverOrders=await Promise.race([
+          window._FS.get('orders',{fromServer:true}),
+          new Promise((_,rj)=>setTimeout(()=>rj(new Error('TIMEOUT')),8000))
+        ]);
+      }catch(e){
+        throw new Error('서버 발주 상태 확인 실패. 새로고침 후 다시 저장해주세요. ('+((e&&e.message)||'')+')');
+      }
+      if(!Array.isArray(serverOrders)){
+        throw new Error('서버 발주 상태 확인 실패. 새로고침 후 다시 저장해주세요.');
+      }
+      const serverOrder=serverOrders.find(o=>o&&o.id===_eo.id);
+      if(!serverOrder){
+        throw new Error('발주서를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다. 새로고침 후 확인해주세요.');
+      }
+      if(serverOrder.status==='취소'||serverOrder.status==='cancelled'){
+        throw new Error('이 발주서는 이미 취소되었습니다. 새로고침 후 확인해주세요.');
+      }
+      // stockDeducted 상태가 로컬(stale)과 서버가 다르면 이중 롤백 위험 → 서버 값으로 갱신
+      _originalOrderForEdit=serverOrder;
+    }
+    const deductModes=new Set(['발주대기','발주확정','출고완료']);
+    // A2: item 단위(색상 지도 통째) baseline 수집
+    const itemIdsToCheck=new Set();
+    function _collect(oi,order,mode){
+      if(!oi||!oi.itemId)return;
+      const item=dbItems.find(i=>i.id===oi.itemId);
+      if(!item||!isTrackStock(item))return;
+      if(mode==='new'&&!deductModes.has(_preSaveMode))return;
+      if(mode==='old'){
+        const deducted=(typeof oi.inventoryDeducted==='boolean')
+          ? oi.inventoryDeducted
+          : !!(order&&order.stockDeducted&&item.category==='서랍장');
+        if(!deducted)return;
+      }
+      itemIdsToCheck.add(oi.itemId);
+    }
+    (payload.drawerItems||[]).forEach(oi=>_collect(oi,null,'new'));
+    if(_originalOrderForEdit&&_originalOrderForEdit.stockDeducted){
+      (_originalOrderForEdit.drawerItems||_originalOrderForEdit.items||[]).forEach(oi=>_collect(oi,_originalOrderForEdit,'old'));
+    }
+    if(itemIdsToCheck.size===0)return null;
+
+    let serverItems;
+    try{
+      serverItems=await Promise.race([
+        window._FS.get('items',{fromServer:true}),
+        new Promise((_,rj)=>setTimeout(()=>rj(new Error('TIMEOUT')),8000))
+      ]);
+    }catch(e){
+      throw new Error('서버 최신 재고 확인 실패. 새로고침 후 다시 저장해주세요. ('+((e&&e.message)||'')+')');
+    }
+    if(!Array.isArray(serverItems)){
+      throw new Error('서버 최신 재고 확인 실패. 새로고침 후 다시 저장해주세요.');
+    }
+    // A2: 대상 item마다 (창고 수량 + 색상 지도) 지문 비교
+    // 오산 재고는 발주 대상 아님 → 지문 제외 (다른 관리자가 오산 조정만 해도 튕기는 것 방지)
+    // 색상 지도의 키 순서는 Firestore doc마다 다를 수 있어 정렬 후 문자열화 (M1 오탐 방지)
+    function _stable(obj){
+      if(!obj||typeof obj!=='object')return JSON.stringify(obj);
+      const keys=Object.keys(obj).sort();
+      return '{'+keys.map(k=>JSON.stringify(k)+':'+JSON.stringify(obj[k])).join(',')+'}';
+    }
+    function _fingerprint(item){
+      if(!item)return null;
+      return _stable({
+        sh:item.stockSiheung||0,
+        py:item.stockPyeongtaek||0,
+        cs:_stable(item.colorStockSiheung||{}),
+        cp:_stable(item.colorStockPyeongtaek||{})
+      });
+    }
+    for(const id of itemIdsToCheck){
+      const local=dbItems.find(i=>i&&i.id===id);
+      const server=serverItems.find(i=>i&&i.id===id);
+      if(!server){
+        throw new Error('서버 품목 정보를 다시 확인해야 합니다. 새로고침 후 다시 저장해주세요. ('+((local&&local.name)||id)+')');
+      }
+      if(_fingerprint(local)!==_fingerprint(server)){
+        throw new Error('저장 중 재고가 변경되었습니다. 새로고침 후 다시 저장해주세요. ('+(server.name||local&&local.name||id)+')');
+      }
+    }
+    return serverItems;
+  }
+  const _freshServerItems=await _assertFreshBeforeOrderSave();
+  // A1·A3: baseline 통과 시 서버 최신 items를 mutation 시작점으로 교체.
+  // 3-way merge와 동일하게 로컬 unsaved 편집이 있다면 사라질 수 있지만,
+  // items 편집은 별도 UI라 saveOrder 흐름과 겹치는 실무 케이스 극히 낮음.
+  if(_freshServerItems){
+    // 참조로 다루는 dbItems를 서버 스냅샷으로 교체 (얕은 복사로 원본 서버 응답 보호)
+    dbItems=_freshServerItems.map(i=>({...i,
+      colorStockSiheung:i.colorStockSiheung?{...i.colorStockSiheung}:i.colorStockSiheung,
+      colorStockPyeongtaek:i.colorStockPyeongtaek?{...i.colorStockPyeongtaek}:i.colorStockPyeongtaek
+    }));
+  }
+
   const _drawerCount=Array.isArray(payload.drawerItems)?payload.drawerItems.length:0;
+  const _editRollbackCount=(_originalOrderForEdit&&_originalOrderForEdit.stockDeducted)
+    ? ((_originalOrderForEdit.drawerItems||_originalOrderForEdit.items||[]).length)
+    : 0;
   const _idCounts={};
   if(!_eo) _idCounts.orders=1;
-  if(_drawerCount>0){ _idCounts.order_items=_drawerCount; _idCounts.purchase_requests=_drawerCount; _idCounts.logs=_drawerCount; }
+  if(_drawerCount>0){ _idCounts.order_items=_drawerCount; _idCounts.purchase_requests=_drawerCount; }
+  if((_drawerCount+_editRollbackCount)>0) _idCounts.logs=_drawerCount+_editRollbackCount;
   let _srvIds={};
   if(Object.keys(_idCounts).length>0){
     if(!window._FN||typeof window._FN.getNextIds!=='function'){
@@ -1614,10 +2018,71 @@ async function saveOrder(payload, saveMode='발주확정'){
   }
   const orderId=_eo?_eo.id:_popId('orders'),now=new Date().toISOString();
   const orderNum=_eo?_eo.orderNum:await generateOrderNum(payload.orderDate||todayStr());
-  const effectiveSaveMode=_eo?(_eo.status||saveMode):saveMode;
+  const requestedSaveMode=saveMode;
+  const effectiveSaveMode=_eo?(_eo.status||requestedSaveMode):requestedSaveMode;
   const savedDrawerItems=[];let shortageCount=0;
   // 임시저장은 창고 미선택 허용, 차감 시에는 시흥 기본값 사용 (검증은 함수 상단에서 완료)
   const warehouse=payload.warehouse||'';
+
+  function _dbLegacyTracksInventoryLine(oi,item){
+    if(oi&&typeof oi.inventoryTracked==='boolean')return oi.inventoryTracked;
+    // 과거 데이터 fallback은 서랍장만. 옵션은 이번에 새로 추적되므로
+    // 표식 없는 과거 옵션을 임의 롤백하면 허위 재고가 생긴다.
+    return !!item&&item.category==='\uC11C\uB78D\uC7A5';
+  }
+  function _dbLineDeducted(oi,item,order){
+    if(oi&&typeof oi.inventoryDeducted==='boolean')return oi.inventoryDeducted;
+    return !!(order&&order.stockDeducted&&_dbLegacyTracksInventoryLine(oi,item));
+  }
+  function _applyStockDeltaForOrderLine(item,wh,color,qtyDelta,logType,memo,orderIdForLog,nowForLog){
+    if(!item||!qtyDelta)return;
+    if(item.stockSiheung===undefined)item.stockSiheung=item.currentStock||0;
+    if(item.stockPyeongtaek===undefined)item.stockPyeongtaek=0;
+    const whKey=getWhKey(wh);
+    const cwKey=getColorWhKey(wh);
+    let before, afterVal;
+    if(color){
+      if(!item[cwKey])item[cwKey]={};
+      before=typeof getColorStock==='function'?getColorStock(item[cwKey],color):(item[cwKey][color]||0);
+      afterVal=Math.max(0,before+qtyDelta);
+      if(typeof setColorStock==='function')setColorStock(item[cwKey],color,afterVal);
+      else item[cwKey][color]=afterVal;
+      item[whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(item[cwKey]):Object.values(item[cwKey]).reduce((s,v)=>s+(v||0),0);
+    } else {
+      before=item[whKey]||0;
+      afterVal=Math.max(0,before+qtyDelta);
+      item[whKey]=afterVal;
+    }
+    item.currentStock=(item.stockSiheung||0)+(item.stockPyeongtaek||0);
+    const logs=DB.get('logs',[]);
+    logs.push({
+      id:_popId('logs'),itemId:item.id,type:logType,qty:qtyDelta,
+      beforeStock:before,afterStock:afterVal,warehouse:wh,color:color||'',
+      memo,orderId:orderIdForLog,createdBy:currentUser?currentUser.id:'',createdAt:nowForLog
+    });
+    DB.set('logs',logs);
+  }
+
+  // [2026-07-31 Codex] 수정 저장 시점에만 기존 차감분을 되돌린 뒤 새 주문분을 다시 차감한다.
+  // 수정 모달을 열기만 하고 닫는 경우에는 재고를 건드리지 않는다.
+  if(_originalOrderForEdit&&_originalOrderForEdit.stockDeducted){
+    const oldRows=_originalOrderForEdit.drawerItems||_originalOrderForEdit.items||[];
+    const oldWh=_originalOrderForEdit.warehouse||warehouse||'시흥';
+    oldRows.forEach(oi=>{
+      const item=dbItems.find(i=>i.id===oi.itemId);
+      if(!item||!_dbLineDeducted(oi,item,_originalOrderForEdit))return;
+      const wh=(oi.warehouse==='시흥'||oi.warehouse==='평택')?oi.warehouse:oldWh;
+      let oldColor=item.noColor?'':(oi.color||_originalOrderForEdit.sharedColor||'');
+      if(oldColor&&typeof normalizeStockColor==='function')oldColor=normalizeStockColor(oldColor);
+      _applyStockDeltaForOrderLine(
+        item,wh,oldColor,oi.requiredQty||0,
+        '발주수정반환',
+        `발주 #${_originalOrderForEdit.id} 수정 저장 전 기존 차감분 반환`,
+        _originalOrderForEdit.id,now
+      );
+      oi.inventoryDeducted=false;
+    });
+  }
 
   // 서랍장 항목 재고 비교 · 차감 · 발주 필요 목록 생성
   (payload.drawerItems||[]).forEach((drawerItem)=>{
@@ -1631,9 +2096,9 @@ async function saveOrder(payload, saveMode='발주확정'){
     if(orderColor&&typeof normalizeStockColor==='function')orderColor=normalizeStockColor(orderColor);
     const whStock=getWarehouseStock(item,warehouse,orderColor);
     const inventoryTracked=isTrackStock(item);
-    const inventoryDeducted=inventoryTracked&&(effectiveSaveMode==='발주대기'||effectiveSaveMode==='발주확정');
+    const inventoryDeducted=inventoryTracked&&(effectiveSaveMode==='발주대기'||effectiveSaveMode==='발주확정'||effectiveSaveMode==='출고완료');
     const shortage=inventoryTracked?calcShortage(requiredQty,whStock):0;
-    savedDrawerItems.push({id:_popId('order_items'),orderId,itemId,requiredQty,color:orderColor,currentStockSnapshot:whStock,shortageQty:shortage,warehouse,inventoryTracked,inventoryDeducted,createdAt:now,handleOption:drawerItem.handleOption||'basic',displayName:drawerItem.displayName||'',note:drawerItem.note||'',subTypeChecked:drawerItem.subTypeChecked||[]});
+    savedDrawerItems.push({id:_popId('order_items'),orderId,itemId,requiredQty,color:orderColor,currentStockSnapshot:whStock,shortageQty:shortage,warehouse,inventoryTracked,inventoryDeducted,createdAt:now,handleOption:drawerItem.handleOption||'basic',displayName:drawerItem.displayName||'',note:drawerItem.note||'',unitPrice:drawerItem.unitPrice,amount:drawerItem.amount,vatAmount:drawerItem.vatAmount,subTypeChecked:drawerItem.subTypeChecked||[]});
     if(shortage>0){
       // [2026-07-24 Codex-재검토-Critical-1] color 저장 — 다른 색상 입고에 오인 자동완료 방지
       prs.push({id:_popId('purchase_requests'),orderId,itemId,requiredQty,color:orderColor||'',currentStockSnapshot:whStock,shortageQty:shortage,warehouse,status:'대기',createdAt:now,updatedAt:now});
@@ -1641,25 +2106,7 @@ async function saveOrder(payload, saveMode='발주확정'){
     }
     // 서랍장 실재고 차감 — 발주대기·발주확정 모두 발주 넣는 시점에 즉시 차감 (임시저장은 미차감)
     if(inventoryDeducted){
-      const whKey=getWhKey(warehouse);
-      const cwKey=getColorWhKey(warehouse);
-      let before, afterVal;
-      if(orderColor){
-        if(!item[cwKey])item[cwKey]={};
-        before=typeof getColorStock==='function'?getColorStock(item[cwKey],orderColor):(item[cwKey][orderColor]||0);
-        afterVal=Math.max(0,before-requiredQty);
-        if(typeof setColorStock==='function')setColorStock(item[cwKey],orderColor,afterVal);
-        else item[cwKey][orderColor]=afterVal;
-        item[whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(item[cwKey]):Object.values(item[cwKey]).reduce((s,v)=>s+(v||0),0);
-      } else {
-        before=item[whKey];
-        afterVal=Math.max(0,before-requiredQty);
-        item[whKey]=afterVal;
-      }
-      item.currentStock=(item.stockSiheung||0)+(item.stockPyeongtaek||0);
-      const logs2=DB.get('logs',[]);
-      logs2.push({id:_popId('logs'),itemId:item.id,type:'발주차감',qty:-requiredQty,beforeStock:before,afterStock:afterVal,warehouse,color:orderColor||'',memo:`발주 #${orderId}`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:now});
-      DB.set('logs',logs2);
+      _applyStockDeltaForOrderLine(item,warehouse,orderColor,-requiredQty,'발주차감',`발주 #${orderId}`,orderId,now);
     }
   });
   // 차감된 재고 저장
@@ -1680,6 +2127,9 @@ async function saveOrder(payload, saveMode='발주확정'){
     rodItems:payload.rodItems||[],
     rod2400Required:payload.rod2400Required||0,
     rodTotalLen:payload.rodTotalLen||0,
+    rodUnitPrice:payload.rodUnitPrice,
+    rodAmount:payload.rodAmount,
+    rodVat:payload.rodVat,
     shelfItems:payload.shelfItems||[],
     sharedColor:payload.sharedColor||'',
     drawerItems:savedDrawerItems,
@@ -1693,8 +2143,13 @@ async function saveOrder(payload, saveMode='발주확정'){
     createdAt:_eo?(_eo.createdAt||now):now,updatedAt:now,
     orderNum,
     status:effectiveSaveMode,
+    isLocked:_eo?(_eo.isLocked===true||effectiveSaveMode==='발주확정'):(effectiveSaveMode==='발주확정'),
     stockDeducted:savedDrawerItems.some(oi=>oi.inventoryDeducted===true),
-    createdBy:_eo?(_eo.createdBy||currentUser?.id||''):(currentUser?currentUser.id:''),  // 등록자 ID
+    createdBy:_eo?(_eo.createdBy||currentUser?.id||''):(payload.proxyOrdererId||currentUser?.id||''),  // 발주서 소유 업체 ID
+    proxyCreatedByAdmin:!!payload.proxyCreatedByAdmin,
+    proxyAdminId:payload.proxyCreatedByAdmin&&currentUser?currentUser.id:'',
+    proxyAdminName:payload.proxyCreatedByAdmin&&currentUser?currentUser.name:'',
+    proxyOrdererName:payload.proxyOrdererName||'',
     statusHistory:_eo?(_eo.statusHistory||[{status:effectiveSaveMode,changedBy:currentUser?currentUser.id:'',changedByName:currentUser?currentUser.name:'',changedAt:now,note:'발주서 수정'}]):[{status:effectiveSaveMode,changedBy:currentUser?currentUser.id:'',changedByName:currentUser?currentUser.name:'',changedAt:now,note:'발주서 등록'}],
     // 하위 호환
     items:savedDrawerItems,
@@ -1717,7 +2172,13 @@ async function saveOrder(payload, saveMode='발주확정'){
   DB.set('purchase_requests',prs);
   // [2026-07-15 Critical 1] 저장 성공 후에만 _editOverride 클리어 — 실패 시 편집 모드 유지
   if(_eo) window._editOverride=null;
-  return{orderId,shortageCount};
+  return{orderId,shortageCount,order:orderDoc};
+  }finally{
+    _saveOrderInFlight=false;
+    if(_saveLockAcquired&&typeof window._releaseServerSaveLock==='function'){
+      try{ await window._releaseServerSaveLock(); }catch(_e){}
+    }
+  }
 }
 
 // [2026-07-24 Codex] localhost/127.0.0.1에서만 DB를 window에 노출 (E2E·QA 편의)

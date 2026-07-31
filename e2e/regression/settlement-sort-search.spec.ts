@@ -1,87 +1,197 @@
-// R1, R2 회귀 — 정산 페이지 정렬 + 검색 상호작용
-// 적대적 테스트 B1, B2 박제 (도커 emulator + admin 시드 계정 사용)
 import { test, expect, Page } from "@playwright/test";
+import { execSync } from "child_process";
+import path from "path";
+
+test.beforeAll(() => {
+  const seedPath = path.resolve(__dirname, "..", "..", "functions", "seed-ledger-print-test.js");
+  execSync(`node "${seedPath}"`, {
+    stdio: "pipe",
+    timeout: 15_000,
+    env: {
+      ...process.env,
+      FIRESTORE_EMULATOR_HOST: "localhost:18080",
+      FIREBASE_AUTH_EMULATOR_HOST: "localhost:19099",
+    },
+  });
+});
+
+async function waitForAppReady(page: Page, accountId = "admin") {
+  await page.waitForFunction(
+    (id) => {
+      const w = window as any;
+      const accounts = w.DB && typeof w.DB.get === "function" ? w.DB.get("accounts", []) : [];
+      return Boolean(
+        w._booted &&
+          w._fbAuth &&
+          Array.isArray(accounts) &&
+          accounts.some((a: any) => a && a.id === id)
+      );
+    },
+    accountId,
+    { timeout: 25_000 }
+  );
+}
 
 async function loginAsAdmin(page: Page) {
   await page.goto("/");
+  await waitForAppReady(page, "admin");
   await page.locator("#tab-admin").click();
   await page.fill("#login-id", "admin");
   await page.fill("#login-pw", "123456");
   await page.locator('button[onclick="doLogin()"]').click();
-  await page.waitForSelector('[data-nav="settlement"]', { timeout: 10000 });
+  await page.waitForSelector('[data-nav="settlement"]', { timeout: 15_000 });
+}
+
+async function loginAsOrderer(page: Page) {
+  await page.goto("/");
+  await waitForAppReady(page, "orderer");
+  await page.locator("#tab-orderer").click();
+  await page.fill("#login-id", "orderer");
+  await page.fill("#login-pw", "123456");
+  await page.locator('button[onclick="doLogin()"]').click();
+  await page.waitForSelector("[data-nav]", { timeout: 15_000 });
 }
 
 async function goToSettlement(page: Page) {
-  await page.locator('[data-nav="settlement"]').click();
-  await page.waitForSelector("#tbody-ordererwise", { timeout: 5000 });
-  await page.waitForSelector("#sort-toggle", { timeout: 5000 });
+  await page.evaluate(() => (window as any).navigate("settlement"));
+  await page.waitForSelector("#tbody-ordererwise", { timeout: 10_000 });
+  await page.waitForSelector("#sort-toggle", { timeout: 10_000 });
 }
 
-test.describe("정산 — 정렬 + 검색 회귀 (R1, R2)", () => {
+async function openFirstCustomer(page: Page) {
+  const firstCustomer = page.locator("#tbody-ordererwise tr.row-main").first();
+  await expect(firstCustomer).toBeVisible();
+  await firstCustomer.click();
+  await page.waitForSelector(".detail-table tbody tr:not(.hidden-row):not(.search-hidden)", { timeout: 5_000 });
+}
+
+async function openCustomerWithAtLeastTwoRows(page: Page) {
+  const rows = page.locator("#tbody-ordererwise tr.row-main");
+  const count = await rows.count();
+  for (let i = 0; i < count; i++) {
+    await rows.nth(i).click();
+    await page.waitForTimeout(150);
+    const nums = await visibleOrderNums(page);
+    if (nums.length >= 2) return nums;
+    await rows.nth(i).click().catch(() => {});
+  }
+  return [];
+}
+
+async function visibleOrderNums(page: Page) {
+  return page
+    .locator(".detail-table tbody tr:not(.hidden-row):not(.search-hidden) td:first-child")
+    .allTextContents()
+    .then((rows) => rows.map((t) => t.trim()).filter(Boolean));
+}
+
+test.describe("정산 — 정렬 + 검색 회귀", () => {
   test.beforeEach(async ({ page }) => {
     await loginAsAdmin(page);
     await goToSettlement(page);
   });
 
-  // R1: 정렬 토글 → 탭 전환 → 정렬 dataset.order 와 표 실제 순서 일치
-  test("R1: 탭 왕복 후 sort-toggle dataset 과 표 순서 일치", async ({ page }) => {
+  test("R1: 탭 왕복 후 sort-toggle 상태와 실제 발주번호 순서가 일치한다", async ({ page }) => {
     const toggle = page.locator("#sort-toggle");
 
-    // 1. 정렬 토글 (desc → asc)
     await toggle.click();
     await expect(toggle).toHaveAttribute("data-order", "asc");
 
-    // 2. 다른 탭 (대시보드) → 정산 복귀
-    await page.locator('[data-nav="dashboard"]').click();
-    await page.waitForTimeout(500);
-    await page.locator('[data-nav="settlement"]').click();
-    await page.waitForSelector("#sort-toggle");
+    await page.evaluate(() => (window as any).navigate("dashboard"));
+    await page.waitForTimeout(300);
+    await page.evaluate(() => (window as any).navigate("settlement"));
+    await page.waitForSelector("#sort-toggle", { timeout: 10_000 });
 
-    // 3. 재진입 후 dataset.order 와 표 순서 일치 검증
     const orderAttr = await page.locator("#sort-toggle").getAttribute("data-order");
+    const nums = await openCustomerWithAtLeastTwoRows(page);
+    test.skip(nums.length < 2, "정산 시드 발주서 2건 이상 필요");
 
-    // 첫 거래처 펼치고 첫 발주서 발주일 캡처
-    const firstCustomer = page.locator("#tbody-ordererwise tr.row-main").first();
-    await firstCustomer.click();
-    const detailRows = page.locator(".detail-table tbody tr:not(.hidden-row):not(.search-hidden)");
-    const rowCount = await detailRows.count();
-    test.skip(rowCount < 2, "데이터 부족 — 시드 발주서 2건 이상 필요");
-
-    const firstDate = await detailRows.nth(0).locator("td.col-date").textContent();
-    const lastDate = await detailRows.nth(rowCount - 1).locator("td.col-date").textContent();
-
-    // 불변식: dataset.order가 가리키는 순서 == 표의 실제 순서
+    const first = nums[0];
+    const last = nums[nums.length - 1];
     if (orderAttr === "asc") {
-      expect(firstDate?.localeCompare(lastDate || "") || 0).toBeLessThanOrEqual(0);
+      expect(first.localeCompare(last)).toBeLessThanOrEqual(0);
     } else {
-      expect(firstDate?.localeCompare(lastDate || "") || 0).toBeGreaterThanOrEqual(0);
+      expect(first.localeCompare(last)).toBeGreaterThanOrEqual(0);
     }
   });
 
-  // R2: 검색 중 정렬 토글 → search-hidden 잔류 + 비매칭 행 미표시
-  test("R2: 검색 활성 상태에서 정렬 → search-hidden 유지", async ({ page }) => {
-    // 거래처 펼침
-    const firstCustomer = page.locator("#tbody-ordererwise tr.row-main").first();
-    await firstCustomer.click();
-    await page.waitForTimeout(200);
+  test("R2: 검색 활성 상태에서 정렬해도 search-hidden 상태가 유지된다", async ({ page }) => {
+    await openFirstCustomer(page);
 
-    // 빠른 검색 입력
     const search = page.locator("#quick-search");
-    await search.fill("20260601");  // 특정 날짜 매칭 (시드 데이터 기준)
-    await page.waitForTimeout(250); // debounce 150ms 후
+    await search.fill("20260701");
+    await page.waitForTimeout(250);
 
-    // search-hidden 갯수 캡처
     const hiddenBefore = await page.locator(".detail-table tbody tr.search-hidden").count();
-    test.skip(hiddenBefore === 0, "search-hidden 생성 안 됨 — 시드 데이터 또는 검색어 조정 필요");
+    test.skip(hiddenBefore === 0, "검색 결과를 숨길 수 있는 정산 시드 데이터 필요");
 
-    // 정렬 토글
     await page.locator("#sort-toggle").click();
     await page.waitForTimeout(200);
 
-    // search-hidden 갯수 재확인
     const hiddenAfter = await page.locator(".detail-table tbody tr.search-hidden").count();
-
-    // 불변식: 정렬은 검색 필터와 직교 — search-hidden 유지되어야
     expect(hiddenAfter).toBe(hiddenBefore);
+  });
+
+  test("R3: admin settlement includes completed orders even when invoice is missing", async ({ page }) => {
+    const result = await page.evaluate(async () => {
+      const orders = (window as any).DB.get("orders", []);
+      orders.push({
+        id: 88001,
+        orderNum: "NO-INVOICE-ADMIN-1",
+        deliveryTo: "명세서없음관리자표시",
+        address: "테스트 주소",
+        orderDate: "2026-07-31",
+        shipDate: "2026-08-01",
+        warehouse: "시흥",
+        status: "출고완료",
+        createdBy: "orderer",
+        totalSupply: 10000,
+        totalVat: 1000,
+        totalAmount: 11000,
+      });
+      await (window as any).DB.set("orders", orders);
+      const rows = await (window as any).fetchCompletedOrders({
+        range: { startDate: "2026-07-01", endDate: "2026-07-31" },
+        ordererSearch: "",
+        warehouse: "",
+      });
+      return rows.some((o: any) => o.orderNum === "NO-INVOICE-ADMIN-1");
+    });
+
+    expect(result).toBe(true);
+  });
+
+  test("R4: orderer settlement hides completed orders until invoice is sent", async ({ page }) => {
+    await page.evaluate(() => {
+      try { (window as any).doLogout && (window as any).doLogout(); } catch (_) {}
+    });
+    await loginAsOrderer(page);
+
+    const result = await page.evaluate(async () => {
+      const orders = (window as any).DB.get("orders", []);
+      orders.push({
+        id: 88002,
+        orderNum: "NO-INVOICE-ORDERER-1",
+        deliveryTo: "발주자명세서미전송숨김",
+        address: "테스트 주소",
+        orderDate: "2026-07-31",
+        shipDate: "2026-08-01",
+        warehouse: "시흥",
+        status: "출고완료",
+        createdBy: "orderer",
+        totalSupply: 10000,
+        totalVat: 1000,
+        totalAmount: 11000,
+      });
+      await (window as any).DB.set("orders", orders);
+      const rows = await (window as any).fetchCompletedOrders({
+        range: { startDate: "2026-07-01", endDate: "2026-07-31" },
+        ordererSearch: "",
+        warehouse: "",
+      });
+      return rows.some((o: any) => o.orderNum === "NO-INVOICE-ORDERER-1");
+    });
+
+    expect(result).toBe(false);
   });
 });

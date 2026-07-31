@@ -5,6 +5,7 @@
 // S2: 관리자 발주서 수정 저장 → 발주서 사라지거나 중복 안 됨
 
 import { test, expect, Page } from "@playwright/test";
+import { resetAndSeed } from "../helpers/emu-reset";
 
 // 이 파일 전체: 발주 저장 흐름은 서버 저장 완료를 await로 대기하므로 (평상시 즉시, 실패 시 최대 10초)
 // 각 테스트에 여유 시간 제공
@@ -47,6 +48,29 @@ async function logout(page: Page) {
 }
 
 // 최소 유효 발주서 하나 만들기 (발주자 로그인 후 호출 — 세션 유지 상태 가정 X, 내부에서 로그인)
+async function setFirstVisibleDrawerQty(page: Page, qty: string) {
+  const result = await page.evaluate((value) => {
+    const inputs = Array.from(document.querySelectorAll<HTMLInputElement>("#drawer-body .drawer-qty"));
+    const input = inputs.find((el) => {
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return !el.disabled && style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+    });
+    if (!input) return { ok: false, count: inputs.length, value: "" };
+
+    input.focus();
+    input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.blur();
+
+    return { ok: true, count: inputs.length, id: input.id, value: input.value };
+  }, qty);
+
+  expect(result.ok, `수량 입력 가능한 서랍장/옵션 칸을 찾아야 함: ${JSON.stringify(result)}`).toBe(true);
+  expect(result.value, `수량 입력값이 유지되어야 함: ${JSON.stringify(result)}`).toBe(qty);
+}
+
 async function createTestOrderAsOrderer(page: Page) {
   await loginAs(page, "orderer", "orderer", "123456");
 
@@ -80,11 +104,7 @@ async function createTestOrderAsOrderer(page: Page) {
   const validShared = sharedOpts.find(t => t && t !== "" && t !== "색상 선택") || sharedOpts[1] || "";
   if (validShared) await sharedColorEl.selectOption({ label: validShared });
 
-  const firstDrawerQty = page.locator(".drawer-qty").first();
-  if (await firstDrawerQty.count() > 0) {
-    await firstDrawerQty.fill("1");
-    await firstDrawerQty.blur();
-  }
+  await setFirstVisibleDrawerQty(page, "1");
 
   const saveBtn = page.locator("#order-modal .order-modal-bottom .btn-primary").first();
   await saveBtn.click();
@@ -101,7 +121,7 @@ async function createTestOrderAsOrderer(page: Page) {
   const errorCount = await page.locator('text=/저장 실패|서버 연결 확인/i').count();
   expect(errorCount, "발주 저장 시 에러 토스트가 뜨면 안 됨").toBe(0);
 
-  await page.waitForSelector("#order-modal", { state: "hidden", timeout: 15000 }).catch(() => {
+  await page.waitForSelector("#order-modal", { state: "hidden", timeout: 30000 }).catch(() => {
     throw new Error("저장 후 모달이 닫히지 않음");
   });
 }
@@ -109,6 +129,10 @@ async function createTestOrderAsOrderer(page: Page) {
 test.describe("발주 저장 흐름 회귀 (유케이 07-08 사고 재발 방지)", () => {
   // 순차 실행 흐름에서 축적된 상태(재고·발주서 수 등)로 인한 flakiness 완화
   test.describe.configure({ retries: 2 });
+
+  test.beforeEach(async () => {
+    await resetAndSeed();
+  });
 
   test("S1: 발주자가 저장한 발주서가 관리자 화면에 표시된다", async ({ page }) => {
     await createTestOrderAsOrderer(page);

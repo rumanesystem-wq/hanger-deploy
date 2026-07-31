@@ -43,10 +43,40 @@ function _assertOrderableWarehouses(oiList, orderWh, dbItems){
 // 같은 발주서 + 같은 작업을 중복 실행하지 못하게 막음.
 // 008 발주서 사라짐 같은 사고의 1차 원인(빠른 더블 클릭/중복 호출) 차단.
 const _inflightOrders = new Set();
+const _ORDER_SHARED_LOCK_TTL = 20000;
+function _acquireSharedOrderLock(key){
+  try{
+    const lockKey='hanger_order_lock_'+key;
+    const now=Date.now();
+    const raw=localStorage.getItem(lockKey);
+    if(raw){
+      const cur=JSON.parse(raw);
+      if(cur&&cur.expiresAt&&cur.expiresAt>now)return null;
+    }
+    const token=String(now)+'_'+Math.random().toString(36).slice(2);
+    localStorage.setItem(lockKey,JSON.stringify({token,expiresAt:now+_ORDER_SHARED_LOCK_TTL}));
+    const saved=JSON.parse(localStorage.getItem(lockKey)||'{}');
+    return saved.token===token?{lockKey,token}:null;
+  }catch(_e){
+    return false;
+  }
+}
+function _releaseSharedOrderLock(lock){
+  if(!lock||!lock.lockKey)return;
+  try{
+    const cur=JSON.parse(localStorage.getItem(lock.lockKey)||'{}');
+    if(cur&&cur.token===lock.token)localStorage.removeItem(lock.lockKey);
+  }catch(_e){}
+}
 async function _withOrderLock(orderId, action, fn) {
   const key = `${action}-${orderId}`;
   if (_inflightOrders.has(key)) {
     if (typeof toast === 'function') toast('처리 중입니다. 잠시만 기다려주세요.', 'warning');
+    return false;
+  }
+  const sharedLock=_acquireSharedOrderLock(key);
+  if(sharedLock===null){
+    if (typeof toast === 'function') toast('다른 창에서 처리 중입니다. 잠시만 기다려주세요.', 'warning');
     return false;
   }
   _inflightOrders.add(key);
@@ -54,6 +84,7 @@ async function _withOrderLock(orderId, action, fn) {
     return await fn();
   } finally {
     _inflightOrders.delete(key);
+    _releaseSharedOrderLock(sharedLock);
   }
 }
 
@@ -67,6 +98,21 @@ function addStatusHistory(orderIdx, orders, newStatus, note){
     changedAt:new Date().toISOString(),
     note:note||''
   });
+}
+
+function orderRecentSort(a,b){
+  const key=(o)=>{
+    const t=Date.parse(o.updatedAt||o.createdAt||'');
+    if(!Number.isNaN(t))return t;
+    const n=String(o.orderNum||'').replace(/[^0-9]/g,'');
+    if(n)return Number(n);
+    return Number(o.id)||0;
+  };
+  return key(b)-key(a);
+}
+
+function isOrderLockedState(order){
+  return !!(order&&(order.isLocked===true||order.status==='발주확정'));
 }
 
 
@@ -202,7 +248,14 @@ async function changeOrderStatus(orderId, newStatus){
   const chgOrder=orders.find(o=>o.id===orderId);
   toast(`발주 ${chgOrder?(chgOrder.orderNum||('#'+orderId)):('#'+orderId)} 상태가 '${newStatus}'로 변경되었습니다.`,'success');
 
-  // (이카운트 연동은 toggleOrderLock에서 출고확정 버튼 누를 때 처리)
+  // FM 흐름: 출고확정(출고완료) 시 거래명세서 자동 발급,
+  // 취소/보관 시 기존 명세서는 취소 처리한다.
+  if(newStatus==='출고완료'&&chgOrder&&window.LumaneInvoice&&typeof window.LumaneInvoice.autoCreateForOrder==='function'){
+    window.LumaneInvoice.autoCreateForOrder(chgOrder).catch(e=>console.warn('[Invoice 자동발급]',e&&e.message));
+  }
+  if((newStatus==='취소'||newStatus==='보관')&&chgOrder&&window.LumaneInvoice&&typeof window.LumaneInvoice.cancelByOrderNum==='function'){
+    window.LumaneInvoice.cancelByOrderNum(chgOrder.orderNum).catch(e=>console.warn('[Invoice 취소]',e&&e.message));
+  }
 
   return true;
   });
@@ -222,9 +275,74 @@ async function cancelOrder(orderId, cancelReason){
   const order=orders[idx];
   if(order.status==='cancelled'){toast('이미 취소된 발주서입니다.','error');return false;}
 
+  // [2026-07-31 라운드3 A4] PC간 동시 취소 방지 — 서버 마커 락 획득
+  const _actorId=(typeof currentUser!=='undefined'&&currentUser)?currentUser.id:'';
+  let _cancelLockAcquired=false;
+  if(typeof window._acquireServerCancelLock==='function'){
+    const _lockRes=await window._acquireServerCancelLock(orderId,_actorId);
+    if(!_lockRes||!_lockRes.ok){
+      if(_lockRes&&_lockRes.reason==='locked'){
+        toast('다른 사용자가 이미 취소를 진행 중입니다. 잠시 후 다시 시도해주세요.','warning');
+      } else {
+        toast('취소 잠금 획득 실패. 새로고침 후 다시 시도해주세요.','error');
+      }
+      return false;
+    }
+    _cancelLockAcquired=true;
+  }
+  try{
+  // [2026-07-31 Codex] H4 경량 방어: 취소 직전 서버 주문 상태 재확인.
+  // 다른 탭/PC가 먼저 취소해서 stockDeducted=false가 된 경우 두 번째 재고 롤백을 막는다.
+  if(order.stockDeducted&&window._FS&&typeof window._FS.get==='function'){
+    let serverOrders;
+    try{
+      serverOrders=await Promise.race([
+        window._FS.get('orders',{fromServer:true}),
+        new Promise((_,rj)=>setTimeout(()=>rj(new Error('TIMEOUT')),8000))
+      ]);
+    }catch(e){
+      toast('서버 주문 상태 확인 실패. 새로고침 후 다시 취소해주세요.','error');
+      return false;
+    }
+    if(Array.isArray(serverOrders)){
+      const serverOrder=serverOrders.find(o=>o&&o.id===orderId);
+      if(serverOrder&&(serverOrder.status==='취소'||serverOrder.status==='cancelled'||serverOrder.stockDeducted===false)){
+        orders[idx]={...order,...serverOrder};
+        try{ await DB.set('orders',orders); }catch(_e){}
+        toast('이미 취소 처리된 발주서입니다. 새로고침 후 확인해주세요.','warning');
+        return false;
+      }
+    }
+  }
+
   // 재고 롤백: stockDeducted가 true인 경우에만
   if(order.stockDeducted){
-    const items=DB.get('items',[]);
+    // [2026-07-31 라운드2 A3] mutation 시작점을 서버 최신 items로 강제.
+    // 로컬 stale에서 rollback하면 다른 탭이 방금 조정한 값이 덮어써져 소실됨.
+    // 서버 스냅샷에 +qty 얹으면 다른 탭 조정도 보존됨.
+    let items;
+    if(window._FS&&typeof window._FS.get==='function'){
+      let serverItems;
+      try{
+        serverItems=await Promise.race([
+          window._FS.get('items',{fromServer:true}),
+          new Promise((_,rj)=>setTimeout(()=>rj(new Error('TIMEOUT')),8000))
+        ]);
+      }catch(e){
+        toast('서버 최신 재고 확인 실패. 새로고침 후 다시 취소해주세요.','error');
+        return false;
+      }
+      if(!Array.isArray(serverItems)){
+        toast('서버 최신 재고 확인 실패. 새로고침 후 다시 취소해주세요.','error');
+        return false;
+      }
+      items=serverItems.map(i=>({...i,
+        colorStockSiheung:i.colorStockSiheung?{...i.colorStockSiheung}:i.colorStockSiheung,
+        colorStockPyeongtaek:i.colorStockPyeongtaek?{...i.colorStockPyeongtaek}:i.colorStockPyeongtaek
+      }));
+    } else {
+      items=DB.get('items',[]);
+    }
     const rollbackNow=new Date().toISOString();
     const orderWh=order.warehouse||'시흥';
     // 서버에서 로그 id 배치 발급 (forEach 진입 전, 실패 시 throw)
@@ -290,6 +408,11 @@ async function cancelOrder(orderId, cancelReason){
   DB.set('purchase_requests',prs);
 
   return true;
+  }finally{
+    if(_cancelLockAcquired&&typeof window._releaseServerCancelLock==='function'){
+      try{ await window._releaseServerCancelLock(orderId); }catch(_e){}
+    }
+  }
   });
 }
 
@@ -431,9 +554,10 @@ function openOrderCancelModal(orderId){
 // ══════════════════════════════════════════════════
 // [기능1] 발주확정 최종 확인 — 실제 발주서 미리보기
 // ══════════════════════════════════════════════════
-function openOrderConfirmModal(){
+function openOrderConfirmModal(targetStatus){
   // 역할별 버튼 텍스트 분기
-  const _lbl=isAdmin()?'출고확정':'발주 넣기';
+  const _targetStatus=targetStatus||(isAdmin()?'발주확정':'발주대기');
+  const _lbl=isAdmin()?(_targetStatus==='발주대기'?'발주 넣기':'출고확정'):'발주 넣기';
   const _sl=document.getElementById('order-submit-label');if(_sl)_sl.textContent=_lbl;
   const _tl=document.getElementById('order-confirm-modal-title');if(_tl)_tl.textContent=_lbl+' 최종 확인';
   const _ol=document.getElementById('order-confirm-ok-label');if(_ol)_ol.textContent=_lbl;
@@ -526,7 +650,7 @@ function openOrderConfirmModal(){
   body.innerHTML=`<div style="max-height:65vh;overflow-y:auto;padding:4px">${docHtml}${shortageHtml}${noticeHtml}</div>`;
 
   const okBtn=document.getElementById('order-confirm-ok-btn');
-  if(okBtn){okBtn.onclick=()=>{closeModal('order-confirm-modal');submitOrder(isAdmin()?'발주확정':'발주대기');};}
+  if(okBtn){okBtn.onclick=()=>{closeModal('order-confirm-modal');submitOrder(_targetStatus);};}
   openModal('order-confirm-modal');
 }
 
@@ -657,7 +781,7 @@ async function toggleOrderLock(orderId){
   const now=new Date().toISOString();
 
   // 재고는 발주 넣는 시점에 이미 차감됨 — 확정/해제 시 재고 변동 없음
-  if(!order.isLocked){
+  if(!isOrderLockedState(order)){
     // 발주 확정: status → 발주확정, 자물쇠 잠금
     orders[idx].isLocked=true;
     orders[idx].status='발주확정';
@@ -765,8 +889,9 @@ function renderOrders(){
     if(orderFilterNum){const num=o.orderNum||('#'+o.id);if(!num.includes(orderFilterNum))return false;}
     if(orderFilterAddr){const addr=o.address||o.customerName||'';if(!addr.includes(orderFilterAddr))return false;}
     if(orderFilterStatus&&o.status!==orderFilterStatus)return false;
-    if(orderFilterLocked==='locked'&&!o.isLocked)return false;
-    if(orderFilterLocked==='unlocked'&&o.isLocked)return false;
+    const rowLocked=isOrderLockedState(o);
+    if(orderFilterLocked==='locked'&&!rowLocked)return false;
+    if(orderFilterLocked==='unlocked'&&rowLocked)return false;
     // 시공일 기준 필터 (shipDate)
     if(orderFilterDateFrom&&(o.shipDate||'').slice(0,10)<orderFilterDateFrom)return false;
     if(orderFilterDateTo&&(o.shipDate||'').slice(0,10)>orderFilterDateTo)return false;
@@ -779,7 +904,7 @@ function renderOrders(){
     if(orderFilterMinSize){const sz=Math.round((o.rodTotalLen||0)/303);if(sz<parseInt(orderFilterMinSize))return false;}
     if(orderFilterMaxSize){const sz=Math.round((o.rodTotalLen||0)/303);if(sz>parseInt(orderFilterMaxSize))return false;}
     return true;
-  }).sort((a,b)=>b.id-a.id);
+  }).sort(orderRecentSort);
 
   let rows='';
   if(orders.length===0){
@@ -810,15 +935,17 @@ function renderOrders(){
       const addr=_e(o.address||o.customerName||'-');
       const orderNumEsc=_e(o.orderNum||('#'+o.id));
       const statusBadge=orderStatusBadge(o.status);
-      const lockBadge=o.isLocked
+      const rowLocked=isOrderLockedState(o);
+      const lockBadge=rowLocked
         ?'<span class="badge badge-locked" style="margin-left:4px"><i class="fas fa-lock"></i></span>'
         :(o.status==='발주대기'?'<span class="badge" style="margin-left:4px;background:#fefce8;color:#a16207;border:1px solid #fde047"><i class="fas fa-lock-open"></i></span>':'');
       const cancelBtn=isAdmin()&&orderListSubTab==='active'?`<button class="btn btn-ghost btn-xs order-cancel-btn" data-order-id="${o.id}" style="color:var(--danger);white-space:nowrap"><i class="fas fa-ban"></i> 발주 취소</button>`:'';
       const uncancelBtn=orderListSubTab==='cancelled'&&(isAdmin()||(currentUser&&o.createdBy===currentUser.id))?`<button class="btn btn-ghost btn-xs order-uncancel-btn" data-order-id="${o.id}" style="color:#16a34a;white-space:nowrap"><i class="fas fa-rotate-left"></i> 취소 되돌리기</button>`:'';
       const reorderBtn=`<button class="btn btn-outline btn-xs reorder-btn" data-order-id="${o.id}" title="이 발주서로 재발주" style="border:1.5px solid #0ea5e9;color:#0369a1;font-weight:700;white-space:nowrap"><i class="fas fa-rotate-right"></i> 재발주</button>`;
       // 거래명세서 버튼 — 관리자는 항상, 발주자는 sentToCustomer=true 인 경우만
+      const _hasSentInv=_sentInvOrderNums.has(o.orderNum);
       const _statusOK=(o.status==='출고완료'||o.status==='발주확정');
-      const _canSeeInv=_statusOK && (isAdmin() || (currentUser&&o.createdBy===currentUser.id && _sentInvOrderNums.has(o.orderNum)));
+      const _canSeeInv=_statusOK && (isAdmin() || (currentUser&&o.createdBy===currentUser.id && _hasSentInv));
       const invoiceBtn=_canSeeInv?`<button class="btn btn-outline btn-xs invoice-btn" data-order-id="${o.id}" style="border:1.5px solid #7c3aed;color:#7c3aed;font-weight:700;white-space:nowrap"><i class="fas fa-file-invoice"></i> 거래명세서</button>`:'';
       // M1 fix: escapeHtml로 XSS 차단 (title 속성 + 텍스트 노드 양쪽)
       const _esc=(typeof escapeHtml==='function'?escapeHtml:(s=>String(s||'')));
@@ -842,7 +969,7 @@ function renderOrders(){
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;gap:12px;flex-wrap:wrap">
       <div><div class="section-title">발주서 목록</div><div class="section-sub">${isAdmin()?'전체 발주서를 확인합니다.':'발주서를 작성하고 서랍장 부족 수량을 자동 계산합니다.'}</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        ${!isAdmin()?'<button class="btn btn-primary" id="new-order-btn"><i class="fas fa-plus"></i> 새 발주서</button>':''}
+        <button class="btn btn-primary" id="new-order-btn"><i class="fas fa-plus"></i> ${isAdmin()?'대리 발주서 작성':'새 발주서'}</button>
         <button class="btn btn-outline btn-sm" onclick="downloadOrderListExcel()" style="border:1.5px solid #15803d;color:#15803d;font-weight:700"><i class="fas fa-file-excel"></i> 목록 엑셀</button>
       </div>
     </div>
@@ -915,7 +1042,7 @@ function renderOrders(){
 
 
     <div class="card">${rows}</div>`;
-  if(!isAdmin()){const nb2=document.getElementById('new-order-btn');if(nb2)nb2.addEventListener('click',openOrderModal);}
+  {const nb2=document.getElementById('new-order-btn');if(nb2)nb2.addEventListener('click',openOrderModal);}
   const orderNumInput=document.getElementById('order-filter-num');
   if(orderNumInput)orderNumInput.addEventListener('input',e=>{orderFilterNum=e.target.value;renderOrders();});
   // 한글 IME 호환: 자동 검색 제거 → Enter 또는 blur(포커스 잃을 때) 검색
@@ -1020,7 +1147,7 @@ function renderOrderHistTab(){
   document.getElementById('hist-from-input').addEventListener('input',e=>{histFrom=e.target.value;renderOrderHistTab();});
   document.getElementById('hist-to-input').addEventListener('input',e=>{histTo=e.target.value;renderOrderHistTab();});
   document.getElementById('hist-reset-btn').addEventListener('click',()=>{histSite='';histFrom='';histTo='';renderOrderHistTab();});
-  let orders=getOrders().filter(o=>isAdmin()||(o.createdBy===currentUser.id)||!o.createdBy).sort((a,b)=>b.id-a.id);
+  let orders=getOrders().filter(o=>isAdmin()||(o.createdBy===currentUser.id)||!o.createdBy).sort(orderRecentSort);
   if(histSite)orders=orders.filter(o=>(o.siteName||o.deliveryTo||'').includes(histSite));
   if(histFrom)orders=orders.filter(o=>o.orderDate>=histFrom);
   if(histTo)orders=orders.filter(o=>o.orderDate<=histTo);
@@ -1320,9 +1447,9 @@ function openOrderDetail(orderId){
     <div style="display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid #e5e7eb;background:#f8fafc">
       <span style="font-size:13px;font-weight:800;color:#374151">${order.orderNum||('#'+order.id)}</span>
       ${orderStatusBadge(order.status)}
-      ${order.isLocked
-        ?'<span class="badge badge-locked"><i class="fas fa-lock"></i> 확정</span>'
-        :(order.status==='발주대기'?'<span class="badge" style="background:#fefce8;color:#a16207;border:1px solid #fde047"><i class="fas fa-lock-open"></i> 미확정</span>':'')}
+        ${isOrderLockedState(order)
+          ?'<span class="badge badge-locked"><i class="fas fa-lock"></i> 확정</span>'
+          :(order.status==='발주대기'?'<span class="badge" style="background:#fefce8;color:#a16207;border:1px solid #fde047"><i class="fas fa-lock-open"></i> 미확정</span>':'')}
       ${hasShortage?'<span style="background:#fef2f2;color:#dc2626;border:1px solid #fecaca;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:700">⚠ 부족</span>':''}
     </div>
     <div class="doc-detail-wrap">${renderOrderDocument(order)}</div>
@@ -1345,7 +1472,7 @@ function openOrderDetail(orderId){
     // - 출고준비/출고완료/취소 → 관리자도 수정 불가
     const noEditStatuses=['출고준비','출고완료','취소','active'];
     const ordererBlockStatuses=['발주확정','출고준비','출고완료','active']; // 발주대기는 관리자 미확정 상태이므로 수정 허용
-    if(order.isLocked){
+    if(isOrderLockedState(order)){
       editBtn.disabled=true;
       editBtn.style.opacity='0.4';
       editBtn.title='발주 확정된 발주서입니다. 확정 해제 후 수정 가능합니다.';
@@ -1385,7 +1512,7 @@ function openOrderDetail(orderId){
       detailCancelBtn.style.display='none';
     }
   }
-  // 거래명세서 버튼 (관리자 또는 본인 발주서 + 발주확정/출고완료 이상, 발주자는 읽기 전용)
+  // 거래명세서 버튼 (관리자 또는 본인 발주서 + 출고확정 이후, 발주자는 읽기 전용)
   {
     const existingInvBtn=document.getElementById('detail-invoice-btn');
     if(existingInvBtn)existingInvBtn.remove();
@@ -1411,7 +1538,8 @@ function openOrderDetail(orderId){
       }).catch(()=>{window._invoicesFetchInflight=false;});
     }
     const _hasSentInv=_invList.some(i=>i&&!i.cancelled&&i.sentToCustomer&&i.orderNum===order.orderNum);
-    const _canSeeInvDetail=(order.status==='출고완료'||order.status==='발주확정')&&(isAdmin()||(_isOwner&&_hasSentInv));
+    const _statusOK=(order.status==='출고완료'||order.status==='발주확정');
+    const _canSeeInvDetail=_statusOK&&(isAdmin()||(_isOwner&&_hasSentInv));
     if(_canSeeInvDetail){
       const leftBtns=document.querySelector('#order-detail-modal .modal-footer > div');
       if(leftBtns){
@@ -1433,7 +1561,7 @@ function openOrderDetail(orderId){
   const lockBtn=document.getElementById('lock-order-btn');
   if(lockBtn&&isAdmin()){
     lockBtn.style.display='';
-    if(order.isLocked){
+    if(isOrderLockedState(order)){
       lockBtn.innerHTML='<i class="fas fa-lock"></i> 확정 해제';
       lockBtn.style.cssText='border:1.5px solid #15803d;color:#15803d;font-weight:700';
     }else{
@@ -1618,15 +1746,12 @@ async function rollbackInventoryForEdit(order){
 async function openEditOrder(orderId){
   const order=getOrders().find(o=>o.id===orderId);
   if(!order){toast('발주서를 찾을 수 없습니다.','error');return;}
-  if(order.isLocked){toast('발주 확정된 발주서입니다. 관리자가 확정 해제 후 수정할 수 있습니다.','error');return;}
+  if(isOrderLockedState(order)){toast('발주 확정된 발주서입니다. 관리자가 확정 해제 후 수정할 수 있습니다.','error');return;}
   if(!isAdmin()&&order.createdBy&&order.createdBy!==currentUser.id){
     toast('본인 발주서만 수정할 수 있습니다.','error');return;
   }
 
   // ── 1단계: 재고 롤백 (입력칸과 무관하게 DB만 변경) ──
-  try{ await rollbackInventoryForEdit(order); }
-  catch(_e){ toast(((_e&&_e.message)||'수정 진입 롤백 실패. 다시 시도해주세요.'),'error'); return; }
-
   closeModal('order-detail-modal');
 
   // ── 2단계: 모달 렌더링 (항상 빈 상태로 시작) ──
@@ -1637,7 +1762,12 @@ async function openEditOrder(orderId){
     // 기본 정보 — 발주자는 자기 deliveryName으로 강제 + 읽기전용. 관리자는 원본 유지 + 편집 가능
     const editDelivEl=document.getElementById('o-delivery-to');
     if(isAdmin()){
+      const ordererId=order.createdBy||'';
+      const ordererIdEl=document.getElementById('o-orderer-id');
+      const acc=DB.get('accounts',[]).find(a=>String(a.id)===String(ordererId)&&a.role==='orderer');
+      proxyOrdererForOrder=acc?{id:acc.id,name:acc.name||acc.id,deliveryName:acc.deliveryName||acc.name||acc.id,email:acc.email||''}:null;
       editDelivEl.value=order.deliveryTo||order.siteName||'';
+      if(ordererIdEl)ordererIdEl.value=ordererId;
       editDelivEl.readOnly=false;
       editDelivEl.tabIndex=0;
     } else {
@@ -1704,7 +1834,18 @@ async function openEditOrder(orderId){
     // 수정 모드 표시
     document.querySelector('#order-modal .modal-title').textContent='발주서 수정 #'+orderId;
     const saveBtn=document.querySelector('#order-modal .order-modal-bottom .btn-primary');
-    if(saveBtn){saveBtn.textContent='수정 저장';saveBtn.onclick=()=>submitEditOrder(orderId);}
+    if(saveBtn){
+      const lbl=isAdmin()?'출고확정':'발주 넣기';
+      saveBtn.innerHTML=`<i class="fas fa-check"></i> <span id="order-submit-label">${lbl}</span>`;
+      saveBtn.onclick=()=>submitEditOrder(orderId,isAdmin()?'발주확정':'발주대기');
+    }
+    const draftBtn=Array.from(document.querySelectorAll('#order-modal .order-modal-bottom .modal-footer .btn')).find(btn=>(btn.textContent||'').includes('임시저장'));
+    if(draftBtn)draftBtn.onclick=()=>submitEditOrder(orderId,'임시저장');
+    const pendingBtn=document.getElementById('order-pending-btn');
+    if(pendingBtn){
+      pendingBtn.style.display=isAdmin()?'':'none';
+      pendingBtn.onclick=()=>submitEditOrder(orderId,'발주대기');
+    }
     // 상부자재 금액 재계산 (수량 복원 후)
     document.querySelectorAll('.upper-qty').forEach(inp=>{if(inp.value)updateUpperRowAmount(inp);});
     recalcOrderTotal();
@@ -1714,7 +1855,7 @@ async function openEditOrder(orderId){
 }
 
 
-async function submitEditOrder(orderId){
+async function submitEditOrder(orderId, saveMode){
   return _withOrderLock(orderId, 'edit', async () => {
   const orders=DB.get('orders',[]);
   const idx=orders.findIndex(o=>o.id===orderId);
@@ -1722,8 +1863,7 @@ async function submitEditOrder(orderId){
 
   // 원래 발주서 정보 보존 (id·orderNum·status·등록자·등록일 유지)
   const orig=orders[idx];
-  // 임시저장이었던 경우 발주대기로 올려서 저장 (_editOverride.status도 반드시 targetStatus로 설정)
-  const targetStatus=(orig.status==='임시저장')?'발주대기':(orig.status||'발주대기');
+  const targetStatus=saveMode||(orig.status||'발주대기');
   window._editOverride={
     id:orig.id,
     orderNum:orig.orderNum,
@@ -1740,7 +1880,7 @@ async function submitEditOrder(orderId){
   DB.set('purchase_requests',prs);
   // 모달 제목/버튼 원복
   const titleEl=document.querySelector('#order-modal .modal-title');
-  if(titleEl)titleEl.textContent='새 발주서 등록';
+  if(titleEl)titleEl.textContent=isAdmin()?'대리 발주서 작성':'새 발주서 등록';
   // saveBtn onclick 초기화 (직접 함수 참조 방지)
   _resetOrderModalBtn();
   await submitOrder(targetStatus);
@@ -1818,7 +1958,7 @@ function quickCopyLatest(){
   const orders=getOrders().filter(o=>{
     if(!isAdmin()&&o.createdBy&&o.createdBy!==currentUser.id)return false;
     return o.status!=='취소';
-  }).sort((a,b)=>b.id-a.id);
+  }).sort(orderRecentSort);
   if(orders.length===0){toast('복사할 발주서가 없습니다.','error');return;}
   copyOrder(orders[0].id);
 }

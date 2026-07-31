@@ -237,11 +237,17 @@ async function _autoCreateForOrder(order) {
     if (!order || !order.orderNum) {
       return { created: false, reason: 'orderNum 없음' };
     }
-    // C2 보강 (Codex): 관리자 외 자동발급 트리거 차단
-    // 정상 호출은 발주확정(toggleOrderLock) — 관리자만 가능. 콘솔 우회 방어.
-    if (typeof isAdmin !== 'function' || !isAdmin()) {
-      console.warn('[Invoice] autoCreateForOrder: 권한 없음 — 차단');
-      return { created: false, reason: '권한 없음' };
+    if (order.status !== '출고완료' && order.status !== '발주확정') {
+      return { created: false, reason: '출고확정 전 발주서' };
+    }
+    // 관리자 또는 발주서 소유 발주자만 자동발급 가능
+    const _isAdminUser = (typeof isAdmin === 'function') && isAdmin();
+    if (!_isAdminUser) {
+      const _curId = (typeof currentUser !== 'undefined' && currentUser && currentUser.id) || '';
+      if (!_curId || order.createdBy !== _curId) {
+        console.warn('[Invoice] autoCreateForOrder: 권한 없음 — 차단');
+        return { created: false, reason: '권한 없음' };
+      }
     }
     // 활성 invoice 이미 있으면 skip (cancelled는 무시 — 새로 발급)
     const existing = await getInvoicesByOrderNum(order.orderNum);
@@ -261,6 +267,10 @@ async function _autoCreateForOrder(order) {
     const dateKey = (draft.shipDate || '').replace(/-/g, '');
     const existingSerials = await getInvoicesByDate(dateKey);
     draft.serial = generateSerial(draft.shipDate || '', existingSerials);
+    // 자동 생성은 "명세서 작성"까지만 한다.
+    // 발주자에게 보이는 전송 상태는 정산 화면의 [전송] 버튼을 눌렀을 때만 true.
+    draft.sentToCustomer = false;
+    draft.sentAt = null;
     await saveInvoice(draft);
     if (typeof toast === 'function') {
       toast('거래명세서가 자동 발급되었습니다. (' + draft.orderNum + ')', 'success');

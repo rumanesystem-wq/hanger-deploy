@@ -201,11 +201,12 @@ const NAV_ORDERER=[
   {id:'dashboard',         label:'대시보드',      icon:'fa-gauge'},
   {id:'orders',            label:'발주서 목록',    icon:'fa-file-invoice'},
   {id:'stock-view',        label:'재고 현황',      icon:'fa-boxes-stacked'},
+  {id:'settlement',        label:'정산',          icon:'fa-receipt'},
 ];
 function getNavItems(){return isAdmin()?NAV_ADMIN:NAV_ORDERER;}
 
 function navigate(view, {addHistory=true}={}){
-  const adminOnly=['inventory','items','accounts','usage-stats','price-settings','shipping-view','settlement'];
+  const adminOnly=['inventory','items','accounts','usage-stats','price-settings','shipping-view'];
   if(adminOnly.includes(view)&&!isAdmin()){toast('관리자만 접근할 수 있습니다.','error');view='dashboard';}
   if(currentView&&currentView!==view){
     navHistory.push(currentView);
@@ -1457,7 +1458,8 @@ function _renderLedgerPanelHTML(){
         .ledger-scope table thead { display: none; }
       }
       .ledger-scope .btn-back { background:#fff; color:var(--text-2); border:1px solid var(--border); padding:7px 14px; border-radius:var(--r-sm); font-size:13px; font-weight:600; cursor:pointer; }
-      .ledger-scope .btn-add-payment { background:#15803d; color:#fff; border:none; padding:8px 16px; border-radius:var(--r-sm); font-size:13px; font-weight:700; cursor:pointer; }
+      .ledger-scope .btn-add-payment,
+      .ledger-scope .btn-save-payment { background:#15803d; color:#fff; border:none; padding:8px 16px; border-radius:var(--r-sm); font-size:13px; font-weight:700; cursor:pointer; }
       .ledger-scope .btn-print { background:#475569; color:#fff; border:none; padding:8px 16px; border-radius:var(--r-sm); font-size:13px; font-weight:700; cursor:pointer; }
       .ledger-scope .btn-search { background:var(--primary); color:#fff; border:none; padding:9px 20px; border-radius:var(--r-sm); font-size:13px; font-weight:700; cursor:pointer; }
       .ledger-scope .hidden { display:none !important; }
@@ -1601,7 +1603,7 @@ function _renderLedgerPanelHTML(){
       <div id="view-detail" class="hidden">
         <div class="no-print" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
           <button class="btn-back" onclick="goBackToList()"><i class="fas fa-arrow-left"></i> 거래처 목록</button>
-          <button class="btn-add-payment" onclick="openPaymentModal()"><i class="fas fa-plus"></i> 입금 등록</button>
+          ${isAdmin()?'<button class="btn-add-payment" onclick="openPaymentModal()"><i class="fas fa-plus"></i> 입금 등록</button>':''}
           <button class="btn-print" onclick="printLedger()"><i class="fas fa-print"></i> 인쇄</button>
         </div>
         <div class="ec-filter-bar no-print">
@@ -1663,7 +1665,7 @@ function _renderLedgerPanelHTML(){
           </div>
           <div class="modal-footer">
             <button class="btn-back" onclick="closePaymentModal()">취소</button>
-            <button class="btn-add-payment" onclick="savePayment()"><i class="fas fa-check"></i> 저장</button>
+            <button class="btn-save-payment" onclick="savePayment()"><i class="fas fa-check"></i> 저장</button>
           </div>
         </div>
       </div>
@@ -1672,7 +1674,7 @@ function _renderLedgerPanelHTML(){
 }
 
 function renderSettlement(){
-  if(!requireAdmin())return;
+  const settlementReadonly=!isAdmin();
   document.getElementById('content').innerHTML = `
     <style>
       .settlement-scope { padding: 24px; }
@@ -1857,6 +1859,9 @@ function renderSettlement(){
       .stl-panel.active { display: block; }
     </style>
     <div class="settlement-scope">
+      ${settlementReadonly?`<div style="margin-bottom:12px;padding:10px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:var(--r-sm);font-size:12px;font-weight:700;color:#1e40af">
+        <i class="fas fa-eye"></i> 발주자 읽기 전용: 정산 내역 조회만 가능하고 수정·전송·입금 등록은 관리자만 가능합니다.
+      </div>`:''}
       <div class="stl-tabs">
         <button class="stl-tab active" data-stl-tab="settlement"><i class="fas fa-receipt"></i> 기간별 정산</button>
         <button class="stl-tab" data-stl-tab="ledger"><i class="fas fa-book"></i> 거래처 원장</button>
@@ -1903,7 +1908,7 @@ function renderSettlement(){
             <div class="filter-actions">
               <button class="btn-search" onclick="loadData()"><i class="fas fa-search"></i> 조회</button>
               <button class="btn-sort-toggle" id="sort-toggle" data-order="desc" type="button"><i class="fas fa-sort-amount-down"></i> 최신순</button>
-              <button class="btn-export" onclick="exportExcel()"><i class="fas fa-file-excel"></i> 엑셀</button>
+              ${isAdmin()?'<button class="btn-export" onclick="exportExcel()"><i class="fas fa-file-excel"></i> 엑셀</button>':''}
             </div>
           </div>
         </div>
@@ -3091,6 +3096,7 @@ async function _bootSequence(){
     initData();
     await _seedDemoStock();
     setLoginTab('orderer');
+    if(typeof initLocalTestAccountSwitcher==='function')initLocalTestAccountSwitcher();
     ['login-pw','reg-pw','reg-pw2','setup-pw','setup-pw2'].forEach(wrapPwToggle);
     initLoginPrefs_();
   }finally{

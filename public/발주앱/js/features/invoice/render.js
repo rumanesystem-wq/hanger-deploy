@@ -144,7 +144,7 @@ function buildInvoiceHTML(invoice) {
   <div class="ci-amount-bar">
     <span class="ci-amount-label">금  액 :</span>
     <span class="ci-amount-korean">${numberToKorean(totalAmount || 0)}</span>
-    <span class="ci-amount-won">(<span class="ci-amount-won-mark">₩</span><span class="ci-amount-won-value">${(totalAmount || 0).toLocaleString()}</span>)</span>
+    <span class="ci-amount-won">(<span class="ci-amount-won-value">${(totalAmount || 0).toLocaleString()}</span>)</span>
   </div>
 
   <!-- 메인 표 -->
