@@ -55,7 +55,8 @@ async function fetchCompletedOrders(filter) {
     // 새 구조: 출고완료(=출고확정)만 매출 인식
     // 기존 운영/테스트 데이터 호환: 예전에는 내부값 '발주확정'을 화면상 출고확정처럼 썼으므로,
     // 이미 거래명세서가 있는 발주확정 건은 정산에 포함한다.
-    if (o.status !== '출고완료' && o.status !== '발주확정') return false;
+    // [2026-07-31] 발주대기도 명세서 자동발급되므로 정산에 포함 (v91 후속)
+    if (o.status !== '출고완료' && o.status !== '발주확정' && o.status !== '발주대기') return false;
     // [2026-07-03] 정산도 발주일 기준으로 통일 (원장과 일치)
     // 방어: orderDate가 '0000-00-00'이면 shipDate 폴백 (옛 데이터 사라짐 방지)
     let dateField = (o.orderDate && o.orderDate !== '0000-00-00') ? o.orderDate : (o.shipDate || '');
