@@ -133,7 +133,7 @@ async function fetchAllCompletedOrders() {
     ? DB.get('orders', [])
     : [];
   // 출고완료 + 발주확정(=UI '출고확정') 둘 다 매출 인식 (운영 워크플로우)
-  return allOrders.filter(o => o && _canViewLedgerOrder(o) && (o.status === '출고완료' || o.status === '발주확정'));
+  return allOrders.filter(o => o && _canViewLedgerOrder(o) && (o.status === '출고완료' || o.status === '발주확정' || o.status === '발주대기'));
 }
 
 function _canViewLedgerOrder(o) {
