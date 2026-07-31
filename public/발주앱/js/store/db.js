@@ -624,8 +624,7 @@ function showApp(){
   renderNav();
   const _savedView=(typeof getUserPref==='function')?getUserPref('lastView',''):'';
   const _hashView=location.hash.slice(1);
-  // M1 보강 (Codex): settlement 추가 — 발주자 lastView 복구 시 정산 페이지 차단
-  const _ADMIN_VIEWS=new Set(['items','inventory','price-settings','accounts','purchase-requests','logs','shortage-view','settlement']);
+  const _ADMIN_VIEWS=new Set(['items','inventory','price-settings','accounts','purchase-requests','logs','shortage-view']);
   const _raw=_hashView||_savedView||'dashboard';
   const _restoreView=(!isAdmin()&&_ADMIN_VIEWS.has(_raw))?'dashboard':_raw;
   navigate(_restoreView,{addHistory:false});

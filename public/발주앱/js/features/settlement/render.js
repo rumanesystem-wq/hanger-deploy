@@ -190,6 +190,7 @@ function renderCustomerTable(grouped, totalSummary) {
  * @returns {string} HTML 문자열
  */
 function renderCustomerDetailTable(orders) {
+  const canEditSettlement = (typeof isAdmin === 'function') && isAdmin();
   const PAGE_SIZE = 10;
   const sorted = [...orders].sort((a,b)=>{
     // 방어: orderDate가 '0000-00-00'이면 shipDate 폴백 (정렬 튐 방지)
@@ -216,7 +217,7 @@ function renderCustomerDetailTable(orders) {
             <th class="num col-supply">공급가액</th>
             <th class="num">합계</th>
             <th class="center">거래명세서</th>
-            <th class="center col-edit">수정</th>
+            ${canEditSettlement?'<th class="center col-edit">수정</th>':''}
             <th class="center">상세</th>
           </tr>
         </thead>
@@ -236,6 +237,24 @@ function renderCustomerDetailTable(orders) {
  */
 function renderOrderRow(o) {
   const whClass = o.warehouse === '시흥' ? 'badge-wh-siheung' : 'badge-wh-pyeongtaek';
+  const canEditSettlement = (typeof isAdmin === 'function') && isAdmin();
+  const activeInvoices=(typeof DB!=='undefined'&&typeof DB.get==='function'?DB.get('invoices',[]):[])
+    .filter(i=>i&&!i.cancelled&&i.orderNum===o.orderNum);
+  const hasSentInvoice=activeInvoices.some(i=>i.sentToCustomer);
+  const canOpenInvoice=canEditSettlement||hasSentInvoice;
+  const sendButton = canEditSettlement ? (() => {
+    // M4 fix: 초기 라벨에 sentToCustomer 상태 반영
+    const _sent=activeInvoices.length>0&&activeInvoices[activeInvoices.length-1].sentToCustomer;
+    const _label=_sent?'<i class="fas fa-check-circle"></i> 전송됨':'<i class="fas fa-paper-plane"></i> 전송';
+    const _style=_sent
+      ?'margin-left:4px;padding:4px 8px;font-size:12px;border:1px solid #16a34a;background:#16a34a;color:#fff;border-radius:4px;cursor:pointer;font-weight:700'
+      :'margin-left:4px;padding:4px 8px;font-size:12px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:4px;cursor:pointer;font-weight:700';
+    // H4 보강 (Codex): inline onclick 제거 — data-* + 이벤트 위임 사용
+    return `<button class="btn-invoice-send" data-action="toggle-send" data-order-num="${escapeHtml(o.orderNum)}" title="발주자에게 전송 / 전송 취소" style="${_style}">${_label}</button>`;
+  })() : '';
+  const invoiceButton = canOpenInvoice
+    ? `<button class="btn-invoice" data-action="open-invoice" data-order-id="${o.id}"><i class="fas fa-file-invoice"></i> 거래명세서</button>`
+    : '<span style="font-size:11px;color:var(--text-3)">미전송</span>';
   return `
     <tr id="order-row-${o.id}">
       <td><code style="background:#eff6ff;color:#1e40af;padding:2px 6px;border-radius:4px;font-weight:700">${escapeHtml(o.orderNum)}</code></td>
@@ -251,19 +270,8 @@ function renderOrderRow(o) {
       })()}</td>
       <td class="num col-supply">${fmtMoney(o.totalSupply)}</td>
       <td class="num"><strong>${fmtMoney(o.totalAmount)}</strong></td>
-      <td class="center" style="white-space:nowrap"><button class="btn-invoice" data-action="open-invoice" data-order-id="${o.id}"><i class="fas fa-file-invoice"></i> 거래명세서</button> ${(()=>{
-        // M4 fix: 초기 라벨에 sentToCustomer 상태 반영
-        const _inv=(typeof DB!=='undefined'&&typeof DB.get==='function'?DB.get('invoices',[]):[])
-          .filter(i=>i&&!i.cancelled&&i.orderNum===o.orderNum);
-        const _sent=_inv.length>0&&_inv[_inv.length-1].sentToCustomer;
-        const _label=_sent?'<i class="fas fa-check-circle"></i> 전송됨':'<i class="fas fa-paper-plane"></i> 전송';
-        const _style=_sent
-          ?'margin-left:4px;padding:4px 8px;font-size:12px;border:1px solid #16a34a;background:#16a34a;color:#fff;border-radius:4px;cursor:pointer;font-weight:700'
-          :'margin-left:4px;padding:4px 8px;font-size:12px;border:1px solid #16a34a;background:#fff;color:#16a34a;border-radius:4px;cursor:pointer;font-weight:700';
-        // H4 보강 (Codex): inline onclick 제거 — data-* + 이벤트 위임 사용
-        return `<button class="btn-invoice-send" data-action="toggle-send" data-order-num="${escapeHtml(o.orderNum)}" title="발주자에게 전송 / 전송 취소" style="${_style}">${_label}</button>`;
-      })()}</td>
-      <td class="center col-edit"><button class="btn-edit" data-action="inline-edit" data-order-id="${o.id}"><i class="fas fa-edit"></i> 수정</button></td>
+      <td class="center" style="white-space:nowrap">${invoiceButton} ${sendButton}</td>
+      ${canEditSettlement?`<td class="center col-edit"><button class="btn-edit" data-action="inline-edit" data-order-id="${o.id}"><i class="fas fa-edit"></i> 수정</button></td>`:''}
       <td class="center"><button class="btn-link" data-action="goto-order" data-order-num="${escapeHtml(o.orderNum)}"><i class="fas fa-external-link-alt"></i> 이동</button></td>
     </tr>
   `;
@@ -458,6 +466,10 @@ function _applyQuickSearch(query) {
  * @returns {void}
  */
 function startInlineEdit(orderId) {
+  if (typeof isAdmin !== 'function' || !isAdmin()) {
+    if (typeof toast === 'function') toast('관리자만 수정할 수 있습니다.', 'error');
+    return;
+  }
   // L2 보강 (Codex): 실제 DB 우선 조회 (mock fallback은 보조)
   let order = null;
   if (typeof DB !== 'undefined' && typeof DB.get === 'function') {
@@ -502,6 +514,10 @@ function startInlineEdit(orderId) {
  * @returns {Promise<void>}
  */
 async function saveInlineEdit(orderId) {
+  if (typeof isAdmin !== 'function' || !isAdmin()) {
+    if (typeof toast === 'function') toast('관리자만 수정할 수 있습니다.', 'error');
+    return;
+  }
   /** @type {Partial<Order>} */
   const patch = {
     totalSupply: parseInt(document.getElementById('edit-supply-' + orderId).value) || 0,
@@ -588,6 +604,15 @@ async function openInvoiceFromSettlement(orderId) {
     else alert('발주서를 찾을 수 없습니다.');
     return;
   }
+  if (typeof isAdmin !== 'function' || !isAdmin()) {
+    const invoices = (typeof DB !== 'undefined' && typeof DB.get === 'function') ? DB.get('invoices', []) : [];
+    const hasSentInvoice = invoices.some(i => i && !i.cancelled && i.orderNum === order.orderNum && i.sentToCustomer);
+    if (!hasSentInvoice) {
+      if (typeof toast === 'function') toast('관리자가 전송한 거래명세서만 볼 수 있습니다.', 'error');
+      else alert('관리자가 전송한 거래명세서만 볼 수 있습니다.');
+      return;
+    }
+  }
   if (!window.LumaneInvoice || typeof window.LumaneInvoice.openFromOrder !== 'function') {
     if (typeof toast === 'function') toast('거래명세서 모듈 로드 실패. 새로고침 후 다시 시도하세요.', 'error');
     else alert('거래명세서 모듈 로드 실패. 새로고침 후 다시 시도하세요.');
@@ -645,6 +670,10 @@ async function toggleInvoiceSendFromSettlement(orderNum, btn) {
 }
 
 async function exportExcel() {
+  if (typeof isAdmin !== 'function' || !isAdmin()) {
+    if (typeof toast === 'function') toast('관리자만 엑셀을 다운로드할 수 있습니다.', 'error');
+    return;
+  }
   const range = getDateRange(currentMode, currentValue);
   const filter = {
     range,

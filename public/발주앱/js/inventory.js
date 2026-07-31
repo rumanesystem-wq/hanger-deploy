@@ -11,6 +11,11 @@ function inventoryColorsForItem(item){
     const mapped=Object.keys(item.colorProdCdMap||{}).filter(color=>color&&item.colorProdCdMap[color]&&item.colorProdCdMap[color]!=='N/A');
     colors=mapped.length>0?mapped:SHELF_COLORS;
   }
+  ['colorStockSiheung','colorStockPyeongtaek','colorStockOsan'].forEach(key=>{
+    Object.keys(item[key]||{}).forEach(color=>{
+      if(color&&!colors.includes(color))colors.push(color);
+    });
+  });
   const seen=new Set();
   const normalized=[];
   colors.forEach(color=>{
