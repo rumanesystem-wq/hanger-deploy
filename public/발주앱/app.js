@@ -1602,7 +1602,7 @@ function _renderLedgerPanelHTML(){
         <div class="no-print" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
           <button class="btn-back" onclick="goBackToList()"><i class="fas fa-arrow-left"></i> 거래처 목록</button>
           <button class="btn-add-payment" onclick="openPaymentModal()"><i class="fas fa-plus"></i> 입금 등록</button>
-          <button class="btn-print" onclick="window.print()"><i class="fas fa-print"></i> 인쇄</button>
+          <button class="btn-print" onclick="printLedger()"><i class="fas fa-print"></i> 인쇄</button>
         </div>
         <div class="ec-filter-bar no-print">
           <div class="fld"><label>시작일</label><input type="date" id="ec-start-date"/></div>

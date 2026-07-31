@@ -636,6 +636,100 @@ function goBackToList() {
 }
 
 // ============================================================
+// 거래처 원장 인쇄 — 앱 전역 print CSS(#print-area 전용)와 충돌 방지
+// ============================================================
+function printLedger() {
+  const src = document.getElementById('ec-print-area');
+  if (!src) {
+    if (typeof toast === 'function') toast('인쇄할 원장을 찾을 수 없습니다.', 'error');
+    return;
+  }
+
+  const customer = (document.getElementById('ec-doc-customer-name')?.textContent || '거래처 원장').trim();
+  document.getElementById('ledger-print-frame')?.remove();
+  const iframe = document.createElement('iframe');
+  iframe.id = 'ledger-print-frame';
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '1px';
+  iframe.style.height = '1px';
+  iframe.style.border = '0';
+  iframe.style.opacity = '0';
+  iframe.style.pointerEvents = 'none';
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow.document;
+  doc.open();
+  doc.write(`<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(customer)} 관리대장</title>
+  <style>
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:#fff;color:#111;font-family:"Pretendard","Malgun Gothic","Apple SD Gothic Neo",Arial,sans-serif;font-size:12px;line-height:1.45}
+    @page{size:A4 portrait;margin:10mm}
+    .ledger-scope{width:100%}
+    .ec-print-area{background:#fff;width:100%;max-width:190mm;margin:0 auto;padding:0;border:none;border-radius:0}
+    .ec-doc-title{text-align:center;font-size:20px;font-weight:800;margin-bottom:6px;letter-spacing:-0.5px}
+    .ec-meta{display:flex;justify-content:space-between;align-items:flex-end;margin:12px 0 8px;font-size:11px}
+    .ec-meta-left{font-weight:700}
+    .ec-meta-right{color:#334155}
+    .ec-info-table{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:12px;border-top:1.5px solid #64748b;border-bottom:1.5px solid #64748b}
+    .ec-info-table th,.ec-info-table td{padding:6px 8px;border:1px solid #cbd5e1;text-align:left}
+    .ec-info-table th{background:#f8fafc;font-weight:800;color:#334155;width:96px}
+    .ec-ledger-title{background:#e0f2fe;text-align:center;font-weight:800;font-size:12px;padding:6px;border:1px solid #94a3b8;border-bottom:none}
+    .ec-ledger-wrap{overflow:visible}
+    .ec-ledger{width:100%;border-collapse:collapse;font-size:10.5px;table-layout:fixed}
+    .ec-ledger th,.ec-ledger td{border:1px solid #cbd5e1;padding:5px 6px;vertical-align:middle;word-break:break-word}
+    .ec-ledger thead{display:table-header-group}
+    .ec-ledger thead th{background:#f1f5f9;font-weight:800;text-align:center;color:#111}
+    .ec-ledger th:nth-child(1),.ec-ledger td:nth-child(1){width:23mm;white-space:normal}
+    .ec-ledger th:nth-child(3),.ec-ledger td:nth-child(3),
+    .ec-ledger th:nth-child(4),.ec-ledger td:nth-child(4),
+    .ec-ledger th:nth-child(5),.ec-ledger td:nth-child(5){width:26mm}
+    .num{text-align:right;font-variant-numeric:tabular-nums}
+    .date{white-space:normal}
+    .summary-cell{width:auto}
+    .ec-row-header td{background:#f8fafc;font-weight:800}
+    .ec-row-item td{background:#fef2f2;color:#334155}
+    .ec-row-payment td{background:#f0fdf4}
+    .ec-row-carry td{background:#fffbeb;font-weight:800}
+    .ec-row-month-sum td{background:#dbeafe;font-weight:800;text-align:center}
+    .ec-row-grand-sum td{background:#bfdbfe;font-weight:800;text-align:center}
+    .ec-print-footer{text-align:right;font-size:10px;color:#64748b;margin-top:8px}
+    button,.no-print,.btn-payment-delete{display:none!important}
+    *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  </style>
+</head>
+<body>
+  <div class="ledger-scope">${src.outerHTML}</div>
+</body>
+</html>`);
+  doc.close();
+
+  const cleanup = () => {
+    try { iframe.parentNode && iframe.parentNode.removeChild(iframe); } catch (_) {}
+  };
+  iframe.contentWindow.addEventListener('afterprint', () => {
+    // Chrome/인앱 브라우저는 미리보기 진입 시점에 afterprint가 먼저 뜨는 경우가 있어
+    // 즉시 지우면 프린트 미리보기가 빈 페이지가 된다. 충분히 늦게 청소한다.
+    setTimeout(cleanup, 120000);
+  });
+  setTimeout(() => {
+    try {
+      iframe.contentWindow.focus();
+      iframe.contentWindow.print();
+    } catch (e) {
+      cleanup();
+      if (typeof toast === 'function') toast('인쇄창을 열 수 없습니다: ' + (e && e.message || ''), 'error');
+    }
+  }, 250);
+}
+
+// ============================================================
 // 초기화 + 이벤트 바인딩
 // ============================================================
 window.addEventListener('DOMContentLoaded', () => {
