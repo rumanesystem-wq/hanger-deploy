@@ -233,12 +233,21 @@ async function _listInvoices(orderNum) {
  * @returns {Promise<{created:boolean, reason?:string}>}
  */
 async function _autoCreateForOrder(order) {
+  // [2026-07-31 H1] 같은 orderNum 재발급 중복 방지 (같은 브라우저 다중 탭·재시도 race)
+  if (typeof window !== 'undefined') {
+    window._invoiceAutoInflight = window._invoiceAutoInflight || {};
+    const _ordKey = order && order.orderNum;
+    if (_ordKey && window._invoiceAutoInflight[_ordKey]) {
+      return { created: false, reason: '이미 발급 진행 중' };
+    }
+    if (_ordKey) window._invoiceAutoInflight[_ordKey] = true;
+  }
   try {
     if (!order || !order.orderNum) {
       return { created: false, reason: 'orderNum 없음' };
     }
-    if (order.status !== '출고완료' && order.status !== '발주확정') {
-      return { created: false, reason: '출고확정 전 발주서' };
+    if (order.status !== '출고완료' && order.status !== '발주확정' && order.status !== '발주대기') {
+      return { created: false, reason: '임시저장/취소 발주서' };
     }
     // 관리자 또는 발주서 소유 발주자만 자동발급 가능
     const _isAdminUser = (typeof isAdmin === 'function') && isAdmin();
@@ -249,11 +258,22 @@ async function _autoCreateForOrder(order) {
         return { created: false, reason: '권한 없음' };
       }
     }
-    // 활성 invoice 이미 있으면 skip (cancelled는 무시 — 새로 발급)
+    // [2026-07-31] 활성 invoice 처리
+    //  - sentToCustomer=true(발주자에게 전송됨)면 절대 건드리지 않음
+    //  - 아직 미전송이면 취소(cancelled=true) 처리 후 신규 발급 (발주 수정·상태 승격 반영)
     const existing = await getInvoicesByOrderNum(order.orderNum);
     const active = (existing || []).filter(i => i && !i.cancelled);
     if (active.length > 0) {
-      return { created: false, reason: '이미 활성 invoice 있음' };
+      const anySent = active.some(i => i.sentToCustomer === true);
+      if (anySent) {
+        return { created: false, reason: '이미 전송된 명세서 있음' };
+      }
+      // 미전송 활성 명세서만 있음 → 취소하고 최신 데이터로 재발급
+      try {
+        await cancelInvoiceByOrderNum(order.orderNum);
+      } catch (e) {
+        console.warn('[Invoice] autoCreate 재발급용 취소 실패, 계속 진행:', e && e.message);
+      }
     }
     const draft = orderToInvoice(order);
     const zeroItems = findZeroPriceItems(draft);
@@ -271,17 +291,34 @@ async function _autoCreateForOrder(order) {
     // 발주자에게 보이는 전송 상태는 정산 화면의 [전송] 버튼을 눌렀을 때만 true.
     draft.sentToCustomer = false;
     draft.sentAt = null;
-    await saveInvoice(draft);
+    // [2026-07-31 H2] cancel 성공 후 save 실패 시 활성 명세서 공백 → 사용자에게 강조 알림
+    // handled 플래그로 상위 catch의 이중 toast 방지
+    try {
+      await saveInvoice(draft);
+    } catch (saveErr) {
+      console.error('[Invoice] saveInvoice 실패 — 활성 명세서 없을 수 있음:', saveErr && saveErr.message);
+      if (typeof toast === 'function') {
+        toast('⚠ 명세서 저장 실패. 정산 화면에서 재발급하거나 관리자에게 문의하세요. ('+(saveErr&&saveErr.message||'')+')', 'error');
+      }
+      const wrapped = new Error(saveErr && saveErr.message || 'saveInvoice 실패');
+      wrapped.handled = true;
+      throw wrapped;
+    }
     if (typeof toast === 'function') {
       toast('거래명세서가 자동 발급되었습니다. (' + draft.orderNum + ')', 'success');
     }
     return { created: true };
   } catch (e) {
     console.error('[Invoice] autoCreateForOrder 실패:', e && e.message, e && e.stack);
-    if (typeof toast === 'function') {
+    if (typeof toast === 'function' && !(e && e.handled)) {
       toast('거래명세서 자동 발급 실패: ' + (e && e.message), 'error');
     }
     return { created: false, reason: e && e.message };
+  } finally {
+    // in-flight 해제 (방어적 optional 체이닝)
+    const _wm = (typeof window !== 'undefined') ? (window && window._invoiceAutoInflight) : null;
+    const _on = order && order.orderNum;
+    if (_wm && _on) { delete _wm[_on]; }
   }
 }
 
@@ -293,10 +330,34 @@ async function _autoCreateForOrder(order) {
  */
 async function _cancelByOrderNum(orderNum) {
   try {
-    // C2 보강 (Codex): 관리자 외 호출 차단
-    if (typeof isAdmin !== 'function' || !isAdmin()) {
-      console.warn('[Invoice] cancelByOrderNum: 권한 없음 — 차단');
-      return { cancelled: 0, reason: '권한 없음' };
+    // [2026-07-31] 관리자 또는 발주서 소유 발주자만 통과 (H2)
+    // 소유자 확인은 서버 최신값 강제 — 로컬 폴백 stale로 인한 오통과·오차단 방지 (팀 검토 M1)
+    const _isAdminUser = (typeof isAdmin === 'function') && isAdmin();
+    if (!_isAdminUser) {
+      const _curId = (typeof currentUser !== 'undefined' && currentUser && currentUser.id) || '';
+      if (!_curId) {
+        console.warn('[Invoice] cancelByOrderNum: 로그인 정보 없음 — 차단');
+        return { cancelled: 0, reason: '권한 없음' };
+      }
+      let _serverOrders = null;
+      if (typeof window !== 'undefined' && window._FS && typeof window._FS.get === 'function') {
+        try {
+          _serverOrders = await Promise.race([
+            window._FS.get('orders', { fromServer: true }),
+            new Promise((_, rj) => setTimeout(() => rj(new Error('TIMEOUT')), 8000))
+          ]);
+        } catch (e) {
+          console.warn('[Invoice] cancelByOrderNum: 서버 orders 조회 실패 — 차단', e && e.message);
+          return { cancelled: 0, reason: '서버 확인 실패' };
+        }
+      } else {
+        _serverOrders = (typeof DB !== 'undefined' && typeof DB.get === 'function') ? DB.get('orders', []) : [];
+      }
+      const _own = Array.isArray(_serverOrders) && _serverOrders.find(o => o && o.orderNum === orderNum && o.createdBy === _curId);
+      if (!_own) {
+        console.warn('[Invoice] cancelByOrderNum: 권한 없음 — 차단');
+        return { cancelled: 0, reason: '권한 없음' };
+      }
     }
     const count = await cancelInvoiceByOrderNum(orderNum);
     if (count > 0 && typeof toast === 'function') {

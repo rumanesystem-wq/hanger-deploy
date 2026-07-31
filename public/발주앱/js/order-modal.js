@@ -556,6 +556,9 @@ function confirmCloseOrderModal(){
   closeModal('order-modal');
   _resetOrderModalBtn();
   window._editOverride=null; // 수정 모달 취소 시 정리 (다음 신규 등록에 누수 방지)
+  if(typeof window._releaseActiveOrderEditLock==='function'){
+    window._releaseActiveOrderEditLock().catch(()=>{});
+  }
 }
 
 // 발주 모달 제목/버튼 초기화
@@ -1235,7 +1238,7 @@ async function submitOrder(saveMode='발주확정'){
     toast(((_e&&_e.message)||'발주 저장 실패. 다시 시도해주세요.'),'error');
     return;
   }
-  const shouldCreateInvoice=savedOrder&&(savedOrder.status==='발주확정'||savedOrder.status==='출고완료');
+  const shouldCreateInvoice=savedOrder&&(savedOrder.status==='발주대기'||savedOrder.status==='발주확정'||savedOrder.status==='출고완료');
   if(shouldCreateInvoice&&window.LumaneInvoice&&typeof window.LumaneInvoice.autoCreateForOrder==='function'){
     window.LumaneInvoice.autoCreateForOrder(savedOrder).catch(e=>console.warn('[주문 저장 후 명세서 자동생성 실패]',e&&e.message));
   }
