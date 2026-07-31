@@ -108,7 +108,7 @@ function calcCustomerStats(name, allOrders, allPayments, invoiceMap) {
   // 기존 데이터 호환: 예전 내부값 '발주확정'도 거래명세서가 있으면 출고확정 건으로 취급
   const orders = allOrders.filter(o =>
     o.deliveryTo === name
-    && (o.status === '출고완료' || o.status === '발주확정')
+    && (o.status === '출고완료' || o.status === '발주확정' || o.status === '발주대기')
     && invoiceMap && invoiceMap[o.orderNum]
   );
   const payments = allPayments.filter(p => p.customer === name);
@@ -135,7 +135,7 @@ function calcCustomerStats(name, allOrders, allPayments, invoiceMap) {
 function listCustomersSummary(allOrders, allPayments, invoiceMap) {
   // A.1: 거래명세서 있는 발주서가 있는 거래처만
   const invoicedOrders = (allOrders || []).filter(o =>
-    o && (o.status === '출고완료' || o.status === '발주확정')
+    o && (o.status === '출고완료' || o.status === '발주확정' || o.status === '발주대기')
     && invoiceMap && invoiceMap[o.orderNum]
   );
   const names = [...new Set(invoicedOrders.map(o => o.deliveryTo).filter(Boolean))];
