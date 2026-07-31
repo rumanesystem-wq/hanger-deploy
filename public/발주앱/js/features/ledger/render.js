@@ -380,8 +380,7 @@ function renderItemRow(item) {
  * 입금 행 (연두색)
  */
 function renderPaymentRow(ev, seq, balance) {
-  const canEditLedger = (typeof isAdmin === 'function') && isAdmin();
-  const delBtn = canEditLedger && ev.id
+  const delBtn = ev.id
     ? `<button class="btn-payment-delete" data-payment-id="${escapeHtml(ev.id)}" title="입금 삭제" style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;padding:2px 6px;margin-left:6px" onmouseover="this.style.background='#fef2f2'" onmouseout="this.style.background='none'"><i class="fas fa-times-circle"></i></button>`
     : '';
   return `<tr class="ec-row-payment">
@@ -542,10 +541,6 @@ async function applyDateRange() {
  * @returns {void}
  */
 function openPaymentModal() {
-  if (typeof isAdmin !== 'function' || !isAdmin()) {
-    if (typeof toast === 'function') toast('관리자만 입금을 등록할 수 있습니다.', 'error');
-    return;
-  }
   document.getElementById('payment-date').value = new Date().toISOString().slice(0, 10);
   document.getElementById('payment-amount').value = '';
   document.getElementById('payment-memo').value = '';
@@ -565,10 +560,6 @@ function closePaymentModal() {
  * @returns {Promise<void>}
  */
 async function handleSavePayment() {
-  if (typeof isAdmin !== 'function' || !isAdmin()) {
-    if (typeof toast === 'function') toast('관리자만 입금을 등록할 수 있습니다.', 'error');
-    return;
-  }
   if (!currentCustomer) return;
 
   /** @type {Omit<Payment, 'id'>} */
@@ -611,10 +602,6 @@ async function handleSavePayment() {
  * @returns {Promise<void>}
  */
 async function handleDeletePayment(id) {
-  if (typeof isAdmin !== 'function' || !isAdmin()) {
-    if (typeof toast === 'function') toast('관리자만 입금을 삭제할 수 있습니다.', 'error');
-    return;
-  }
   // [C] 삭제 사유 입력 (감사용)
   const reason = prompt(
     '입금 내역을 삭제합니다.\n\n삭제 사유를 입력하세요 (감사 기록됩니다):\n' +

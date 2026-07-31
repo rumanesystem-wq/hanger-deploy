@@ -133,36 +133,7 @@ async function fetchAllCompletedOrders() {
     ? DB.get('orders', [])
     : [];
   // 출고완료 + 발주확정(=UI '출고확정') 둘 다 매출 인식 (운영 워크플로우)
-  return allOrders.filter(o => o && _canViewLedgerOrder(o) && (o.status === '출고완료' || o.status === '발주확정'));
-}
-
-function _canViewLedgerOrder(o) {
-  if (typeof isAdmin === 'function' && isAdmin()) return true;
-  const user = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
-  if (!user) return false;
-  if (o.createdBy) return o.createdBy === user.id;
-  const deliveryName = String(user.deliveryName || user.name || '').trim();
-  const orderDelivery = String(o.deliveryTo || o.siteName || '').trim();
-  return !!deliveryName && orderDelivery === deliveryName;
-}
-
-function _visibleLedgerCustomers() {
-  if (typeof isAdmin === 'function' && isAdmin()) return null;
-  const user = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
-  const names = new Set();
-  if (user) {
-    if (user.deliveryName) names.add(String(user.deliveryName).trim());
-    if (user.name) names.add(String(user.name).trim());
-  }
-  const allOrders = (typeof DB !== 'undefined' && typeof DB.get === 'function')
-    ? DB.get('orders', [])
-    : [];
-  allOrders.filter(_canViewLedgerOrder).forEach(o => {
-    const name = String(o.deliveryTo || o.siteName || '').trim();
-    if (name) names.add(name);
-  });
-  names.delete('');
-  return names;
+  return allOrders.filter(o => o && (o.status === '출고완료' || o.status === '발주확정'));
 }
 
 /**
@@ -172,10 +143,7 @@ function _visibleLedgerCustomers() {
 async function fetchAllPayments() {
   if (typeof window === 'undefined' || !window._FS || typeof window._FS.collectionGet !== 'function') return [];
   const arr = await window._FS.collectionGet('hanger_payments');
-  if (!Array.isArray(arr)) return [];
-  const allowed = _visibleLedgerCustomers();
-  if (!allowed) return arr;
-  return arr.filter(p => p && allowed.has(String(p.customer || '').trim()));
+  return Array.isArray(arr) ? arr : [];
 }
 
 /**
@@ -202,9 +170,6 @@ async function _appendPaymentLog(log) {
  * @returns {Promise<Payment>}
  */
 async function createPayment(payment) {
-  if (typeof isAdmin !== 'function' || !isAdmin()) {
-    throw new Error('관리자만 입금을 등록할 수 있습니다.');
-  }
   const id = 'p' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
   const saved = {
     ...payment,
@@ -236,9 +201,6 @@ async function createPayment(payment) {
  * @returns {Promise<void>}
  */
 async function deletePayment(paymentId, reason) {
-  if (typeof isAdmin !== 'function' || !isAdmin()) {
-    throw new Error('관리자만 입금을 삭제할 수 있습니다.');
-  }
   if (typeof window === 'undefined' || !window._FS || typeof window._FS.collectionDelete !== 'function') return;
   // 삭제 전 스냅샷 (감사 로그용)
   let target = null;
@@ -272,15 +234,7 @@ async function fetchAllInvoices() {
   }
   try {
     const list = await window._FS.get('invoices');
-    if (!Array.isArray(list)) return [];
-    if (typeof isAdmin === 'function' && isAdmin()) return list;
-    const allOrders = (typeof DB !== 'undefined' && typeof DB.get === 'function')
-      ? DB.get('orders', [])
-      : [];
-    const allowedOrderNums = new Set(
-      allOrders.filter(_canViewLedgerOrder).map(o => o && o.orderNum).filter(Boolean)
-    );
-    return list.filter(inv => inv && !inv.cancelled && inv.sentToCustomer && allowedOrderNums.has(inv.orderNum));
+    return Array.isArray(list) ? list : [];
   } catch (e) {
     console.warn('[ledger] invoices fetch 실패:', e && e.message);
     return [];

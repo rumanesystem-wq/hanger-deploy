@@ -46,7 +46,6 @@ async function fetchCompletedOrders(filter) {
     ? window.normalizeDateStr(s) : s;
   return allOrders.filter(o => {
     if (!o) return false;
-    if (!_canViewSettlementOrder(o)) return false;
     // 출고완료 + 발주확정(=UI '출고확정') 둘 다 매출 인식 (운영 워크플로우)
     if (o.status !== '출고완료' && o.status !== '발주확정') return false;
     // [2026-07-03] 정산도 발주일 기준으로 통일 (원장과 일치)
@@ -61,16 +60,6 @@ async function fetchCompletedOrders(filter) {
   });
 }
 
-function _canViewSettlementOrder(o) {
-  if (typeof isAdmin === 'function' && isAdmin()) return true;
-  const user = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
-  if (!user) return false;
-  if (o.createdBy) return o.createdBy === user.id;
-  const deliveryName = String(user.deliveryName || user.name || '').trim();
-  const orderDelivery = String(o.deliveryTo || o.siteName || '').trim();
-  return !!deliveryName && orderDelivery === deliveryName;
-}
-
 /**
  * 발주서 단건 업데이트 (인라인 수정용)
  * (추후 firestore.collection('hanger_orders').doc(orderNum).update(patch) 로 교체)
@@ -80,9 +69,6 @@ function _canViewSettlementOrder(o) {
  * @returns {Promise<void>}
  */
 async function updateOrder(orderId, patch) {
-  if (typeof isAdmin !== 'function' || !isAdmin()) {
-    throw new Error('관리자만 정산 정보를 수정할 수 있습니다.');
-  }
   // Codex 3차 보강 (Low): 실제 DB 우선 — DB.get('orders')에서 찾아 patch 후 DB.set
   // DB.set이 stale 캐시 차단 + hanger_orders 단건 듀얼 라이트까지 처리
   if (typeof DB !== 'undefined' && typeof DB.get === 'function' && typeof DB.set === 'function') {
