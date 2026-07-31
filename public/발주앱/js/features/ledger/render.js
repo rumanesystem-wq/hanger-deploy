@@ -742,6 +742,10 @@ function printLedger() {
   }, 250);
 }
 
+// 예전 수동/E2E 점검에서 쓰던 이름 유지. 실제 동작은 원장 인쇄(printLedger)와 동일.
+window.saveLedgerPdf = printLedger;
+window.printLedger = printLedger;
+
 // ============================================================
 // 초기화 + 이벤트 바인딩
 // ============================================================

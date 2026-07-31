@@ -82,10 +82,12 @@ test.describe("오산 창고 추가 (재고 관리 전용, 발주 대상 아님)
     await page.waitForSelector('#inv-modal', { state: 'visible', timeout: 5000 });
     await page.waitForTimeout(500);
 
-    // 오산 선택 + 색상 + 수량
+    // 오산 선택 + 첫 색상 수량
     await page.locator('#inv-wh-osan').click();
-    await page.selectOption('#inv-color', { index: 1 });
-    await page.fill('#inv-qty', '7');
+    const firstInput = page.locator('.inv-bulk-qty').first();
+    const color = await firstInput.getAttribute('data-color');
+    expect(color, '색상별 일괄 조정 입력칸').toBeTruthy();
+    await firstInput.fill('7');
     await page.locator('#inv-submit-btn').click();
     await page.waitForTimeout(2500);
 
@@ -94,10 +96,10 @@ test.describe("오산 창고 추가 (재고 관리 전용, 발주 대상 아님)
     expect(modalHidden, '오산 조정 저장 성공').toBe(true);
 
     // DB에 stockOsan 반영 확인
-    const stockOsan = await page.evaluate((id) => {
+    const stockOsan = await page.evaluate(({ id, color }) => {
       const item = window.getItem ? window.getItem(Number(id)) : null;
-      return item ? (item.stockOsan || 0) : -1;
-    }, itemId);
+      return item ? window.getWarehouseStock(item, '오산', color) : -1;
+    }, { id: itemId, color });
     expect(stockOsan, '오산 재고 = 7').toBe(7);
   });
 

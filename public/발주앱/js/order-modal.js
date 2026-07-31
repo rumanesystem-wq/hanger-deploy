@@ -1028,18 +1028,31 @@ async function submitOrder(saveMode='발주확정'){
       deliveryTo=proxyAcc.deliveryName||proxyAcc.name||proxyAcc.id;
       if(_delivEl)_delivEl.value=deliveryTo;
     }
+    if(!deliveryTo&&window._editOverride&&window._editOverride.deliveryTo){
+      deliveryTo=window._editOverride.deliveryTo;
+      if(_delivEl)_delivEl.value=deliveryTo;
+    }
   } else {
     // [2026-06-29] fallback: deliveryName 없으면 name 사용 (신규 계정 안전망)
     const _forceDeliv=(currentUser&&(currentUser.deliveryName||currentUser.name))||'';
     if(_delivEl) _delivEl.value=_forceDeliv;
     deliveryTo=_forceDeliv;
   }
-  const address=document.getElementById('o-address').value.trim();
+  let address=document.getElementById('o-address').value.trim();
+  if(!address&&window._editOverride&&window._editOverride.address){
+    address=window._editOverride.address;
+    const addrEl=document.getElementById('o-address');
+    if(addrEl)addrEl.value=address;
+  }
   // 날짜 입력 최종 동기화 (키보드 입력 후 blur 없이 제출한 경우 대비)
   syncDateParts('o-date');
   syncDateParts('o-ship-date');
   const orderDate=document.getElementById('o-date').value;
-  const shipDate=document.getElementById('o-ship-date').value;
+  let shipDate=document.getElementById('o-ship-date').value;
+  if((!shipDate||!/^\d{4}-\d{2}-\d{2}$/.test(shipDate))&&window._editOverride&&window._editOverride.shipDate){
+    shipDate=window._editOverride.shipDate;
+    if(typeof setDateValue==='function')setDateValue('o-ship-date',shipDate);
+  }
   const note=document.getElementById('o-note').value.trim();
   const drawerMemo=document.getElementById('o-drawer-memo').value.trim();
   const etcMemo=document.getElementById('o-etc-memo').value.trim();
@@ -1074,7 +1087,9 @@ async function submitOrder(saveMode='발주확정'){
       _markRequired(document.getElementById('o-ship-date-y')||document.getElementById('o-ship-date'),'출고일을 입력해주세요.');
     }
     // 출고 창고 필수
-    const whCheck=document.getElementById('o-warehouse')?.value||'';
+    const whEl=document.getElementById('o-warehouse');
+    if(whEl&&!whEl.value&&window._editOverride&&window._editOverride.warehouse)whEl.value=window._editOverride.warehouse;
+    const whCheck=whEl?.value||'';
     if(!whCheck){
       _markRequired(document.getElementById('o-warehouse'),'출고 창고를 선택해주세요. (시흥 또는 평택)');
     }
@@ -1460,4 +1475,3 @@ function toggleLengthSplitInline(matName){
     if(chev){chev.classList.remove('fa-chevron-down');chev.classList.add('fa-chevron-up');}
   }
 }
-

@@ -7,6 +7,27 @@ if(!window._mem) window._mem={};
 // _IDB: 더 이상 사용 안 함 (기존 IndexedDB 데이터 삭제·마이그레이션 코드 미포함 — 영향 회피). 호출부 보존용 no-op.
 const _IDB={ save(){}, loadAll(){return Promise.resolve([]);} };
 
+function _cleanForFirestore(value){
+  if(value===undefined) return undefined;
+  if(value===null) return null;
+  if(Array.isArray(value)){
+    return value.map(v=>{
+      const cleaned=_cleanForFirestore(v);
+      return cleaned===undefined?null:cleaned;
+    });
+  }
+  if(value instanceof Date) return value;
+  if(typeof value==='object'){
+    const out={};
+    Object.keys(value).forEach(key=>{
+      const cleaned=_cleanForFirestore(value[key]);
+      if(cleaned!==undefined) out[key]=cleaned;
+    });
+    return out;
+  }
+  return value;
+}
+
 // ── DB: localStorage + sessionStorage + IndexedDB + Firestore 4중 보호 ──
 // 보호 키(orders 등 배열): get 시 빈 경우 백업에서 복원,
 //                          set 시 절대 줄어들지 않도록 병합 후 모든 저장소에 동기화
@@ -75,7 +96,8 @@ const DB={
           const serverArr=server;
           const merged=_mergeById(serverArr, v);
           const result=self._setInternal(k, merged,{skipRemote:true});
-          await window._FS.set(k, merged);
+          const remoteMerged=_cleanForFirestore(merged);
+          await window._FS.set(k, remoteMerged);
           // ── (Phase 1 듀얼 라이트 20260611) 변경된 발주서만 hanger_orders/{orderNum}에도 단건 저장 ──
           // 옛 경로(hanger_data/orders 배열) 성공 후에만 새 경로 시도. best-effort, 옛 경로 안전 우선.
           // 일일 비교 함수로 차집합 모니터링 후 단계 4에서 읽기 전환 예정.
@@ -91,7 +113,7 @@ const DB={
               });
               if(changed.length>0){
                 // 비동기 best-effort (실패해도 옛 경로 성공으로 결과 반환)
-                Promise.allSettled(changed.map(o=>window._FS.upsertOrder(o)))
+                Promise.allSettled(changed.map(o=>window._FS.upsertOrder(_cleanForFirestore(o))))
                   .then(results=>{
                     const failed=results.filter(r=>r.status==='rejected');
                     if(failed.length>0) console.warn('[듀얼 라이트] hanger_orders 부분 실패:', failed.length, '/', changed.length);
@@ -1815,6 +1837,75 @@ if(typeof window!=='undefined'){
   window._releaseServerSaveLock=_releaseServerSaveLock;
 }
 
+// [2026-07-31] Same-order edit lock.
+// Prevent admin/orderer from editing the same order at the same time on different PCs.
+async function _acquireServerEditLock(orderId, actorId){
+  let fs=null;
+  try{ fs=firebase.app('hanger').firestore(); }catch(_e){ try{ fs=firebase.firestore(); }catch(_e2){ fs=null; } }
+  if(!fs) return {ok:true,reason:'no-firestore'};
+  const ref=fs.collection('hanger_data').doc('edit_locks');
+  const STALE_MS=10*60*1000;
+  try{
+    await fs.runTransaction(async(tx)=>{
+      const snap=await tx.get(ref);
+      const map=(snap.exists&&snap.data()&&snap.data().value)?{...snap.data().value}:{};
+      const nowMs=(new Date()).getTime();
+      for(const k of Object.keys(map)){
+        const v=map[k];
+        if(!v||typeof v.at!=='number'||(nowMs-v.at)>=STALE_MS){ delete map[k]; }
+      }
+      const key=String(orderId);
+      const cur=map[key];
+      if(cur&&cur.by&&cur.by!==actorId&&typeof cur.at==='number'&&(nowMs-cur.at)<STALE_MS){
+        const e=new Error('EDIT_LOCKED_BY_OTHER');
+        e.holder=cur.by||'';
+        throw e;
+      }
+      map[key]={by:actorId||'',at:nowMs};
+      tx.set(ref,{value:map,updatedAt:new Date().toISOString()});
+    });
+    return {ok:true};
+  }catch(e){
+    if(e&&e.message==='EDIT_LOCKED_BY_OTHER'){
+      return {ok:false,reason:'locked',holder:e.holder||''};
+    }
+    return {ok:false,reason:'tx-error',err:(e&&e.message)||String(e)};
+  }
+}
+
+async function _releaseServerEditLock(orderId, actorId){
+  let fs=null;
+  try{ fs=firebase.app('hanger').firestore(); }catch(_e){ try{ fs=firebase.firestore(); }catch(_e2){ fs=null; } }
+  if(!fs) return;
+  const ref=fs.collection('hanger_data').doc('edit_locks');
+  try{
+    await fs.runTransaction(async(tx)=>{
+      const snap=await tx.get(ref);
+      if(!snap.exists) return;
+      const map={...(snap.data().value||{})};
+      const key=String(orderId);
+      const cur=map[key];
+      if(cur&&(!actorId||!cur.by||cur.by===actorId)){
+        delete map[key];
+        tx.set(ref,{value:map,updatedAt:new Date().toISOString()});
+      }
+    });
+  }catch(_e){ /* stale timeout will recover */ }
+}
+
+async function _releaseActiveOrderEditLock(){
+  const lock=(typeof window!=='undefined')?window._activeOrderEditLock:null;
+  if(!lock||!lock.orderId) return;
+  window._activeOrderEditLock=null;
+  await _releaseServerEditLock(lock.orderId,lock.actorId||'');
+}
+
+if(typeof window!=='undefined'){
+  window._acquireServerEditLock=_acquireServerEditLock;
+  window._releaseServerEditLock=_releaseServerEditLock;
+  window._releaseActiveOrderEditLock=_releaseActiveOrderEditLock;
+}
+
 // [2026-07-31] 더블클릭·병렬 저장 방지 (신규 발주가 두 번 차감되는 사고 차단)
 // 편집 경로는 _withOrderLock으로 이미 보호되지만, 신규 저장은 orderId가 없어 잠금 대상이 없다.
 // 함수 진입 즉시 in-flight 플래그를 세워, 첫 호출이 끝나기 전 두 번째 호출은 즉시 튕긴다.
@@ -1828,7 +1919,8 @@ async function saveOrder(payload, saveMode='발주확정'){
   try{
   // [2026-07-31 라운드4 SAVE-RACE] 재고 차감 모드면 PC간 서버 락 획득.
   // 임시저장은 재고 안 건드리므로 락 없음. baseline과 함께 이중 방어.
-  const _isDeductMode=(saveMode==='발주대기'||saveMode==='발주확정'||saveMode==='출고완료');
+  const _requestedSaveMode=(window._editOverride&&window._editOverride.status)||saveMode||'발주확정';
+  const _isDeductMode=(_requestedSaveMode==='발주대기'||_requestedSaveMode==='발주확정'||_requestedSaveMode==='출고완료');
   if(_isDeductMode&&typeof window._acquireServerSaveLock==='function'){
     const _actorSave=(typeof currentUser!=='undefined'&&currentUser)?currentUser.id:'';
     const _lockRes=await window._acquireServerSaveLock(_actorSave);
