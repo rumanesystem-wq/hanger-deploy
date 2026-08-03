@@ -251,7 +251,7 @@ async function changeOrderStatus(orderId, newStatus){
   // FM 흐름: 출고확정(출고완료) 시 거래명세서 자동 발급,
   // 취소/보관 시 기존 명세서는 취소 처리한다.
   if(newStatus==='출고완료'&&chgOrder&&window.LumaneInvoice&&typeof window.LumaneInvoice.autoCreateForOrder==='function'){
-    window.LumaneInvoice.autoCreateForOrder(chgOrder).catch(e=>console.warn('[Invoice 자동발급]',e&&e.message));
+    window.LumaneInvoice.autoCreateForOrder(chgOrder,{reason:'shipping-complete'}).catch(e=>console.warn('[Invoice 자동발급]',e&&e.message));
   }
   if((newStatus==='취소'||newStatus==='보관')&&chgOrder&&window.LumaneInvoice&&typeof window.LumaneInvoice.cancelByOrderNum==='function'){
     window.LumaneInvoice.cancelByOrderNum(chgOrder.orderNum).catch(e=>console.warn('[Invoice 취소]',e&&e.message));
@@ -296,8 +296,12 @@ async function cancelOrder(orderId, cancelReason){
   if(order.stockDeducted&&window._FS&&typeof window._FS.get==='function'){
     let serverOrders;
     try{
+      // [Phase 5] 옛 hanger_data/orders 얼어붙음 → 새 컬렉션 사용
+      const _fetcher = (typeof window._FS.getAllOrders==='function')
+        ? window._FS.getAllOrders({fromServer:true})
+        : window._FS.get('orders',{fromServer:true});
       serverOrders=await Promise.race([
-        window._FS.get('orders',{fromServer:true}),
+        _fetcher,
         new Promise((_,rj)=>setTimeout(()=>rj(new Error('TIMEOUT')),8000))
       ]);
     }catch(e){
@@ -797,7 +801,7 @@ async function toggleOrderLock(orderId){
     toast('발주가 확정되었습니다.','success');
     // 거래명세서 자동 발급 (best-effort, 실패해도 발주확정은 유지)
     if(window.LumaneInvoice && typeof window.LumaneInvoice.autoCreateForOrder==='function'){
-      window.LumaneInvoice.autoCreateForOrder(orders[idx]).catch(e=>console.warn('[Invoice 자동발급]',e&&e.message));
+      window.LumaneInvoice.autoCreateForOrder(orders[idx],{reason:'lock'}).catch(e=>console.warn('[Invoice 자동발급]',e&&e.message));
     }
   } else {
     // 확정 해제: status → 발주대기, 자물쇠 열림
@@ -813,9 +817,11 @@ async function toggleOrderLock(orderId){
       return;
     }
     toast('확정이 해제되었습니다.','warning');
-    // 거래명세서 자동 취소 (cancelled 플래그, 사용자 수기 편집값 보존)
-    if(window.LumaneInvoice && typeof window.LumaneInvoice.cancelByOrderNum==='function'){
-      window.LumaneInvoice.cancelByOrderNum(order.orderNum).catch(e=>console.warn('[Invoice 취소]',e&&e.message));
+    // [2026-08-03] 확정 해제 후에도 발주는 살아있음(발주대기) → 명세서 재발급.
+    // autoCreateForOrder 가 기존 명세서를 원자적으로 갱신하고 발주자 노출을 중단한다.
+    // 결과: 확정→해제 후에도 원장 유지 (기존엔 cancel 만 되어 원장에서 사라졌음)
+    if(window.LumaneInvoice && typeof window.LumaneInvoice.autoCreateForOrder==='function'){
+      window.LumaneInvoice.autoCreateForOrder(orders[idx],{reason:'unlock',forceUnsend:true}).catch(e=>console.warn('[Invoice 재발급]',e&&e.message));
     }
   }
   openOrderDetail(orderId);
@@ -917,15 +923,21 @@ function renderOrders(){
       window._invoicesFetchInflight=true;
       window._FS.get('invoices').then(a=>{
         window._invoicesFetchInflight=false;
-        if(Array.isArray(a)&&a.length>0&&typeof DB.set==='function'){
-          DB.set('invoices',a);
+        if(Array.isArray(a)&&a.length>0){
+          // 서버 조회값은 캐시만 채운다. DB.set()은 전체 invoices 문서를 다시 써서
+          // 조회와 저장 사이에 반영된 다른 관리자의 변경을 덮어쓸 수 있다.
+          window._mem=window._mem||{};
+          window._mem.invoices=a;
           if(typeof renderOrders==='function')renderOrders();
         }
       }).catch(()=>{window._invoicesFetchInflight=false;});
     }
     const _sentInvOrderNums=new Set();
+    // [2026-08-03 B8] 검토 대기 명세서 orderNum 추적 → 목록 뱃지로 표시
+    const _needsReviewOrderNums=new Set();
     _invList.forEach(i=>{
       if(i&&!i.cancelled&&i.sentToCustomer&&i.orderNum)_sentInvOrderNums.add(i.orderNum);
+      if(i&&!i.cancelled&&i.needsManualReview&&i.orderNum)_needsReviewOrderNums.add(i.orderNum);
     });
     rows=`<div class="table-wrap"><table><thead><tr><th>납품처</th><th>시공주소</th><th>발주번호</th><th>발주일</th><th>출고일</th><th class="td-center">상태</th><th class="td-center">등록일</th>${orderListSubTab==='cancelled'?'<th>취소 사유</th>':''}${(isAdmin()||orderListSubTab==='cancelled')?'<th class="td-center">관리</th>':''}</tr></thead><tbody>
     ${orders.map(o=>{
@@ -946,7 +958,10 @@ function renderOrders(){
       const _hasSentInv=_sentInvOrderNums.has(o.orderNum);
       const _statusOK=(o.status==='출고완료'||o.status==='발주확정'||o.status==='발주대기');
       const _canSeeInv=_statusOK && (isAdmin() || (currentUser&&o.createdBy===currentUser.id && _hasSentInv));
-      const invoiceBtn=_canSeeInv?`<button class="btn btn-outline btn-xs invoice-btn" data-order-id="${o.id}" style="border:1.5px solid #7c3aed;color:#7c3aed;font-weight:700;white-space:nowrap"><i class="fas fa-file-invoice"></i> 거래명세서</button>`:'';
+      // [2026-08-03 B8] 관리자에게 검토 대기 명세서 뱃지 표시
+      const _needsReview=isAdmin()&&_needsReviewOrderNums.has(o.orderNum);
+      const reviewBadge=_needsReview?'<span class="badge" style="margin-left:3px;background:#fef3c7;color:#92400e;border:1px solid #fde68a;font-size:10px;padding:2px 6px" title="수기 편집 명세서에 최신 발주 내용 반영 대기. 명세서 열어 확인·저장 필요"><i class="fas fa-exclamation-triangle"></i> 검토</span>':'';
+      const invoiceBtn=_canSeeInv?`<button class="btn btn-outline btn-xs invoice-btn" data-order-id="${o.id}" style="border:1.5px solid #7c3aed;color:#7c3aed;font-weight:700;white-space:nowrap"><i class="fas fa-file-invoice"></i> 거래명세서</button>${reviewBadge}`:'';
       // M1 fix: escapeHtml로 XSS 차단 (title 속성 + 텍스트 노드 양쪽)
       const _esc=(typeof escapeHtml==='function'?escapeHtml:(s=>String(s||'')));
       const cancelReasonCell=orderListSubTab==='cancelled'?`<td class="td-muted" style="font-size:12px;color:#dc2626;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(o.cancelReason||'')}">${_esc(o.cancelReason||'-')}</td>`:'';
@@ -1524,8 +1539,10 @@ function openOrderDetail(orderId){
       window._invoicesFetchInflight=true;
       window._FS.get('invoices').then(a=>{
         window._invoicesFetchInflight=false;
-        if(Array.isArray(a)&&a.length>0&&typeof DB.set==='function'){
-          DB.set('invoices',a);
+        if(Array.isArray(a)&&a.length>0){
+          // 조회 결과는 로컬 캐시에만 반영한다. 원격 재저장 금지.
+          window._mem=window._mem||{};
+          window._mem.invoices=a;
           // L3 보강 (Codex): 현재 상세 모달이 열려있고 같은 발주서면 버튼 재렌더
           try{
             const _modalOpen=document.getElementById('order-detail-modal');
@@ -1877,6 +1894,7 @@ async function submitEditOrder(orderId, saveMode){
   window._editOverride={
     id:orig.id,
     orderNum:orig.orderNum,
+    originalStatus:orig.status||'',
     status:targetStatus,
     createdBy:orig.createdBy||'',
     createdAt:orig.createdAt||new Date().toISOString(),

@@ -92,6 +92,12 @@ test.describe("정산 — 정렬 + 검색 회귀", () => {
   });
 
   test("R1: 탭 왕복 후 sort-toggle 상태와 실제 발주번호 순서가 일치한다", async ({ page }) => {
+    // seed-ledger-print-test가 같은 거래처의 2026-07 발주를 6건 만든다.
+    // 실행 시점의 현재 월과 무관하게 해당 월을 명시적으로 조회한다.
+    await page.locator('#date-input').fill('2026-07');
+    await page.evaluate(() => (window as any).loadData());
+    await page.waitForSelector('#tbody-ordererwise tr.row-main', { timeout: 10_000 });
+
     const toggle = page.locator("#sort-toggle");
 
     await toggle.click();
@@ -101,10 +107,13 @@ test.describe("정산 — 정렬 + 검색 회귀", () => {
     await page.waitForTimeout(300);
     await page.evaluate(() => (window as any).navigate("settlement"));
     await page.waitForSelector("#sort-toggle", { timeout: 10_000 });
+    await page.locator('#date-input').fill('2026-07');
+    await page.evaluate(() => (window as any).loadData());
+    await page.waitForSelector('#tbody-ordererwise tr.row-main', { timeout: 10_000 });
 
     const orderAttr = await page.locator("#sort-toggle").getAttribute("data-order");
     const nums = await openCustomerWithAtLeastTwoRows(page);
-    test.skip(nums.length < 2, "정산 시드 발주서 2건 이상 필요");
+    expect(nums.length, '같은 거래처의 정산 발주가 2건 이상이어야 함').toBeGreaterThanOrEqual(2);
 
     const first = nums[0];
     const last = nums[nums.length - 1];

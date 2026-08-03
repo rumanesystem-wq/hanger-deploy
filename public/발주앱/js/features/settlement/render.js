@@ -504,6 +504,11 @@ function startInlineEdit(orderId) {
     if (typeof toast === 'function') toast('관리자만 수정할 수 있습니다.', 'error');
     return;
   }
+  // 정산 화면의 직접 patch는 재고·수정로그·명세서 갱신을 우회하므로 사용하지 않는다.
+  // 발주 상세의 기존 편집 흐름으로 유도해 모든 저장 후처리를 한 곳에서 수행한다.
+  if (typeof toast === 'function') toast('발주 상세에서 수정해주세요. 수정 로그와 명세서가 함께 갱신됩니다.', 'info');
+  if (typeof openOrderDetail === 'function') openOrderDetail(orderId);
+  return;
   // L2 보강 (Codex): 실제 DB 우선 조회 (mock fallback은 보조)
   let order = null;
   if (typeof DB !== 'undefined' && typeof DB.get === 'function') {

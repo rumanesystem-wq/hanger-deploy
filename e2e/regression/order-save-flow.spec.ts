@@ -12,9 +12,12 @@ import { resetAndSeed } from "../helpers/emu-reset";
 test.setTimeout(90_000);
 
 async function loginAs(page: Page, tab: "orderer" | "admin", id: string, pw: string) {
-  await page.goto("/");
-  // 앱 로드 + 로그인 화면 안정화 대기 (에뮬레이터 초기 sync 여유)
-  await page.waitForSelector('#login-screen', { timeout: 15000 });
+  const loginScreen = page.locator('#login-screen.active');
+  if (!await loginScreen.isVisible().catch(() => false)) {
+    await page.goto("/");
+  }
+  // DOM 존재 여부가 아니라 실제 로그인 화면 노출까지 기다린다.
+  await page.waitForSelector('#login-screen.active', { state: 'visible', timeout: 15000 });
   await page.waitForTimeout(500);
   await page.locator(`#tab-${tab}`).click();
   await page.fill("#login-id", id);
@@ -26,25 +29,19 @@ async function loginAs(page: Page, tab: "orderer" | "admin", id: string, pw: str
 }
 
 async function logout(page: Page) {
-  const candidates = [
-    'button:has-text("로그아웃")',
-    'a:has-text("로그아웃")',
-    '[data-action="logout"]',
-  ];
-  for (const sel of candidates) {
-    const el = page.locator(sel).first();
-    if (await el.count() > 0 && await el.isVisible().catch(() => false)) {
-      await el.click().catch(() => {});
-      break;
-    }
-  }
-  await page.waitForSelector('#login-screen', { timeout: 10000 }).catch(async () => {
+  const didLogout = await page.evaluate(() => {
+    const fn = (window as any).doLogout;
+    if (typeof fn !== 'function') return false;
+    fn();
+    return true;
+  }).catch(() => false);
+  if (!didLogout) {
     await page.evaluate(() => {
       try { localStorage.clear(); sessionStorage.clear(); } catch (_) {}
     });
     await page.goto("/");
-    await page.waitForSelector('#login-screen', { timeout: 10000 });
-  });
+  }
+  await page.waitForSelector('#login-screen.active', { state: 'visible', timeout: 10000 });
 }
 
 // 최소 유효 발주서 하나 만들기 (발주자 로그인 후 호출 — 세션 유지 상태 가정 X, 내부에서 로그인)
@@ -179,6 +176,10 @@ test.describe("발주 저장 흐름 회귀 (유케이 07-08 사고 재발 방지
     // 5) 수정 버튼 클릭 → 편집 모드 진입
     await page.locator("#edit-order-btn").click();
     await page.waitForSelector("#order-modal", { state: "visible", timeout: 10000 });
+    await page.waitForFunction(() => {
+      const input = document.querySelector<HTMLInputElement>("#o-delivery-to");
+      return !!input?.value.trim();
+    });
 
     // 6) 최소 수정: 비고에 한 글자 추가 (원본 값 보존 + 수정 감지)
     const noteInput = page.locator("#o-note");
@@ -192,9 +193,10 @@ test.describe("발주 저장 흐름 회귀 (유케이 07-08 사고 재발 방지
     await saveBtn.click();
 
     // 8) 확인 다이얼로그 있으면 확정
-    const confirmBtn = page.locator("#order-confirm-modal button.btn-primary");
-    if (await confirmBtn.count() > 0) {
-      await confirmBtn.click().catch(() => {});
+    const confirmBtn = page.locator("#order-confirm-ok-btn");
+    await confirmBtn.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+    if (await confirmBtn.isVisible().catch(() => false)) {
+      await confirmBtn.click();
     }
 
     // 9) 저장 결과 대기

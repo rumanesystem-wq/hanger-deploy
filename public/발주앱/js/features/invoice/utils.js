@@ -73,10 +73,19 @@ function findZeroPriceItems(draft) {
 }
 
 function generateSerial(date, existingSerials) {
+  // [2026-08-03 B5] 시리얼 넘버링을 length+1 → max+1 로 변경.
+  // gaps(취소된 -3 등) 있으면 length+1 이 기존 값과 충돌하는 문제 방지.
   const prefix = (date || '').replace(/-/g, '/');
   const sameDay = (existingSerials || []).filter(s => s && s.startsWith(prefix));
-  const n = sameDay.length + 1;
-  return prefix + ' -' + n;
+  let maxN = 0;
+  sameDay.forEach(s => {
+    const m = String(s).match(/-\s*(\d+)\s*$/);
+    if (m) {
+      const n = parseInt(m[1], 10);
+      if (!isNaN(n) && n > maxN) maxN = n;
+    }
+  });
+  return prefix + ' -' + (maxN + 1);
 }
 
 /**

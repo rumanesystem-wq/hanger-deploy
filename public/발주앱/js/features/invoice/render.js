@@ -84,6 +84,10 @@ function buildInvoiceHTML(invoice) {
   const serialDisplay = invoice.serial
     ? (invoice.serial.includes('-') || invoice.serial.includes('/') ? invoice.serial : invoice.serial)
     : '';
+  const revisionDisplay = Math.max(1, Number(invoice.revision) || 1);
+  const manualReviewBanner = invoice.needsManualReview
+    ? '<div class="no-print" style="margin-bottom:10px;padding:9px 12px;border:1px solid #f59e0b;background:#fffbeb;color:#92400e;border-radius:6px;font-weight:700">수기 편집본과 최신 발주 내용이 다릅니다. 확인 후 다시 저장·전송해주세요.</div>'
+    : '';
 
   return `
 <style>
@@ -101,11 +105,12 @@ function buildInvoiceHTML(invoice) {
   .invoice-receipt-input:focus { background: #fff; box-shadow: inset 0 0 0 2px #2563eb; }
 </style>
 <div class="invoice-wrap classic" data-invoice-id="${escHtml(invoice.id || '')}" data-invoice-order-num="${escHtml(invoice.orderNum || '')}" data-invoice-serial="${escHtml(invoice.serial || '')}" data-invoice-ship-date="${escHtml(invoice.shipDate || '')}" data-invoice-delivery-to="${escHtml(invoice.deliveryTo || '')}" data-invoice-address="${escHtml(invoice.address || '')}">
+  ${manualReviewBanner}
 
   <!-- 상단: 좌(제목 + 받는자) | 우(공급자) -->
   <div class="ci-top">
     <div class="ci-top-left">
-      <div class="ci-title">거래명세서</div>
+    <div class="ci-title">거래명세서 <span style="font-size:12px;font-weight:700;color:#475569">Rev.${revisionDisplay}</span></div>
       <table class="ci-receiver-tbl">
         <tbody>
           <tr><td class="ci-receiver-name"><span contenteditable="true" data-field="recv-name" class="invoice-editable">${escHtml(invoice.deliveryTo || '')}</span> <span class="ci-gwiing">貴 中</span></td></tr>
@@ -306,6 +311,9 @@ function collectInvoiceFromDOM(baseInvoice) {
   });
   const totalSupply = items.reduce((s,i)=>s+(i.supply||0),0);
   const totalVat = items.reduce((s,i)=>s+(i.vat||0),0);
+  const deliveryTo = wrap.querySelector('[data-field="recv-name"]')?.textContent.trim() || '';
+  const address = wrap.querySelector('[data-field="recv-addr"]')?.textContent.trim() || '';
+  const receiverTel = wrap.querySelector('[data-field="recv-tel"]')?.textContent.trim() || '';
   const receiverName = wrap.querySelector('[data-field="receiver-name"]')?.textContent.trim() || '';
   const receiverStamp = wrap.querySelector('[data-field="receiver-stamp"]')?.textContent.trim() || '';
   return {
@@ -314,6 +322,9 @@ function collectInvoiceFromDOM(baseInvoice) {
     totalSupply,
     totalVat,
     totalAmount: totalSupply + totalVat,
+    deliveryTo,
+    address,
+    receiverTel,
     receiverName,
     receiverStamp
   };

@@ -1559,7 +1559,9 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
       let cancelResult: any = null;
       window._FS = {
         ...oldFS,
-        get: async (key: string) => key === "orders" ? serverOrders : oldFS.get(key),
+        get: async (key: string, opts?: any) => key === "orders" ? serverOrders : oldFS.get(key, opts),
+        // Phase 5: cancelOrder uses getAllOrders for orders lookup — mock both paths.
+        getAllOrders: async () => serverOrders,
       };
       try {
         cancelResult = await window.cancelOrder(saved.orderId, "중복 취소 방어");

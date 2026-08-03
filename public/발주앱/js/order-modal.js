@@ -986,6 +986,7 @@ function _restoreDraftToModal(order){
         window._editOverride={
           id:orig.id,
           orderNum:orig.orderNum,
+          originalStatus:orig.status||'',
           status:'발주대기',
           createdBy:orig.createdBy||'',
           createdAt:orig.createdAt||new Date().toISOString(),
@@ -1255,7 +1256,7 @@ async function submitOrder(saveMode='발주확정'){
   }
   const shouldCreateInvoice=savedOrder&&(savedOrder.status==='발주대기'||savedOrder.status==='발주확정'||savedOrder.status==='출고완료');
   if(shouldCreateInvoice&&window.LumaneInvoice&&typeof window.LumaneInvoice.autoCreateForOrder==='function'){
-    window.LumaneInvoice.autoCreateForOrder(savedOrder).catch(e=>console.warn('[주문 저장 후 명세서 자동생성 실패]',e&&e.message));
+    window.LumaneInvoice.autoCreateForOrder(savedOrder,{reason:'order-save'}).catch(e=>console.warn('[주문 저장 후 명세서 자동생성 실패]',e&&e.message));
   }
   closeModal('order-modal');
   toast(saveMode==='임시저장'?'발주서가 임시저장되었습니다.':saveMode==='발주대기'?'발주가 접수되었습니다. 관리자 확정을 기다립니다.':saveMode==='발주확정'?'발주서가 발주확정되었습니다.':(shortageCount>0?`출고확정 완료. 서랍장 부족 품목 ${shortageCount}개가 발주 필요 목록에 추가되었습니다.`:'발주서가 출고확정되었습니다.'),'success');

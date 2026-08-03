@@ -1937,7 +1937,13 @@ async function saveOrder(payload, saveMode='발주확정'){
   // 수정 모드: _editOverride로 원래 id/orderNum/status/등록자/등록일 유지
   // [2026-07-15 Critical 1] _editOverride 클리어를 저장 성공 후로 이동 — 실패 시 재시도가 편집 모드 유지되도록 (중복 발주서 생성 방지)
   const _eo=window._editOverride||null;
-  let _originalOrderForEdit=_eo?orders.find(o=>o&&o.id===_eo.id):null;
+  const _matchesEditOrder=o=>!!(o&&(
+    String(o.id)===String(_eo&&_eo.id) ||
+    (_eo&&_eo.orderNum&&o.orderNum===_eo.orderNum)
+  ));
+  let _originalOrderForEdit=_eo?orders.find(_matchesEditOrder):null;
+  // _eo.status는 이번 저장의 목표 상태다. 동시 수정 비교에는 편집 시작 당시 상태를 써야 한다.
+  const _editBaselineStatus=(_eo&&_eo.originalStatus)||(_originalOrderForEdit&&_originalOrderForEdit.status);
 
   // [2026-07-31] 대리발주 권한 우회 차단 (A6 강화)
   // id 뿐 아니라 name/email/flag 등 어떤 proxy 관련 필드라도 있으면 관리자 요구.
@@ -1984,8 +1990,12 @@ async function saveOrder(payload, saveMode='발주확정'){
     if(_eo){
       let serverOrders;
       try{
+        // [Phase 5] 옛 hanger_data/orders 는 얼어붙음 → 새 컬렉션에서 조회
+        const _fetcher = (typeof window._FS.getAllOrders==='function')
+          ? window._FS.getAllOrders({fromServer:true})
+          : window._FS.get('orders',{fromServer:true});
         serverOrders=await Promise.race([
-          window._FS.get('orders',{fromServer:true}),
+          _fetcher,
           new Promise((_,rj)=>setTimeout(()=>rj(new Error('TIMEOUT')),8000))
         ]);
       }catch(e){
@@ -1994,12 +2004,17 @@ async function saveOrder(payload, saveMode='발주확정'){
       if(!Array.isArray(serverOrders)){
         throw new Error('서버 발주 상태 확인 실패. 새로고침 후 다시 저장해주세요.');
       }
-      const serverOrder=serverOrders.find(o=>o&&o.id===_eo.id);
+      const serverOrder=serverOrders.find(_matchesEditOrder);
       if(!serverOrder){
         throw new Error('발주서를 찾을 수 없습니다. 이미 삭제되었을 수 있습니다. 새로고침 후 확인해주세요.');
       }
       if(serverOrder.status==='취소'||serverOrder.status==='cancelled'){
         throw new Error('이 발주서는 이미 취소되었습니다. 새로고침 후 확인해주세요.');
+      }
+      // [2026-08-03 B9] 두 관리자 편집 race — 로컬 편집 폼 status 와 서버 status 가 다르면 abort.
+      // 예: A가 편집 폼 열어놓은 사이 B가 확정 해제 → A 저장 시 A의 stale status 로 덮어쓰는 것 차단.
+      if(_editBaselineStatus && serverOrder.status && _editBaselineStatus!==serverOrder.status){
+        throw new Error('다른 관리자가 발주 상태를 변경했습니다 (현재: '+serverOrder.status+'). 새로고침 후 다시 시도해주세요.');
       }
       // stockDeducted 상태가 로컬(stale)과 서버가 다르면 이중 롤백 위험 → 서버 값으로 갱신
       _originalOrderForEdit=serverOrder;
@@ -2258,6 +2273,84 @@ async function saveOrder(payload, saveMode='발주확정'){
   // 성공 토스트가 실제 저장 확인 전에 뜨는 문제 해결
   await DB.set('orders',orders);
   DB.set('purchase_requests',prs);
+  // [2026-08-03] 편집 저장이면 발주 수정 이력 로그. 뭐 바뀌었는지 요약 텍스트로.
+  if(_originalOrderForEdit){
+    try{
+      const _diffs=[];
+      const _fmt=v=>v==null?'':String(v);
+      const _fields=[
+        ['deliveryTo','납품처'],['address','시공주소'],['orderDate','발주일'],
+        ['shipDate','출고일'],['warehouse','창고'],['note','비고'],['sharedColor','공통색상'],
+        ['upperCommonColor','상부색상'],['totalSupply','공급가액'],['totalVat','부가세'],
+        ['totalAmount','합계']
+      ];
+      _fields.forEach(([k,label])=>{
+        const b=_fmt(_originalOrderForEdit[k]), a=_fmt(orderDoc[k]);
+        if(b!==a) _diffs.push(`${label}: ${b||'-'} → ${a||'-'}`);
+      });
+      // 서랍/선반/상부/옷봉 항목 개수 비교
+      const _cntBefore=[
+        (_originalOrderForEdit.drawerItems||_originalOrderForEdit.items||[]).length,
+        (_originalOrderForEdit.shelfItems||[]).reduce((s,x)=>s+((x.entries||[]).length),0),
+        (_originalOrderForEdit.upperMaterials||[]).filter(x=>(x.qty||0)>0).length,
+        (_originalOrderForEdit.rodItems||[]).length
+      ];
+      const _cntAfter=[
+        (orderDoc.drawerItems||[]).length,
+        (orderDoc.shelfItems||[]).reduce((s,x)=>s+((x.entries||[]).length),0),
+        (orderDoc.upperMaterials||[]).filter(x=>(x.qty||0)>0).length,
+        (orderDoc.rodItems||[]).length
+      ];
+      const _labels=['서랍','선반','상부','옷봉'];
+      _labels.forEach((lb,i)=>{
+        if(_cntBefore[i]!==_cntAfter[i]) _diffs.push(`${lb} 항목: ${_cntBefore[i]}개 → ${_cntAfter[i]}개`);
+      });
+      // 개수·총액이 같아도 품목/색상/규격/수량이 바뀌면 감사 로그를 남긴다.
+      const _itemGroups=[
+        ['서랍',_originalOrderForEdit.drawerItems||_originalOrderForEdit.items||[],orderDoc.drawerItems||[]],
+        ['선반',_originalOrderForEdit.shelfItems||[],orderDoc.shelfItems||[]],
+        ['상부',_originalOrderForEdit.upperMaterials||[],orderDoc.upperMaterials||[]],
+        ['옷봉',_originalOrderForEdit.rodItems||[],orderDoc.rodItems||[]]
+      ];
+      _itemGroups.forEach(([label,beforeItems,afterItems],i)=>{
+        if(_cntBefore[i]===_cntAfter[i]&&JSON.stringify(beforeItems)!==JSON.stringify(afterItems)){
+          _diffs.push(`${label} 품목 구성 변경`);
+        }
+      });
+      if(_diffs.length>0){
+        if(!window._FS||typeof window._FS.collectionAdd!=='function'){
+          throw new Error('발주 수정 로그 저장 기능을 불러오지 못했습니다.');
+        }
+        const _logIds=await _serverGetLogIds(1);
+        const _auditSnapshot=o=>({
+          deliveryTo:o.deliveryTo||'',address:o.address||'',orderDate:o.orderDate||'',shipDate:o.shipDate||'',
+          warehouse:o.warehouse||'',note:o.note||'',sharedColor:o.sharedColor||'',upperCommonColor:o.upperCommonColor||'',
+          totalSupply:Number(o.totalSupply)||0,totalVat:Number(o.totalVat)||0,totalAmount:Number(o.totalAmount)||0,
+          drawerItems:o.drawerItems||o.items||[],shelfItems:o.shelfItems||[],upperMaterials:o.upperMaterials||[],rodItems:o.rodItems||[]
+        });
+        const _eventId='orderedit_'+String(_logIds[0]);
+        await window._FS.collectionAdd('hanger_order_edit_logs',_eventId,{
+          id:_eventId,
+          type:'발주수정',
+          orderId:orderId,
+          orderNum:orderDoc.orderNum||'',
+          memo:_diffs.join(' / '),
+          createdBy:currentUser?currentUser.id:'',
+          createdAt:(typeof firebase!=='undefined'&&firebase.firestore&&firebase.firestore.FieldValue)
+            ? firebase.firestore.FieldValue.serverTimestamp()
+            : new Date().toISOString(),
+          before:_auditSnapshot(_originalOrderForEdit),
+          after:_auditSnapshot(orderDoc)
+        });
+      }
+    }catch(logErr){
+      // [2026-08-03 B7] 로그 실패 silent → 사용자 알림. 발주는 저장 성공했지만 감사 이력만 실패.
+      console.warn('[발주수정 로그 실패]',logErr&&logErr.message);
+      if(typeof toast==='function'){
+        toast('⚠ 발주 수정은 저장됐지만 감사 이력 저장은 실패했습니다. 관리자에게 알려주세요. ('+((logErr&&logErr.message)||'')+')','warning');
+      }
+    }
+  }
   // [2026-07-15 Critical 1] 저장 성공 후에만 _editOverride 클리어 — 실패 시 편집 모드 유지
   if(_eo) window._editOverride=null;
   return{orderId,shortageCount,order:orderDoc};

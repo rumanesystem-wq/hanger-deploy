@@ -3083,8 +3083,18 @@ function attachWatchers(){
     window._FS.watchData('accounts',()=>{ if(currentView==='accounts') renderAccounts(); });
     window._FS.watchData('items',()=>{ if(currentView==='items') renderItems(); else if(currentView==='dashboard') renderDashboard(); else if(currentView==='purchase-requests') renderPurchaseRequests(); });
     window._FS.watchData('purchase_requests',()=>{ if(currentView==='purchase-requests') renderPurchaseRequests(); else if(currentView==='dashboard') renderDashboard(); });
+    window._FS.watchData('invoices',()=>{
+      if(currentView==='orders'&&typeof renderOrders==='function') renderOrders();
+      else if(currentView==='settlement'&&typeof loadData==='function') loadData();
+      else if(currentView==='ledger'&&typeof renderLedger==='function') renderLedger();
+    });
   }
 }
+window.addEventListener('hanger:invoices-changed',()=>{
+  if(currentView==='orders'&&typeof renderOrders==='function') renderOrders();
+  else if(currentView==='settlement'&&typeof loadData==='function') loadData();
+  else if(currentView==='ledger'&&typeof renderLedger==='function') renderLedger();
+});
 async function _bootSequence(){
   if(_booted) return;
   _booted=true;

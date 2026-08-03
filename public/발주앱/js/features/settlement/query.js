@@ -123,6 +123,7 @@ async function updateOrder(orderId, patch) {
   if (typeof isAdmin !== 'function' || !isAdmin()) {
     throw new Error('관리자만 정산 정보를 수정할 수 있습니다.');
   }
+  throw new Error('정산 화면 직접 수정은 중단되었습니다. 발주 상세에서 수정해주세요.');
   // Codex 3차 보강 (Low): 실제 DB 우선 — DB.get('orders')에서 찾아 patch 후 DB.set
   // DB.set이 stale 캐시 차단 + hanger_orders 단건 듀얼 라이트까지 처리
   if (typeof DB !== 'undefined' && typeof DB.get === 'function' && typeof DB.set === 'function') {

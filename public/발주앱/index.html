@@ -393,6 +393,53 @@
             return arr;
           } catch(e) { console.warn('[collectionGet 실패]', coll, e.message); return []; }
         },
+        // 발주 상태 확인과 명세서 배열 변경을 한 transaction으로 처리한다.
+        // mutator는 { order, invoices }를 받아 { invoices, result, revision? }을 반환한다.
+        async transactInvoices(orderNum, mutator) {
+          if (typeof mutator !== 'function') throw new Error('invoice mutator가 필요합니다.');
+          const invoiceRef = db.collection('hanger_data').doc('invoices');
+          const orderRef = orderNum ? db.collection('hanger_orders').doc(String(orderNum)) : null;
+          let committedInvoices = null;
+          let committedResult = null;
+          await db.runTransaction(async tx => {
+            // Firestore transaction은 모든 read를 write보다 먼저 수행해야 한다.
+            const orderSnap = orderRef ? await tx.get(orderRef) : null;
+            const invoiceSnap = await tx.get(invoiceRef);
+            const order = orderSnap && orderSnap.exists ? orderSnap.data() : null;
+            const invoices = invoiceSnap.exists && Array.isArray(invoiceSnap.data().value)
+              ? invoiceSnap.data().value
+              : [];
+            const outcome = await mutator({ order, invoices: invoices.map(i => i && typeof i === 'object' ? { ...i } : i) });
+            if (!outcome || !Array.isArray(outcome.invoices)) {
+              throw new Error('invoice transaction 결과가 올바르지 않습니다.');
+            }
+            const cleanInvoices = JSON.parse(JSON.stringify(outcome.invoices));
+            if (outcome.write !== false) {
+              tx.set(invoiceRef, {
+                value: cleanInvoices,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+              });
+            }
+            if (outcome.write !== false && outcome.revision) {
+              const revision = JSON.parse(JSON.stringify(outcome.revision));
+              if (!revision.id) throw new Error('invoice revision id가 필요합니다.');
+              const revisionRef = db.collection('hanger_invoice_revisions').doc(String(revision.id));
+              delete revision.id;
+              tx.set(revisionRef, {
+                ...revision,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+              });
+            }
+            committedInvoices = cleanInvoices;
+            committedResult = outcome.result;
+          });
+          if (!window._mem) window._mem = {};
+          window._mem.invoices = committedInvoices || [];
+          window.dispatchEvent(new CustomEvent('hanger:invoices-changed', {
+            detail: { invoices: window._mem.invoices }
+          }));
+          return committedResult;
+        },
         async collectionDelete(coll, docId) {
           try {
             await db.collection(coll).doc(docId).delete();
@@ -431,7 +478,7 @@
                 if(existing === localStr) return; // 내가 방금 저장한 것이면 무시
                 // 배열은 ID 기준 병합 (감소 차단), 그 외는 직접 대입
                 let next = val;
-                if(Array.isArray(val) && typeof window._mergeById === 'function'){
+                if(key !== 'invoices' && Array.isArray(val) && typeof window._mergeById === 'function'){
                   const localArr = (window._mem && Array.isArray(window._mem[key])) ? window._mem[key] : [];
                   if(localArr.length > 0) next = window._mergeById(localArr, val);
                 }
