@@ -10,6 +10,28 @@ function recalcOrderTotal(){
     const c=tr.querySelector('.row-supply-val');
     if(c)supply+=parseInt(c.dataset.rawSupply)||0;
   });
+  // [2026-08-03] 상부자재 "추가 색상" 서브행 금액 반영 (관리자 대리발주)
+  document.querySelectorAll('.upper-extra-color-row').forEach(exRow=>{
+    const qtyInp=exRow.querySelector('.upper-extra-qty');
+    const mat=exRow.dataset.mat;
+    const q=parseInt((qtyInp||{}).value)||0;
+    if(q<=0)return;
+    const mainRow=_findUpperMainRow(mat);
+    const mainInp=mainRow?mainRow.querySelector('.upper-qty'):null;
+    const unitPrice=mainInp?getOrderLinePrice(mainRow,getActivePriceForItem(mat)):null;
+    if(unitPrice!=null) supply+=unitPrice*q;
+  });
+  // [2026-08-03] 서랍/옵션 "추가 색상" 서브행 금액 반영 (관리자 대리발주)
+  document.querySelectorAll('.drawer-extra-color-row').forEach(exRow=>{
+    const qtyInp=exRow.querySelector('.drawer-extra-qty');
+    const itemId=exRow.dataset.itemId;
+    const itemName=exRow.dataset.itemName;
+    const q=parseInt((qtyInp||{}).value)||0;
+    if(q<=0)return;
+    const mainRow=document.querySelector(`tr[data-drawer-main="${itemId}"]`);
+    const unitPrice=mainRow?getOrderLinePrice(mainRow,getActivePriceForItem(itemName)):null;
+    if(unitPrice!=null) supply+=unitPrice*q;
+  });
   const rodAmtEl=document.getElementById('rod-supply-val');
   if(rodAmtEl)supply+=parseInt(rodAmtEl.dataset.rawSupply)||0;
   document.querySelectorAll('#shelf-rows tr[data-price-row]').forEach(tr=>{
@@ -147,18 +169,31 @@ function updateDrawerRowAmount(inp){
 function renderCornerRows(){
   const tbody=document.getElementById('corner-rows');
   if(!tbody)return;
+  const _isAdmU=(typeof isAdmin==='function')&&isAdmin();
+  const _colspan=_isAdmU?7:6;
   if(cornerEntries.length===0){
-    tbody.innerHTML='<tr><td colspan="6" style="text-align:center;color:var(--text-3);font-size:12px;padding:8px">추가된 항목 없음</td></tr>';
+    tbody.innerHTML=`<tr><td colspan="${_colspan}" style="text-align:center;color:var(--text-3);font-size:12px;padding:8px">추가된 항목 없음</td></tr>`;
     recalcOrderTotal();return;
   }
+  const COLOR_OPTS=['화이트','블랙','실버','샴페인골드'];
+  const _sharedC=(document.getElementById('shared-color-sel')||{}).value||'';
   tbody.innerHTML=cornerEntries.map((e,i)=>{
     const price=e.unitPriceOverride!==undefined?e.unitPriceOverride:getCornerShelfPrice(e.width,e.height);
     const f=getLineFinancial(price,e.qty);
+    let colorTd='';
+    if(_isAdmU){
+      const cc=e.color||'';
+      const commonLabel=_sharedC?`공통색(${_sharedC})`:'공통색 사용';
+      const opts=[`<option value="" ${cc===''?'selected':''}>${commonLabel}</option>`]
+        .concat(COLOR_OPTS.map(c=>`<option value="${c}" ${cc===c?'selected':''}>${c}</option>`))
+        .join('');
+      colorTd=`<td class="td-center"><select class="form-input corner-color-sel" data-idx="${i}" style="width:100%;max-width:140px;padding:3px 22px 3px 6px;font-size:12px">${opts}</select></td>`;
+    }
     return `<tr data-price-row="1">
       <td class="td-center" style="font-size:13px;font-weight:600">${e.width}</td>
       <td class="td-center" style="font-size:13px;font-weight:600">${e.height}</td>
       <td class="td-center" style="font-size:12px;color:var(--text-2)">${orderUnitPriceHtml(price,{kind:'corner',idx:i})}</td>
-      <td class="td-center" style="font-size:13px">${e.qty}개</td>
+      <td class="td-center" style="font-size:13px">${e.qty}개</td>${colorTd}
       <td class="td-center row-supply-val" data-raw-supply="${f.supplyAmount||0}">${supplyAmtHtml(f.supplyAmount)}</td>
       <td class="td-center">
         <button type="button" class="btn btn-ghost btn-xs corner-remove-btn" data-idx="${i}" style="color:var(--danger)">
@@ -167,6 +202,14 @@ function renderCornerRows(){
       </td>
     </tr>`;
   }).join('');
+  if(_isAdmU){
+    tbody.querySelectorAll('.corner-color-sel').forEach(sel=>{
+      sel.addEventListener('change',ev=>{
+        const idx=parseInt(ev.target.dataset.idx);
+        if(!isNaN(idx)&&cornerEntries[idx]) cornerEntries[idx].color=ev.target.value||'';
+      });
+    });
+  }
   bindOrderLinePriceInputs(tbody);
   recalcOrderTotal();
 }
@@ -177,8 +220,11 @@ function addCornerRow(){
   const w=document.getElementById('corner-width').value.trim();
   const h=document.getElementById('corner-height').value.trim();
   const q=parseInt(document.getElementById('corner-qty').value)||0;
-  const sc2=document.getElementById('shared-color-sel');
-  const c=sc2?sc2.value:'';
+  const _isAdmU=(typeof isAdmin==='function')&&isAdmin();
+  // 관리자면 corner-color-input(대리발주 개별색), 아니면 shared-color-sel(공통색)
+  const c=_isAdmU
+    ? ((document.getElementById('corner-color-input')||{}).value||'')
+    : ((document.getElementById('shared-color-sel')||{}).value||'');
   if(!w){toast('가로 규격을 입력해주세요.','error');return;}
   if(!/^\d+$/.test(w)||parseInt(w)<1){toast('가로 규격은 양의 정수만 입력 가능합니다.','error');return;}
   if(!h){toast('세로 규격을 입력해주세요.','error');return;}
@@ -188,6 +234,8 @@ function addCornerRow(){
   document.getElementById('corner-width').value='';
   document.getElementById('corner-height').value='';
   document.getElementById('corner-qty').value='';
+  const cci=document.getElementById('corner-color-input');
+  if(cci) cci.value='';
   renderCornerRows();
   const wEl=document.getElementById('corner-width');
   if(wEl){wEl.focus();wEl.select();}
@@ -195,24 +243,28 @@ function addCornerRow(){
 
 
 // ─ 옷봉 2400 필요 개수 계산 (절단 최적화) ─
-function calcRod2400(entries){
-  // 각 절단 규격을 개수만큼 펼침
-  const pieces=[];
-  entries.forEach(e=>{
-    for(let i=0;i<e.qty;i++)pieces.push(parseInt(e.size));
+function calcRod2400(entries, fallbackColor){
+  // 서로 다른 색상의 봉은 한 자재에서 절단할 수 없으므로 색상별 FFD 합계를 사용한다.
+  const groups={};
+  (entries||[]).forEach(e=>{
+    const size=parseInt(e&&e.size,10),qty=parseInt(e&&e.qty,10);
+    if(size<1||qty<1)return;
+    const color=String(e.color||fallbackColor||'').trim();
+    if(!groups[color])groups[color]=[];
+    for(let i=0;i<qty;i++)groups[color].push(size);
   });
-  if(pieces.length===0)return 0;
-  // 내림차순 정렬 후 bin-packing (First Fit Decreasing)
-  pieces.sort((a,b)=>b-a);
-  const bars=[];
-  pieces.forEach(p=>{
-    let placed=false;
-    for(let i=0;i<bars.length;i++){
-      if(bars[i]+p<=2400){bars[i]+=p;placed=true;break;}
-    }
-    if(!placed)bars.push(p);
-  });
-  return bars.length;
+  return Object.values(groups).reduce((total,pieces)=>{
+    pieces.sort((a,b)=>b-a);
+    const bars=[];
+    pieces.forEach(p=>{
+      let placed=false;
+      for(let i=0;i<bars.length;i++){
+        if(bars[i]+p<=2400){bars[i]+=p;placed=true;break;}
+      }
+      if(!placed)bars.push(p);
+    });
+    return total+bars.length;
+  },0);
 }
 
 
@@ -227,7 +279,7 @@ function updateRodResult(){
     recalcOrderTotal();return;
   }
   const totalLen=rodEntries.reduce((s,e)=>s+parseInt(e.size)*e.qty,0);
-  const required=calcRod2400(rodEntries);
+  const required=calcRod2400(rodEntries,(document.getElementById('upper-common-color')||{}).value||'');
   const rodPrice=rodUnitPriceOverride!==null&&rodUnitPriceOverride!==undefined?rodUnitPriceOverride:(getActivePriceForItem('옷봉 2400')||4500);
   const f=getLineFinancial(rodPrice,required);
   const priceHtml=isAdmin()?`<input type="number" id="rod-unit-price-input" class="form-input no-spinner" value="${rodPrice}" min="0" style="width:96px;text-align:right;padding:4px 7px;font-size:12px;font-weight:700"/>`:unitPriceHtml(rodPrice);
@@ -255,38 +307,71 @@ function updateRodResult(){
 
 
 // ─ 옷봉 행 렌더링 ─
+// [2026-08-03] 색상 컬럼 추가 (관리자 대리발주 전용). 발주자 화면엔 안 뜸.
 function renderRodRows(){
   const tbody=document.getElementById('rod-rows');
   if(!tbody)return;
+  const _isAdminUser=(typeof isAdmin==='function')&&isAdmin();
+  const _colspan=_isAdminUser?4:3;
   if(rodEntries.length===0){
-    tbody.innerHTML='<tr><td colspan="3" style="text-align:center;color:var(--text-3);font-size:12px;padding:8px">추가된 항목 없음</td></tr>';
+    tbody.innerHTML=`<tr><td colspan="${_colspan}" style="text-align:center;color:var(--text-3);font-size:12px;padding:8px">추가된 항목 없음</td></tr>`;
     updateRodResult();return;
   }
-  tbody.innerHTML=rodEntries.map((e,i)=>`
+  const ROD_COLOR_OPTS=['화이트','블랙','실버','샴페인골드'];
+  const _ucCommon=(document.getElementById('upper-common-color')||{}).value||'';
+  tbody.innerHTML=rodEntries.map((e,i)=>{
+    const curColor=e.color||'';
+    let colorTd='';
+    if(_isAdminUser){
+      const commonLabel=_ucCommon?`공통색(${_ucCommon})`:'공통색 사용';
+      const opts=[`<option value="" ${curColor===''?'selected':''}>${commonLabel}</option>`]
+        .concat(ROD_COLOR_OPTS.map(c=>`<option value="${c}" ${curColor===c?'selected':''}>${c}</option>`))
+        .join('');
+      colorTd=`
+      <td class="td-center">
+        <select class="form-input rod-color-sel" data-idx="${i}" style="width:100%;max-width:140px;padding:3px 22px 3px 6px;font-size:12px">${opts}</select>
+      </td>`;
+    }
+    return `
     <tr>
       <td class="td-center" style="font-size:13px;font-weight:600">${e.size}mm</td>
-      <td class="td-center" style="font-size:13px">${e.qty}개</td>
+      <td class="td-center" style="font-size:13px">${e.qty}개</td>${colorTd}
       <td class="td-center">
         <button type="button" class="btn btn-ghost btn-xs rod-remove-btn" data-idx="${i}" style="color:var(--danger)">
           <i class="fas fa-times"></i>
         </button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
+  if(_isAdminUser){
+    tbody.querySelectorAll('.rod-color-sel').forEach(sel=>{
+      sel.addEventListener('change', e=>{
+        const idx=parseInt(e.target.dataset.idx);
+        if(!isNaN(idx)&&rodEntries[idx]){
+          rodEntries[idx].color=e.target.value||'';
+        }
+      });
+    });
+  }
   updateRodResult();
 }
 
 
 // ─ 옷봉 행 추가 ─
+// [2026-08-03] 색상 입력 필드 (rod-color-input) 값도 함께 저장. 빈값이면 공통색 폴백.
 function addRodRow(){
   const sizeVal=document.getElementById('rod-size').value.trim();
   const qtyVal=parseInt(document.getElementById('rod-qty').value)||0;
+  const colorVal=(document.getElementById('rod-color-input')||{}).value||'';
   const s=parseInt(sizeVal);
   if(!sizeVal||isNaN(s)||s<1){toast('규격을 입력해주세요.','error');return;}
   if(s>2400){toast('규격은 2400mm 이하여야 합니다.','error');return;}
   if(qtyVal<1){toast('수량을 1 이상 입력해주세요.','error');return;}
-  rodEntries.push({size:String(s),qty:qtyVal});
+  rodEntries.push({size:String(s),qty:qtyVal,color:colorVal});
   document.getElementById('rod-size').value='';
   document.getElementById('rod-qty').value='';
+  const rodColorInp=document.getElementById('rod-color-input');
+  if(rodColorInp) rodColorInp.value='';
   renderRodRows();
   const rodSizeEl=document.getElementById('rod-size');
   if(rodSizeEl){rodSizeEl.focus();rodSizeEl.select();}
@@ -308,6 +393,8 @@ function stepperHtml(cls, dataAttrs, val=0){
 function renderUpperTable(){
   const tbody=document.getElementById('upper-material-body');
   if(!tbody)return;
+  const _isAdmU=(typeof isAdmin==='function')&&isAdmin();
+  const _colCount=_isAdmU?6:5;
   const dbItems=getItems();
   const isItemActive=name=>{
     const compat=compatUpperName(name);
@@ -315,6 +402,8 @@ function renderUpperTable(){
     return !db||db.isActive!==false;
   };
   const allItems=[...UPPER_FIXED,...UPPER_EA].filter(isItemActive);
+  const COLOR_OPTS=['화이트','블랙','실버','샴페인골드'];
+  const _ucCommon=(document.getElementById('upper-common-color')||{}).value||'';
   tbody.innerHTML=allItems.map((name,gi)=>{
     const isFixed=UPPER_FIXED.includes(name);
     const price=getActivePriceForItem(name);
@@ -330,26 +419,40 @@ function renderUpperTable(){
     }else{
       noteCell='<td></td>';
     }
-    let html='<tr data-price-row="1"'+((!isFixed&&gi===UPPER_FIXED.length)?' class="cat-divider-row"':'')+'>'+
+    // 관리자일 때 "+ 색 추가" 버튼 td (개별 색상 서브행 확장)
+    let colorTd='';
+    if(_isAdmU){
+      colorTd='<td class="td-center"><button type="button" class="btn upper-add-color-btn" data-mat="'+name+'" style="padding:3px 8px;font-size:11px;border:1px solid #3b82f6;background:#eff6ff;color:#1d4ed8;border-radius:4px;font-weight:600;white-space:nowrap"><i class="fas fa-plus"></i> 색 추가</button></td>';
+    }
+    let html='<tr data-price-row="1" data-upper-main="'+name+'"'+((!isFixed&&gi===UPPER_FIXED.length)?' class="cat-divider-row"':'')+'>'+
       '<td class="td-name" style="font-size:13px">'+name+' <span class="unit-badge">EA</span></td>'+
       '<td>'+priceHtml+'</td>'+
       '<td class="td-center">'+stepperHtml('upper-qty','data-mat="'+name+'"')+'</td>'+
+      colorTd+
       noteCell+
       '<td class="td-center row-supply-val" data-raw-supply="0">'+supplyAmtHtml(0)+'</td>'+
     '</tr>';
     // 포스트바: 인라인 확장 행 (펼침/접힘)
     if(isPostBar){
-      html+='<tr class="upper-split-expand" data-mat="'+name+'" style="display:none"><td colspan="5" style="background:#eff6ff;padding:12px 16px;border-top:1px solid #bfdbfe"><div class="split-form" data-mat="'+name+'"></div></td></tr>';
+      html+='<tr class="upper-split-expand" data-mat="'+name+'" style="display:none"><td colspan="'+_colCount+'" style="background:#eff6ff;padding:12px 16px;border-top:1px solid #bfdbfe"><div class="split-form" data-mat="'+name+'"></div></td></tr>';
     }
     return html;
   }).join('');
+  // [2026-08-03] "+ 색 추가" 버튼 리스너
+  if(_isAdmU){
+    tbody.querySelectorAll('.upper-add-color-btn').forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        _addUpperExtraColorRow(btn.dataset.mat);
+      });
+    });
+  }
   // EA 구분행 삽입 (첫 번째 UPPER_EA 행 앞에)
   const firstEAName=UPPER_EA.find(n=>allItems.includes(n));
   if(firstEAName){
     const firstEARow=tbody.querySelector(`.upper-qty[data-mat="${firstEAName}"]`)?.closest('tr');
     if(firstEARow){
       const divRow=document.createElement('tr');
-      divRow.innerHTML='<td colspan="5" style="background:#f8fafc;font-size:11px;font-weight:700;color:var(--text-3);padding:4px 8px">EA 수량형</td>';
+      divRow.innerHTML='<td colspan="'+_colCount+'" style="background:#f8fafc;font-size:11px;font-weight:700;color:var(--text-3);padding:4px 8px">EA 수량형</td>';
       firstEARow.before(divRow);
     }
   }
@@ -368,6 +471,124 @@ function renderUpperTable(){
   // 테이블 렌더 후 현재 선택된 색상으로 코드 체크 적용
   const ucCur=document.getElementById('upper-common-color');
   if(ucCur&&ucCur.value) checkUpperColorCodes(ucCur.value);
+}
+
+
+// [2026-08-03] 상부자재 다른 색 추가 서브행 (관리자 대리발주 전용)
+// main 행 아래 <tr class="upper-extra-color-row" data-mat="X"> 로 삽입.
+// 저장 시 각 서브행 = 별개 upperMaterials 엔트리로.
+function _findUpperMainRow(matName){
+  return Array.from(document.querySelectorAll('tr[data-upper-main]'))
+    .find(tr=>tr.dataset.upperMain===String(matName))||null;
+}
+
+function _findUpperControl(matName, selector){
+  const row=_findUpperMainRow(matName);
+  return row?row.querySelector(selector):null;
+}
+
+function _upperExtraRows(matName){
+  return Array.from(document.querySelectorAll('.upper-extra-color-row'))
+    .filter(tr=>tr.dataset.mat===String(matName));
+}
+
+function _addUpperExtraColorRow(matName, presetColor, presetQty){
+  const tbody=document.getElementById('upper-material-body');
+  if(!tbody) return;
+  const mainRow=_findUpperMainRow(matName);
+  if(!mainRow) return;
+  const COLOR_OPTS=['화이트','블랙','실버','샴페인골드'];
+  const ucCommon=(document.getElementById('upper-common-color')||{}).value||'';
+  const usedColors=new Set(_upperExtraRows(matName)
+    .map(tr=>(tr.querySelector('.upper-extra-color-sel')||{}).value).filter(Boolean));
+  let availOpts=COLOR_OPTS.filter(c=>c!==ucCommon&&(!usedColors.has(c)||c===presetColor));
+  if(presetColor&&!availOpts.includes(presetColor))availOpts=[presetColor,...availOpts];
+  const initColor=presetColor||availOpts[0]||'블랙';
+  const initQty=presetQty!=null?presetQty:1;
+  const _colCount=mainRow.children.length;
+  const opts=availOpts.map(c=>`<option value="${c}" ${c===initColor?'selected':''}>${c}</option>`).join('');
+  const extra=document.createElement('tr');
+  extra.className='upper-extra-color-row';
+  extra.dataset.mat=matName;
+  extra.innerHTML=`
+    <td colspan="2" style="text-align:right;color:#3730a3;background:#f9fafb;padding-right:8px;font-size:12px">└ 추가 색상:</td>
+    <td class="td-center" style="background:#f9fafb">${stepperHtml('upper-extra-qty no-spinner','data-mat="'+matName+'"',initQty)}</td>
+    <td class="td-center" style="background:#f9fafb"><select class="form-input upper-extra-color-sel" data-mat="${matName}" style="width:100%;max-width:130px;padding:3px 22px 3px 6px;font-size:12px">${opts}</select></td>
+    <td colspan="${Math.max(1,_colCount-4)}" style="background:#f9fafb"><button type="button" class="btn upper-extra-del-btn" style="padding:3px 8px;font-size:11px;border:1px solid #fca5a5;background:#fee2e2;color:#dc2626;border-radius:4px;font-weight:600;cursor:pointer">× 삭제</button></td>`;
+  // main row 및 이미 있는 extra 행들 아래에 삽입
+  let anchor=mainRow;
+  let sibling=anchor.nextElementSibling;
+  while(sibling && sibling.classList && (sibling.classList.contains('upper-extra-color-row')||sibling.classList.contains('upper-split-expand')) && sibling.dataset.mat===matName){
+    anchor=sibling;
+    sibling=anchor.nextElementSibling;
+  }
+  anchor.parentNode.insertBefore(extra, anchor.nextSibling);
+  if(!(typeof isAdmin==='function'&&isAdmin())){
+    extra.style.display='none';
+    extra.querySelectorAll('input,select,button').forEach(el=>{el.disabled=true;});
+  }
+  extra.querySelector('.upper-extra-del-btn').addEventListener('click',()=>{
+    extra.remove();
+    recalcOrderTotal();
+  });
+  extra.querySelector('.upper-extra-qty').addEventListener('input',()=>recalcOrderTotal());
+  extra.querySelector('.upper-extra-color-sel').addEventListener('change',()=>recalcOrderTotal());
+  if(typeof window._applyExtraRowLockForOrderer==='function') window._applyExtraRowLockForOrderer();
+  recalcOrderTotal();
+}
+
+
+// [2026-08-03] 서랍/옵션 추가 색상 서브행 (관리자 대리발주 전용)
+function _addDrawerExtraColorRow(itemId, itemName, presetColor, presetQty){
+  const drawerBody=document.getElementById('drawer-body');
+  if(!drawerBody) return;
+  const mainRow=drawerBody.querySelector(`tr[data-drawer-main="${itemId}"]`);
+  if(!mainRow) return;
+  const dbItem=(typeof getItems==='function'?getItems():[]).find(i=>String(i.id)===String(itemId));
+  const COLOR_OPTS=(dbItem&&Array.isArray(dbItem.colorOptions)&&dbItem.colorOptions.length)
+    ? dbItem.colorOptions.slice()
+    : ['화이트','블랙','실버','샴페인골드'];
+  const shC=(document.getElementById('shared-color-sel')||{}).value||'';
+  const ownColor=(mainRow.querySelector('.item-color-select')||{}).value||'';
+  const mainColor=ownColor||shC;
+  const usedColors=new Set(Array.from(drawerBody.querySelectorAll('.drawer-extra-color-row'))
+    .filter(tr=>tr.dataset.itemId===String(itemId))
+    .map(tr=>(tr.querySelector('.drawer-extra-color-sel')||{}).value).filter(Boolean));
+  let availOpts=COLOR_OPTS.filter(c=>c!==mainColor&&(!usedColors.has(c)||c===presetColor));
+  if(presetColor&&!availOpts.includes(presetColor))availOpts=[presetColor,...availOpts];
+  const initColor=presetColor||availOpts[0]||'블랙';
+  const initQty=presetQty!=null?presetQty:1;
+  const _colCount=mainRow.children.length;
+  const opts=availOpts.map(c=>`<option value="${c}" ${c===initColor?'selected':''}>${c}</option>`).join('');
+  const extra=document.createElement('tr');
+  extra.className='drawer-extra-color-row';
+  extra.dataset.itemId=itemId;
+  extra.dataset.itemName=itemName;
+  extra.innerHTML=`
+    <td colspan="2" style="text-align:right;color:#3730a3;background:#f9fafb;padding-right:8px;font-size:12px">└ 추가 색상:</td>
+    <td class="td-center" style="background:#f9fafb">${stepperHtml('drawer-extra-qty no-spinner','data-item-id="'+itemId+'"',initQty)}</td>
+    <td class="td-center" style="background:#f9fafb"><select class="form-input drawer-extra-color-sel" data-item-id="${itemId}" style="width:100%;max-width:130px;padding:3px 22px 3px 6px;font-size:12px">${opts}</select></td>
+    <td colspan="${Math.max(1,_colCount-4)}" style="background:#f9fafb"><button type="button" class="btn drawer-extra-del-btn" style="padding:3px 8px;font-size:11px;border:1px solid #fca5a5;background:#fee2e2;color:#dc2626;border-radius:4px;font-weight:600;cursor:pointer">× 삭제</button></td>`;
+  // 이미 있는 extra 아래에 삽입
+  let anchor=mainRow;
+  let sibling=anchor.nextElementSibling;
+  while(sibling && sibling.classList && sibling.classList.contains('drawer-extra-color-row') && sibling.dataset.itemId===String(itemId)){
+    anchor=sibling;
+    sibling=anchor.nextElementSibling;
+  }
+  anchor.parentNode.insertBefore(extra, anchor.nextSibling);
+  if(!(typeof isAdmin==='function'&&isAdmin())){
+    extra.style.display='none';
+    extra.querySelectorAll('input,select,button').forEach(el=>{el.disabled=true;});
+  }
+  extra.querySelector('.drawer-extra-del-btn').addEventListener('click',()=>{
+    extra.remove();
+    recalcOrderTotal();
+  });
+  extra.querySelector('.drawer-extra-qty').addEventListener('input',()=>recalcOrderTotal());
+  extra.querySelector('.drawer-extra-color-sel').addEventListener('change',()=>recalcOrderTotal());
+  if(typeof window._applyExtraRowLockForOrderer==='function') window._applyExtraRowLockForOrderer();
+  recalcOrderTotal();
 }
 
 
@@ -413,17 +634,30 @@ function _insertNoCdBadge(tr, text){
 function renderShelfRows(){
   const tbody=document.getElementById('shelf-rows');
   if(!tbody)return;
+  const _isAdmU=(typeof isAdmin==='function')&&isAdmin();
+  const _colspan=_isAdmU?6:5;
   if(shelfRowEntries.length===0){
-    tbody.innerHTML='<tr><td colspan="5" style="text-align:center;color:var(--text-3);font-size:12px;padding:8px">추가된 항목 없음</td></tr>';
+    tbody.innerHTML=`<tr><td colspan="${_colspan}" style="text-align:center;color:var(--text-3);font-size:12px;padding:8px">추가된 항목 없음</td></tr>`;
     recalcOrderTotal();return;
   }
+  const COLOR_OPTS=['화이트','블랙','실버','샴페인골드'];
+  const _sharedC=(document.getElementById('shared-color-sel')||{}).value||'';
   tbody.innerHTML=shelfRowEntries.map((e,i)=>{
     const price=e.unitPriceOverride!==undefined?e.unitPriceOverride:getShelfPrice(e.size);
     const f=getLineFinancial(price,e.qty);
+    let colorTd='';
+    if(_isAdmU){
+      const cc=e.color||'';
+      const commonLabel=_sharedC?`공통색(${_sharedC})`:'공통색 사용';
+      const opts=[`<option value="" ${cc===''?'selected':''}>${commonLabel}</option>`]
+        .concat(COLOR_OPTS.map(c=>`<option value="${c}" ${cc===c?'selected':''}>${c}</option>`))
+        .join('');
+      colorTd=`<td class="td-center"><select class="form-input shelf-color-sel" data-idx="${i}" style="width:100%;max-width:140px;padding:3px 22px 3px 6px;font-size:12px">${opts}</select></td>`;
+    }
     return `<tr data-price-row="1">
       <td class="td-center" style="font-size:13px;font-weight:600">${e.size}</td>
       <td class="td-center" style="font-size:12px;color:var(--text-2)">${orderUnitPriceHtml(price,{kind:'shelf',idx:i})}</td>
-      <td class="td-center" style="font-size:13px">${e.qty}개</td>
+      <td class="td-center" style="font-size:13px">${e.qty}개</td>${colorTd}
       <td class="td-center row-supply-val" data-raw-supply="${f.supplyAmount||0}">${supplyAmtHtml(f.supplyAmount)}</td>
       <td class="td-center">
         <button type="button" class="btn btn-ghost btn-xs shelf-row-remove-btn" data-idx="${i}" style="color:var(--danger)">
@@ -432,6 +666,14 @@ function renderShelfRows(){
       </td>
     </tr>`;
   }).join('');
+  if(_isAdmU){
+    tbody.querySelectorAll('.shelf-color-sel').forEach(sel=>{
+      sel.addEventListener('change',ev=>{
+        const idx=parseInt(ev.target.dataset.idx);
+        if(!isNaN(idx)&&shelfRowEntries[idx]) shelfRowEntries[idx].color=ev.target.value||'';
+      });
+    });
+  }
   bindOrderLinePriceInputs(tbody);
   recalcOrderTotal();
 }
@@ -441,14 +683,18 @@ function renderShelfRows(){
 function addShelfRow(){
   const s=document.getElementById('shelf-size').value.trim();
   const q=parseInt(document.getElementById('shelf-qty').value)||0;
-  const sc=document.getElementById('shared-color-sel');
-  const c=sc?sc.value:'';
+  const _isAdmU=(typeof isAdmin==='function')&&isAdmin();
+  const c=_isAdmU
+    ? ((document.getElementById('shelf-color-input')||{}).value||'')
+    : ((document.getElementById('shared-color-sel')||{}).value||'');
   if(!s){toast('규격을 입력해주세요.','error');return;}
   if(!/^\d+$/.test(s)||parseInt(s)<1){toast('규격은 양의 정수만 입력 가능합니다.','error');return;}
   if(q<1){toast('수량을 1 이상 입력해주세요.','error');return;}
   shelfRowEntries.push({size:s,qty:q,color:c});
   document.getElementById('shelf-size').value='';
   document.getElementById('shelf-qty').value='';
+  const sci=document.getElementById('shelf-color-input');
+  if(sci) sci.value='';
   renderShelfRows();
   const sizeEl=document.getElementById('shelf-size');
   if(sizeEl){sizeEl.focus();sizeEl.select();}
@@ -620,6 +866,42 @@ function _openOrderModalRender(initialData){
   cornerEntries=[];
   rodEntries=[];
   rodUnitPriceOverride=null;
+  // [2026-08-03] 옷봉 색상 UI 는 관리자(대리발주) 전용 — DOM 요소 표시/숨김 토글
+  const _isAdm=(typeof isAdmin==='function')&&isAdmin();
+  document.querySelectorAll('.per-row-color-only-admin').forEach(el=>{
+    el.style.display=_isAdm?'':'none';
+  });
+  // [2026-08-03 문제1 fix] 발주자 편집 시: 서브행은 표시하되 잠금 (삭제·수정 불가)
+  // 발주자에게 "관리자가 추가한 색상" 존재를 알리고 실수로 화이트 줄여 서브행만 남는 사고 방지
+  window._applyExtraRowLockForOrderer=function(){
+    const isOrdererView=!( (typeof isAdmin==='function')&&isAdmin() );
+    document.querySelectorAll('.upper-extra-color-row, .drawer-extra-color-row').forEach(row=>{
+      row.querySelectorAll('input,select,button').forEach(el=>{
+        if(isOrdererView){
+          if(el.classList.contains('upper-extra-del-btn') || el.classList.contains('drawer-extra-del-btn')){
+            el.style.display='none';
+          } else {
+            el.disabled=true;
+          }
+        }
+      });
+      if(isOrdererView){
+        const label=row.querySelector('td:first-child');
+        if(label && !label.querySelector('.orderer-locked-badge')){
+          const badge=document.createElement('span');
+          badge.className='orderer-locked-badge';
+          badge.textContent=' (관리자 추가)';
+          badge.style.cssText='font-size:10px;color:#6b7280;margin-left:4px';
+          label.appendChild(badge);
+        }
+      }
+    });
+  };
+  // [2026-08-03 fix] 색상 입력 select 값 리셋 (이전 세션 값 잔존 방지)
+  ['rod-color-input','shelf-color-input','corner-color-input'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el) el.value='';
+  });
   renderRodRows();
   // 옷봉 입력칸·결과 초기화
   const rodSizeEl=document.getElementById('rod-size');
@@ -638,13 +920,25 @@ function _openOrderModalRender(initialData){
     // 기존 리스너 교체 (중복 방지)
     const newUcEl=ucEl.cloneNode(true);
     ucEl.parentNode.replaceChild(newUcEl,ucEl);
-    newUcEl.addEventListener('change',e=>checkUpperColorCodes(e.target.value));
+    newUcEl.addEventListener('change',e=>{
+      checkUpperColorCodes(e.target.value);
+      // 상부 입력값은 DOM에만 있으므로 테이블 전체 재렌더 시 수량·분할·추가색이 사라진다.
+      if(typeof renderRodRows==='function') renderRodRows();
+      recalcOrderTotal();
+    });
   }
 
   // ── 공통 색상 select 채우기 ──
   const sharedSel=document.getElementById('shared-color-sel');
   if(sharedSel){
     sharedSel.innerHTML='<option value="">색상 선택</option>'+SHELF_COLORS.map(c=>`<option value="${c}">${c}</option>`).join('');
+    // [2026-08-03] 선반 공통색 라벨 갱신 위해 선반·코너 재렌더
+    const newSharedSel=sharedSel.cloneNode(true);
+    sharedSel.parentNode.replaceChild(newSharedSel,sharedSel);
+    newSharedSel.addEventListener('change',()=>{
+      if(typeof renderShelfRows==='function') renderShelfRows();
+      if(typeof renderCornerRows==='function') renderCornerRows();
+    });
   }
 
   // ── 구역 B: 선반(행 추가형) + 코너선반(행 추가형) ──
@@ -662,6 +956,7 @@ function _openOrderModalRender(initialData){
             <th class="td-center" style="width:90px">규격</th>
             <th class="td-center" style="width:70px">단가</th>
             <th class="td-center" style="width:55px">수량</th>
+            <th class="td-center per-row-color-only-admin" style="width:100px">색상</th>
             <th class="td-center" style="min-width:80px">공급가액</th>
             <th class="td-center" style="width:36px"></th>
           </tr></thead>
@@ -677,6 +972,13 @@ function _openOrderModalRender(initialData){
         <input type="number" id="shelf-qty" class="form-input" placeholder="수량" min="1"
           inputmode="numeric" pattern="[0-9]*" autocomplete="off"
           style="width:64px;padding:6px 8px;font-size:13px;text-align:center"/>
+        <select id="shelf-color-input" class="form-input per-row-color-only-admin" style="width:130px;padding:6px 24px 6px 8px;font-size:13px">
+          <option value="">공통색 사용</option>
+          <option value="화이트">화이트</option>
+          <option value="블랙">블랙</option>
+          <option value="실버">실버</option>
+          <option value="샴페인골드">샴페인골드</option>
+        </select>
         <button type="button" class="btn btn-primary btn-sm" onclick="addShelfRow()">
           <i class="fas fa-plus"></i> 추가
         </button>
@@ -697,6 +999,7 @@ function _openOrderModalRender(initialData){
             <th class="td-center" style="width:65px">세로(mm)</th>
             <th class="td-center" style="width:70px">단가</th>
             <th class="td-center" style="width:45px">수량</th>
+            <th class="td-center per-row-color-only-admin" style="width:100px">색상</th>
             <th class="td-center" style="min-width:80px">공급가액</th>
             <th class="td-center" style="width:36px"></th>
           </tr></thead>
@@ -717,6 +1020,13 @@ function _openOrderModalRender(initialData){
         <input type="number" id="corner-qty" class="form-input" placeholder="수량" min="1"
           inputmode="numeric" pattern="[0-9]*" autocomplete="off"
           style="width:64px;padding:6px 8px;font-size:13px;text-align:center"/>
+        <select id="corner-color-input" class="form-input per-row-color-only-admin" style="width:130px;padding:6px 24px 6px 8px;font-size:13px">
+          <option value="">공통색 사용</option>
+          <option value="화이트">화이트</option>
+          <option value="블랙">블랙</option>
+          <option value="실버">실버</option>
+          <option value="샴페인골드">샴페인골드</option>
+        </select>
         <button type="button" class="btn btn-primary btn-sm" onclick="addCornerRow()">
           <i class="fas fa-plus"></i> 추가
         </button>
@@ -788,17 +1098,28 @@ function _openOrderModalRender(initialData){
       ?`<td><span class="td-name" style="font-size:13px">${item.name}</span>
           <div style="margin-top:4px">${noteInput}</div></td>`
       :`<td><span class="td-name" style="font-size:13px">${item.name}</span></td>`;
-    const mainRow=`<tr data-price-row="1">
+    // [2026-08-03] 관리자 대리발주: 공통색 쓰는 서랍/옵션 품목에 [+ 색 추가] 버튼
+    const _isAdmDrawer=(typeof isAdmin==='function')&&isAdmin();
+    const addColorBtnCell=_isAdmDrawer
+      ?`<div style="margin-top:4px"><button type="button" class="btn drawer-add-color-btn" data-item-id="${item.id}" data-item-name="${item.name}" style="padding:2px 6px;font-size:10px;border:1px solid #3b82f6;background:#eff6ff;color:#1d4ed8;border-radius:4px;font-weight:600;cursor:pointer;white-space:nowrap"><i class="fas fa-plus"></i> 색 추가</button></div>`
+      :'';
+    const mainRow=`<tr data-price-row="1" data-drawer-main="${item.id}">
       ${nameCell}
       <td>${priceHtml}</td>
       <td class="td-center">${stepperHtml('drawer-qty',da+` id="oqty-${item.id}"`)}</td>
-      <td class="td-center">${colorCell}</td>
+      <td class="td-center">${colorCell}${addColorBtnCell}</td>
       ${curStockTd}
       ${shortageTd}
       <td class="td-center row-supply-val" data-raw-supply="0">${supplyAmtHtml(0)}</td>
     </tr>`;
     return mainRow;
   }).join('');
+  // [2026-08-03] "+ 색 추가" 버튼 이벤트 (서랍/옵션)
+  drawerBody.querySelectorAll('.drawer-add-color-btn').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      _addDrawerExtraColorRow(btn.dataset.itemId, btn.dataset.itemName);
+    });
+  });
 
   // 스텝퍼 이벤트 위임 (modal-body)
   const body=document.querySelector('#order-modal .modal-body');
@@ -858,11 +1179,12 @@ function _openOrderModalRender(initialData){
   });
 
   // shared-color-sel 변경 시 선반/코너선반 color 동기화 + 서랍장 재고 갱신 + 코드 체크
+  // [2026-08-03] 관리자 대리발주에서는 행마다 개별 색상이 있을 수 있음 → 명시 지정된 값은 보존.
+  //   기존 e.color==='' (공통색 사용) 인 항목만 갱신 대상. save 시 || sharedColorVal 폴백으로 처리되므로
+  //   e.color 재할당 없이 재렌더만 해도 충분.
   if(sharedSel){
     sharedSel.addEventListener('change',()=>{
       const newColor=sharedSel.value;
-      shelfRowEntries.forEach(e=>e.color=newColor);
-      cornerEntries.forEach(e=>e.color=newColor);
       renderShelfRows();renderCornerRows();
       // 창고+색상 기준으로 서랍장 재고 갱신
       const curWh=(document.getElementById('o-warehouse')||{}).value||'시흥';
@@ -917,24 +1239,44 @@ function _restoreDraftToModal(order){
     if(typeof checkUpperColorCodes==='function') checkUpperColorCodes(storedColor);
   }
   // 품목별 수량/비고 복원
+  // [2026-08-03] 상부자재는 같은 name 에 여러 색상 entry 있을 수 있음 (main + extras).
+  //   → name 별로 그룹화 후 첫 entry = main, 나머지 = extra 서브행 생성.
+  const _upperByName={};
   (order.upperMaterials||[]).forEach(r=>{
-    const rawName=r.name||'';
-    if(!rawName)return;
-    const qty=r.qty||(r.white||0)+(r.black||0)+(r.silver||0)+(r.champagne||0);
-    // 직접 매칭 우선 (저장명 = data-mat명), 실패 시 compat 폴백
-    let inp=document.querySelector(`.upper-qty[data-mat="${rawName}"]`);
-    if(!inp){const cn=compatUpperName(rawName);if(cn!==rawName)inp=document.querySelector(`.upper-qty[data-mat="${cn}"]`);}
-    if(inp){inp.value=qty||'';updateUpperRowAmount(inp);}
-    if(r.note){
-      let nEl=document.querySelector(`.upper-note[data-mat="${rawName}"]`);
-      if(!nEl){const cn=compatUpperName(rawName);if(cn!==rawName)nEl=document.querySelector(`.upper-note[data-mat="${cn}"]`);}
-      if(nEl)nEl.value=r.note;
+    if(!r||!r.name) return;
+    if(!_upperByName[r.name]) _upperByName[r.name]=[];
+    _upperByName[r.name].push(r);
+  });
+  // [2026-08-03 fix] 서브행은 데이터 보존 목적으로 항상 복원 (관리자 여부 무관).
+  // 관리자만 새 서브행 추가·편집 가능하지만, 이미 저장된 서브행은 발주자 편집 시에도 유지되어야 함.
+  const _isAdmForRestore=true;
+  const _ucVal=(document.getElementById('upper-common-color')||{}).value||'';
+  Object.entries(_upperByName).forEach(([rawName, entries])=>{
+    // 메인 entry: 공통색과 매칭되는 것 우선, 없으면 첫 번째
+    // [문제3 fix] _isMain 우선, 없으면 색상 매칭, 없으면 첫번째
+    let mainEntry=entries.find(e=>e._isMain===true);
+    if(!mainEntry) mainEntry=entries.find(e=>e.color===_ucVal);
+    if(!mainEntry) mainEntry=entries[0];
+    const mainQty=mainEntry.qty||(mainEntry.white||0)+(mainEntry.black||0)+(mainEntry.silver||0)+(mainEntry.champagne||0);
+    let inp=_findUpperControl(rawName,'.upper-qty');
+    if(!inp){const cn=compatUpperName(rawName);if(cn!==rawName)inp=_findUpperControl(cn,'.upper-qty');}
+    if(inp){inp.value=mainQty||'';updateUpperRowAmount(inp);}
+    if(mainEntry.note){
+      let nEl=_findUpperControl(rawName,'.upper-note');
+      if(!nEl){const cn=compatUpperName(rawName);if(cn!==rawName)nEl=_findUpperControl(cn,'.upper-note');}
+      if(nEl)nEl.value=mainEntry.note;
     }
-    // 길이 분할 복원 (포스트바)
-    if(r.lengthSplits&&Array.isArray(r.lengthSplits)&&r.lengthSplits.length>0){
+    if(mainEntry.lengthSplits&&Array.isArray(mainEntry.lengthSplits)&&mainEntry.lengthSplits.length>0){
       const matKey=inp?.dataset?.mat||rawName;
-      if(inp){inp.dataset.splits=JSON.stringify(r.lengthSplits);}
-      if(typeof setRowLengthSplits==='function')setRowLengthSplits(matKey,r.lengthSplits);
+      if(inp){inp.dataset.splits=JSON.stringify(mainEntry.lengthSplits);}
+      if(typeof setRowLengthSplits==='function')setRowLengthSplits(matKey,mainEntry.lengthSplits);
+    }
+    // 나머지 entry = 추가 색상 서브행 (관리자 대리발주 흐름에서만)
+    if(_isAdmForRestore){
+      entries.filter(e=>e!==mainEntry).forEach(e=>{
+        const eq=e.qty||(e.white||0)+(e.black||0)+(e.silver||0)+(e.champagne||0);
+        if(eq>0&&e.color) _addUpperExtraColorRow(rawName, e.color, eq);
+      });
     }
   });
 
@@ -962,7 +1304,7 @@ function _restoreDraftToModal(order){
 
   // 옷봉 복원
   if(order.rodItems&&order.rodItems.length>0){
-    order.rodItems.forEach(r=>rodEntries.push({size:r.size,qty:r.qty}));
+    order.rodItems.forEach(r=>rodEntries.push({size:r.size,qty:r.qty,color:r.color||''}));
     renderRodRows();
   }
 
@@ -1150,17 +1492,21 @@ async function submitOrder(saveMode='발주확정'){
   const ucColorEl=document.getElementById('upper-common-color');
   const upperCommonColor=ucColorEl?ucColorEl.value:'화이트';
   const upperMaterials=[];
+  const COLOR_KEY_MAP={'화이트':'white','블랙':'black','실버':'silver','샴페인골드':'champagne'};
   document.querySelectorAll('.upper-qty').forEach(inp=>{
     const mat=inp.dataset.mat, val=parseInt(inp.value)||0;
+    const isFixed=UPPER_FIXED.includes(mat);
+    const noteEl=isFixed?(inp.closest('tr')&&inp.closest('tr').querySelector('.upper-note')):null;
+    const note=noteEl?noteEl.value.trim():'';
+    const unitPrice=getOrderLinePrice(inp.closest('tr'),getActivePriceForItem(mat));
+    // 메인 행 (공통색 수량) — val>0 일 때만
     if(val>0){
-      const isFixed=UPPER_FIXED.includes(mat);
-      const noteEl=isFixed?document.querySelector('.upper-note[data-mat="'+mat+'"]'):null;
-      const note=noteEl?noteEl.value.trim():'';
-      const colorKey={'화이트':'white','블랙':'black','실버':'silver','샴페인골드':'champagne'}[upperCommonColor]||'white';
-      const unitPrice=getOrderLinePrice(inp.closest('tr'),getActivePriceForItem(mat));
+      const rowColor=upperCommonColor;
+      const colorKey=COLOR_KEY_MAP[rowColor]||'white';
       const supply=(unitPrice!==null)?unitPrice*val:null;
       const vatAmt=supply!==null?Math.round(supply*0.1):null;
-      const row={name:mat,color:upperCommonColor,qty:val,note,unitPrice,amount:supply,vatAmount:vatAmt,white:0,black:0,silver:0,champagne:0};
+      // [2026-08-03 문제3 fix] _isMain:true → 복원 시 확실한 메인 판단
+      const row={name:mat,color:rowColor,qty:val,note,unitPrice,amount:supply,vatAmount:vatAmt,_isMain:true,white:0,black:0,silver:0,champagne:0};
       row[colorKey]=val;
       // 길이 분할 (포스트바만)
       try{
@@ -1175,10 +1521,36 @@ async function submitOrder(saveMode='발주확정'){
       }catch{}
       upperMaterials.push(row);
     }
+    // [2026-08-03] 이 품목의 "추가 색상" 서브행 수집 (관리자 대리발주 전용)
+    // 같은 색 서브행 여러 개면 합쳐서 하나로 push (중복 방지)
+    {
+      const _byColorExtra={};
+      _upperExtraRows(mat).forEach(extraTr=>{
+        const eq=parseInt((extraTr.querySelector('.upper-extra-qty')||{}).value)||0;
+        const ec=(extraTr.querySelector('.upper-extra-color-sel')||{}).value||'';
+        if(eq>0 && ec) _byColorExtra[ec]=(_byColorExtra[ec]||0)+eq;
+      });
+      Object.entries(_byColorExtra).forEach(([ec, eq])=>{
+        const existingRow=upperMaterials.find(r=>r.name===mat&&r.color===ec);
+        if(existingRow){
+          existingRow.qty+=eq;
+          existingRow[COLOR_KEY_MAP[ec]||'white']=existingRow.qty;
+          existingRow.amount=unitPrice!==null?unitPrice*existingRow.qty:null;
+          existingRow.vatAmount=existingRow.amount!==null?Math.round(existingRow.amount*0.1):null;
+          return;
+        }
+        const eKey=COLOR_KEY_MAP[ec]||'white';
+        const eSupply=(unitPrice!==null)?unitPrice*eq:null;
+        const eVat=eSupply!==null?Math.round(eSupply*0.1):null;
+        const extraRow={name:mat,color:ec,qty:eq,note,unitPrice,amount:eSupply,vatAmount:eVat,white:0,black:0,silver:0,champagne:0};
+        extraRow[eKey]=eq;
+        upperMaterials.push(extraRow);
+      });
+    }
   });
 
   // 구역 A-2: 옷봉 수집
-  const rod2400Required=rodEntries.length>0?calcRod2400(rodEntries):0;
+  const rod2400Required=rodEntries.length>0?calcRod2400(rodEntries,upperCommonColor):0;
   const rodItems=rodEntries.length>0?[...rodEntries]:[];
   const rodTotalLen=rodEntries.reduce((s,e)=>s+parseInt(e.size)*e.qty,0);
   const rodUnitPrice=rodUnitPriceOverride!==null&&rodUnitPriceOverride!==undefined?rodUnitPriceOverride:(getActivePriceForItem('옷봉 2400')||4500);
@@ -1230,7 +1602,37 @@ async function submitOrder(saveMode='발주확정'){
       const unitPrice=basePrice!==null?basePrice:null;
       const supply=(unitPrice!==null)?unitPrice*qty:null;
       const vatAmt=supply!==null?Math.round(supply*0.1):null;
-      drawerItems.push({itemId,itemName:displayName,requiredQty:qty,color,handleOption:handleOpt,displayName,note:itemNote,unitPrice,amount:supply,vatAmount:vatAmt});
+      drawerItems.push({itemId,itemName:displayName,requiredQty:qty,color,handleOption:handleOpt,displayName,note:itemNote,unitPrice,amount:supply,vatAmount:vatAmt,_isMain:true});
+    }
+    // [2026-08-03] 이 서랍 품목의 "추가 색상" 서브행 수집 (관리자 대리발주 전용).
+    // 같은 색 서브행 여러 개면 합쳐서 하나로 push.
+    {
+      const iid=parseInt(inp.dataset.itemId);
+      const _byColorD={};
+      document.querySelectorAll(`.drawer-extra-color-row[data-item-id="${iid}"]`).forEach(extraTr=>{
+        const eq=parseInt((extraTr.querySelector('.drawer-extra-qty')||{}).value)||0;
+        const ec=(extraTr.querySelector('.drawer-extra-color-sel')||{}).value||'';
+        if(eq>0 && ec) _byColorD[ec]=(_byColorD[ec]||0)+eq;
+      });
+      Object.entries(_byColorD).forEach(([ec, eq])=>{
+        const dbItem=getItems().find(i=>i.id===iid);
+        const itemName=dbItem?dbItem.name:(inp.dataset.itemName||'');
+        const tr=inp.closest('tr');
+        const hSel=tr?tr.querySelector('.drawer-handle-select'):null;
+        const handleOpt=hSel?hSel.value:'basic';
+        const basePrice=getOrderLinePrice(tr,getActivePriceForItem(itemName));
+        const unitPrice=basePrice!==null?basePrice:null;
+        const supply=(unitPrice!==null)?unitPrice*eq:null;
+        const vatAmt=supply!==null?Math.round(supply*0.1):null;
+        const existingRow=drawerItems.find(r=>String(r.itemId)===String(iid)&&r.color===ec);
+        if(existingRow){
+          existingRow.requiredQty+=eq;
+          existingRow.amount=unitPrice!==null?unitPrice*existingRow.requiredQty:null;
+          existingRow.vatAmount=existingRow.amount!==null?Math.round(existingRow.amount*0.1):null;
+          return;
+        }
+        drawerItems.push({itemId:iid,itemName,requiredQty:eq,color:ec,handleOption:handleOpt,displayName:itemName,note:'',unitPrice,amount:supply,vatAmount:vatAmt});
+      });
     }
   });
 
@@ -1247,6 +1649,30 @@ async function submitOrder(saveMode='발주확정'){
   const sharedColorEl=document.getElementById('shared-color-sel');
   const sharedColor=sharedColorEl?sharedColorEl.value:'';
   const warehouse=document.getElementById('o-warehouse')?.value||'시흥';
+  // [2026-08-03 B3 fix] 서랍 복원 실패한 상태에서 저장하면 서랍 데이터 소실 → 저장 차단
+  if(window._drawerRestoreFailed===true){
+    toast('⚠ 서랍/옵션 복원이 실패한 상태입니다. 저장 취소됨. 새로고침 후 다시 시도해주세요.','error');
+    return;
+  }
+  // [2026-08-03 문제2 fix] 관리자: 공통색과 같은 서브행이 있으면 병합 경고 (임시저장 제외)
+  const _isAdmWarn=(typeof isAdmin==='function')&&isAdmin();
+  if(_isAdmWarn && saveMode!=='임시저장'){
+    const _ucWarn=(document.getElementById('upper-common-color')||{}).value||'';
+    const _shWarn=(document.getElementById('shared-color-sel')||{}).value||'';
+    let _mergeConflict=false, _conflictNames=[];
+    document.querySelectorAll('.upper-extra-color-row').forEach(row=>{
+      const c=(row.querySelector('.upper-extra-color-sel')||{}).value;
+      if(c && c===_ucWarn){ _mergeConflict=true; _conflictNames.push('상부('+row.dataset.mat+')'); }
+    });
+    document.querySelectorAll('.drawer-extra-color-row').forEach(row=>{
+      const c=(row.querySelector('.drawer-extra-color-sel')||{}).value;
+      if(c && c===_shWarn){ _mergeConflict=true; _conflictNames.push('서랍('+row.dataset.itemName+')'); }
+    });
+    if(_mergeConflict){
+      const proceed=confirm('⚠ 공통색과 같은 색상의 서브행이 있어 저장 시 합쳐집니다.\n\n대상: '+_conflictNames.join(', ')+'\n\n계속 저장할까요?');
+      if(!proceed) return;
+    }
+  }
   let orderId, shortageCount, savedOrder;
   try{
     ({orderId,shortageCount,order:savedOrder}=await saveOrder({deliveryTo,address,orderDate,shipDate,note,upperMaterials,upperCommonColor,rodItems,rod2400Required,rodTotalLen,rodUnitPrice,rodAmount,rodVat,shelfItems,drawerItems,drawerMemo,etcMemo,sharedColor,totalSupply,totalVat:totalVatAmt,totalAmount,warehouse,proxyOrdererId,proxyOrdererName,proxyCreatedByAdmin:isAdmin()},saveMode));
@@ -1306,18 +1732,18 @@ const POSTBAR_STD_LENGTH={
 };
 
 function getRowLengthSplits(matName){
-  const inp=document.querySelector(`.upper-qty[data-mat="${matName}"]`);
+  const inp=_findUpperControl(matName,'.upper-qty');
   if(!inp)return [];
   try{return JSON.parse(inp.dataset.splits||'[]');}catch{return [];}
 }
 
 function setRowLengthSplits(matName,splits){
-  const inp=document.querySelector(`.upper-qty[data-mat="${matName}"]`);
+  const inp=_findUpperControl(matName,'.upper-qty');
   if(!inp)return;
   inp.dataset.splits=JSON.stringify(splits||[]);
   // 셀 표시 갱신
   const btn=document.querySelector(`.upper-split-btn[data-mat="${matName}"]`);
-  const noteEl=document.querySelector(`.upper-note[data-mat="${matName}"]`);
+  const noteEl=_findUpperControl(matName,'.upper-note');
   const splitInfoEl=document.querySelector(`.upper-split-info[data-mat="${matName}"]`);
   const isPostBar=matName.startsWith('포스트바');
   if(splits&&splits.length>0){
@@ -1367,7 +1793,7 @@ function toggleLengthSplitInline(matName){
     return;
   }
   // 열기 — 폼 렌더
-  const qtyInp=document.querySelector(`.upper-qty[data-mat="${matName}"]`);
+  const qtyInp=_findUpperControl(matName,'.upper-qty');
   const totalQty=parseInt(qtyInp?.value)||0;
   if(totalQty<=0){toast('수량을 먼저 입력해주세요.','error');return;}
   const stdLen=POSTBAR_STD_LENGTH[matName]||0;
@@ -1398,7 +1824,7 @@ function toggleLengthSplitInline(matName){
       return `<div style="display:flex;gap:8px;align-items:center" data-row-i="${i}">
         <input type="number" class="form-input split-qty" value="${s.qty}" min="1" placeholder="수량" style="width:80px;padding:6px 8px;font-size:13px"/>
         <span style="font-size:13px;color:var(--text-2)">개 ·</span>
-        <input type="number" class="form-input split-len" value="${s.length}" min="1" placeholder="길이(mm)" style="width:100px;padding:6px 8px;font-size:13px"/>
+        <input type="number" class="form-input split-len" value="${s.length}" min="1" placeholder="길이(mm)" style="width:130px;padding:6px 24px 6px 8px;font-size:13px"/>
         <span style="font-size:13px;color:var(--text-2)">mm${isStd?' <span style="color:#15803d;font-weight:600">(정척)</span>':''}</span>
         ${splits.length>1?'<button type="button" class="btn btn-ghost btn-xs split-del-btn" style="color:#dc2626;margin-left:auto" title="삭제"><i class="fas fa-times"></i></button>':''}
       </div>`;

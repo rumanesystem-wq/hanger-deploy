@@ -440,6 +440,95 @@
           }));
           return committedResult;
         },
+        // 발주서와 재고를 한 transaction으로 저장한다. 둘 중 하나만 저장되는 상태를 허용하지 않는다.
+        async transactOrderInventory({order,items,expectedItems,purchaseRequests,stockLogs}) {
+          if(!order||!order.orderNum) throw new Error('order/orderNum 필수');
+          const itemsRef=db.collection('hanger_data').doc('items');
+          const prsRef=db.collection('hanger_data').doc('purchase_requests');
+          const logsRef=db.collection('hanger_data').doc('logs');
+          const orderRef=db.collection('hanger_orders').doc(String(order.orderNum));
+          const clean=v=>JSON.parse(JSON.stringify(v));
+          const nextItems=clean(items||[]);
+          const baseline=clean(expectedItems||[]);
+          const nextOrder=clean(order);
+          let committedPrs=[];
+          let committedLogs=[];
+          await db.runTransaction(async tx=>{
+            const itemsSnap=await tx.get(itemsRef);
+            const orderSnap=await tx.get(orderRef);
+            const prsSnap=await tx.get(prsRef);
+            const logsSnap=await tx.get(logsRef);
+            const currentItems=itemsSnap.exists&&Array.isArray(itemsSnap.data().value)?itemsSnap.data().value:[];
+            if(JSON.stringify(currentItems)!==JSON.stringify(baseline)){
+              throw new Error('저장 직전에 재고가 변경되었습니다. 새로고침 후 다시 시도해주세요.');
+            }
+            if(orderSnap.exists){
+              const currentOrder=orderSnap.data()||{};
+              const expectedUpdatedAt=order._expectedPreviousUpdatedAt;
+              if(expectedUpdatedAt!==undefined&&(currentOrder.updatedAt||'')!==(expectedUpdatedAt||'')){
+                throw new Error('저장 직전에 발주서가 변경되었습니다. 새로고침 후 다시 시도해주세요.');
+              }
+            }
+            const serverPrs=prsSnap.exists&&Array.isArray(prsSnap.data().value)?prsSnap.data().value:[];
+            const serverLogs=logsSnap.exists&&Array.isArray(logsSnap.data().value)?logsSnap.data().value:[];
+            const mergeAdded=(base,added)=>{
+              const result=base.map(x=>x&&typeof x==='object'?{...x}:x);
+              const ids=new Set(result.map(x=>x&&String(x.id)));
+              (added||[]).forEach(x=>{
+                const key=x&&String(x.id);
+                if(x&&!ids.has(key)){result.push(clean(x));ids.add(key);}
+              });
+              return result;
+            };
+            committedPrs=mergeAdded(serverPrs,purchaseRequests);
+            committedLogs=mergeAdded(serverLogs,stockLogs);
+            delete nextOrder._expectedPreviousUpdatedAt;
+            tx.set(itemsRef,{value:nextItems,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+            tx.set(prsRef,{value:committedPrs,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+            tx.set(logsRef,{value:committedLogs,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+            tx.set(orderRef,nextOrder);
+          });
+          if(!window._mem)window._mem={};
+          window._mem.items=nextItems;
+          const localOrders=Array.isArray(window._mem.orders)?window._mem.orders.slice():[];
+          const idx=localOrders.findIndex(o=>String(o.id)===String(nextOrder.id));
+          if(idx>=0)localOrders[idx]=nextOrder;else localOrders.push(nextOrder);
+          window._mem.orders=localOrders;
+          window._mem.purchase_requests=committedPrs;
+          window._mem.logs=committedLogs;
+          return nextOrder;
+        },
+        async transactInventory({items,expectedItems,stockLogs,purchaseRequests,expectedPurchaseRequests}) {
+          const itemsRef=db.collection('hanger_data').doc('items');
+          const logsRef=db.collection('hanger_data').doc('logs');
+          const prsRef=db.collection('hanger_data').doc('purchase_requests');
+          const clean=v=>JSON.parse(JSON.stringify(v));
+          const nextItems=clean(items||[]);
+          const baselineItems=clean(expectedItems||[]);
+          const nextPrs=clean(purchaseRequests||[]);
+          const baselinePrs=clean(expectedPurchaseRequests||[]);
+          let committedLogs=[];
+          await db.runTransaction(async tx=>{
+            const itemsSnap=await tx.get(itemsRef);
+            const logsSnap=await tx.get(logsRef);
+            const prsSnap=await tx.get(prsRef);
+            const currentItems=itemsSnap.exists&&Array.isArray(itemsSnap.data().value)?itemsSnap.data().value:[];
+            const currentPrs=prsSnap.exists&&Array.isArray(prsSnap.data().value)?prsSnap.data().value:[];
+            if(JSON.stringify(currentItems)!==JSON.stringify(baselineItems))throw new Error('처리 중 재고가 변경되었습니다. 다시 시도해주세요.');
+            if(JSON.stringify(currentPrs)!==JSON.stringify(baselinePrs))throw new Error('처리 중 발주 필요 목록이 변경되었습니다. 다시 시도해주세요.');
+            const serverLogs=logsSnap.exists&&Array.isArray(logsSnap.data().value)?logsSnap.data().value:[];
+            const ids=new Set(serverLogs.map(x=>x&&String(x.id)));
+            committedLogs=serverLogs.map(x=>x&&typeof x==='object'?{...x}:x);
+            (stockLogs||[]).forEach(x=>{const key=x&&String(x.id);if(x&&!ids.has(key)){committedLogs.push(clean(x));ids.add(key);}});
+            tx.set(itemsRef,{value:nextItems,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+            tx.set(logsRef,{value:committedLogs,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+            tx.set(prsRef,{value:nextPrs,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
+          });
+          if(!window._mem)window._mem={};
+          window._mem.items=nextItems;
+          window._mem.logs=committedLogs;
+          window._mem.purchase_requests=nextPrs;
+        },
         async collectionDelete(coll, docId) {
           try {
             await db.collection(coll).doc(docId).delete();
@@ -997,6 +1086,7 @@
               <th style="min-width:140px">품목</th>
               <th style="min-width:70px">단가</th>
               <th class="td-center" style="width:80px">수량</th>
+              <th class="td-center per-row-color-only-admin" style="width:100px">색상</th>
               <th style="min-width:80px">길이 / 비고</th>
               <th class="td-center" style="min-width:85px">공급가액</th>
               </tr></thead>
@@ -1016,10 +1106,11 @@
             <thead><tr>
               <th class="td-center" style="width:110px">절단 규격(mm)</th>
               <th class="td-center" style="width:70px">수량</th>
+              <th class="td-center per-row-color-only-admin" style="width:110px">색상</th>
               <th class="td-center" style="width:40px"></th>
             </tr></thead>
             <tbody id="rod-rows">
-              <tr><td colspan="3" style="text-align:center;color:var(--text-3);font-size:12px;padding:8px">추가된 항목 없음</td></tr>
+              <tr><td colspan="4" style="text-align:center;color:var(--text-3);font-size:12px;padding:8px">추가된 항목 없음</td></tr>
             </tbody>
           </table>
         </div>
@@ -1030,6 +1121,13 @@
           <input type="number" id="rod-qty" class="form-input" placeholder="수량" min="1"
             inputmode="numeric" pattern="[0-9]*" autocomplete="off"
             style="width:72px;padding:6px 8px;font-size:13px;text-align:center"/>
+          <select id="rod-color-input" class="form-input per-row-color-only-admin" style="width:130px;padding:6px 24px 6px 8px;font-size:13px">
+            <option value="">공통색 사용</option>
+            <option value="화이트">화이트</option>
+            <option value="블랙">블랙</option>
+            <option value="실버">실버</option>
+            <option value="샴페인골드">샴페인골드</option>
+          </select>
           <button type="button" class="btn btn-primary btn-sm" onclick="addRodRow()">
             <i class="fas fa-plus"></i> 추가
           </button>

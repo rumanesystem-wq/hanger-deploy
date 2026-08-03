@@ -361,11 +361,14 @@ function renderOrderHeaderRow(ev, seq, balance) {
  * 품목 상세 행 (들여쓰기, 분홍색)
  */
 function renderItemRow(item) {
-  if (!item || (!item.name && !item.color)) return ''; // 빈 데이터 skip (재고 이동 기록 등)
+  // 명세서 items 는 { name, spec, qty, unitPrice, ... } 구조 (spec = 색상).
+  // 발주 자체의 색상 필드(color)도 폴백으로.
+  const specStr = item && (item.spec || item.color) || '';
+  if (!item || (!item.name && !specStr)) return ''; // 빈 데이터 skip
   const name = item.name || '';
   const qty = Number(item.qty) || 0;
   const unitPrice = Number(item.unitPrice) || 0;
-  const colorPart = item.color ? ` [${escapeHtml(item.color)}]` : '';
+  const colorPart = specStr ? ` [${escapeHtml(specStr)}]` : '';
   const lineAmount = Math.round(qty * unitPrice * 1.1); // 부가세 포함
   return `<tr class="ec-row-item">
     <td></td>

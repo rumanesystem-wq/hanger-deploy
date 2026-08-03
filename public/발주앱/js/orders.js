@@ -26,6 +26,16 @@ function _isInventoryLineDeducted(oi, item, order){
   return !!(order&&order.stockDeducted&&_tracksInventoryLine(oi,item));
 }
 
+// 재고 부족 시 0에서 멈춰 실제 차감량이 요청량보다 작을 수 있다.
+// 취소·편집 반환은 요청량이 아니라 실제 차감량만 복구해야 한다.
+function _deductedQtyForLine(oi){
+  if(oi&&Number.isFinite(Number(oi.inventoryDeductedQty)))return Math.max(0,Number(oi.inventoryDeductedQty));
+  const requested=Math.max(0,Number(oi&&oi.requiredQty)||0);
+  if(oi&&Number.isFinite(Number(oi.shortageQty)))return Math.max(0,requested-Math.max(0,Number(oi.shortageQty)));
+  if(oi&&Number.isFinite(Number(oi.currentStockSnapshot)))return Math.min(requested,Math.max(0,Number(oi.currentStockSnapshot)));
+  return requested;
+}
+
 // [2026-07-24 Codex-3차 atomicity] 재고 mutation 전에 모든 아이템의 warehouse를 사전 검증.
 // 하나라도 실패면 즉시 throw → 어떤 items/logs/order 변경도 발생하지 않음.
 // 실제 재고 추적 주문 행만 검증한다.
@@ -175,11 +185,13 @@ async function changeOrderStatus(orderId, newStatus){
         dbItems[iIdx][whKey]=afterVal;
       }
       dbItems[iIdx].currentStock=(dbItems[iIdx].stockSiheung||0)+(dbItems[iIdx].stockPyeongtaek||0);
+      const deductedQty=Math.max(0,before-afterVal);
       const logs=DB.get('logs',[]);
-      logs.push({id:_logIds.shift(),itemId:oi.itemId,type:'발주차감',qty:-oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 확정`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:now});
+      logs.push({id:_logIds.shift(),itemId:oi.itemId,type:'발주차감',qty:-deductedQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 확정`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:now});
       DB.set('logs',logs);
       oi.inventoryTracked=true;
       oi.inventoryDeducted=true;
+      oi.inventoryDeductedQty=deductedQty;
     });
     await DB.set('items',dbItems);
     orders[idx].stockDeducted=_items.some(oi=>oi.inventoryDeducted===true);
@@ -206,22 +218,23 @@ async function changeOrderStatus(orderId, newStatus){
       const cwKey=getColorWhKey(wh);
       let oiColor=dbItems[iIdx].noColor?'':(oi.color||order.sharedColor||'');
       if(oiColor&&typeof normalizeStockColor==='function')oiColor=normalizeStockColor(oiColor);
+      const restoreQty=_deductedQtyForLine(oi);
       let before, afterVal;
       if(oiColor){
         if(!dbItems[iIdx][cwKey])dbItems[iIdx][cwKey]={};
         before=typeof getColorStock==='function'?getColorStock(dbItems[iIdx][cwKey],oiColor):(dbItems[iIdx][cwKey][oiColor]||0);
-        afterVal=before+oi.requiredQty;
+        afterVal=before+restoreQty;
         if(typeof setColorStock==='function')setColorStock(dbItems[iIdx][cwKey],oiColor,afterVal);
         else dbItems[iIdx][cwKey][oiColor]=afterVal;
         dbItems[iIdx][whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(dbItems[iIdx][cwKey]):Object.values(dbItems[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
       } else {
         before=dbItems[iIdx][whKey];
-        afterVal=before+oi.requiredQty;
+        afterVal=before+restoreQty;
         dbItems[iIdx][whKey]=afterVal;
       }
       dbItems[iIdx].currentStock=(dbItems[iIdx].stockSiheung||0)+(dbItems[iIdx].stockPyeongtaek||0);
       const logs=DB.get('logs',[]);
-      logs.push({id:_logIds.shift(),itemId:oi.itemId,type:'취소롤백',qty:oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} ${newStatus}`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:now});
+      logs.push({id:_logIds.shift(),itemId:oi.itemId,type:'취소롤백',qty:restoreQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} ${newStatus}`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:now});
       DB.set('logs',logs);
       oi.inventoryTracked=true;
       oi.inventoryDeducted=false;
@@ -366,22 +379,23 @@ async function cancelOrder(orderId, cancelReason){
         const cwKey=getColorWhKey(wh);
         let oiColor=items[iIdx].noColor?'':(oi.color||order.sharedColor||'');
         if(oiColor&&typeof normalizeStockColor==='function')oiColor=normalizeStockColor(oiColor);
+        const restoreQty=_deductedQtyForLine(oi);
         let before, afterVal;
         if(oiColor){
           if(!items[iIdx][cwKey])items[iIdx][cwKey]={};
           before=typeof getColorStock==='function'?getColorStock(items[iIdx][cwKey],oiColor):(items[iIdx][cwKey][oiColor]||0);
-          afterVal=before+oi.requiredQty;
+          afterVal=before+restoreQty;
           if(typeof setColorStock==='function')setColorStock(items[iIdx][cwKey],oiColor,afterVal);
           else items[iIdx][cwKey][oiColor]=afterVal;
           items[iIdx][whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(items[iIdx][cwKey]):Object.values(items[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
         } else {
           before=items[iIdx][whKey];
-          afterVal=before+oi.requiredQty;
+          afterVal=before+restoreQty;
           items[iIdx][whKey]=afterVal;
         }
         items[iIdx].currentStock=(items[iIdx].stockSiheung||0)+(items[iIdx].stockPyeongtaek||0);
         const logs3=DB.get('logs',[]);
-        logs3.push({id:_logIds.shift(),itemId:oi.itemId,type:'취소롤백',qty:oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 취소`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:rollbackNow});
+        logs3.push({id:_logIds.shift(),itemId:oi.itemId,type:'취소롤백',qty:restoreQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 취소`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:rollbackNow});
         DB.set('logs',logs3);
         oi.inventoryTracked=true;
         oi.inventoryDeducted=false;
@@ -470,17 +484,18 @@ async function uncancelOrder(orderId){
         const cwKey=getColorWhKey(wh);
         let oiColor=items[iIdx].noColor?'':(oi.color||order.sharedColor||'');
         if(oiColor&&typeof normalizeStockColor==='function')oiColor=normalizeStockColor(oiColor);
+        const redeductQty=_deductedQtyForLine(oi);
         let before, afterVal;
         if(oiColor){
           if(!items[iIdx][cwKey])items[iIdx][cwKey]={};
           before=typeof getColorStock==='function'?getColorStock(items[iIdx][cwKey],oiColor):(items[iIdx][cwKey][oiColor]||0);
-          afterVal=before-oi.requiredQty; // 마이너스 허용
+          afterVal=before-redeductQty;
           if(typeof setColorStock==='function')setColorStock(items[iIdx][cwKey],oiColor,afterVal);
           else items[iIdx][cwKey][oiColor]=afterVal;
           items[iIdx][whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(items[iIdx][cwKey]):Object.values(items[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
         } else {
           before=items[iIdx][whKey]||0;
-          afterVal=before-oi.requiredQty;
+          afterVal=before-redeductQty;
           items[iIdx][whKey]=afterVal;
         }
         items[iIdx].currentStock=(items[iIdx].stockSiheung||0)+(items[iIdx].stockPyeongtaek||0);
@@ -488,7 +503,7 @@ async function uncancelOrder(orderId){
           shortages.push({name:items[iIdx].name||('#'+oi.itemId),color:oiColor||'-',deficit:-afterVal});
         }
         const logs3=DB.get('logs',[]);
-        logs3.push({id:_logIds.shift(),itemId:oi.itemId,type:'취소되돌림',qty:oi.requiredQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 취소 되돌림`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:restoreNow});
+        logs3.push({id:_logIds.shift(),itemId:oi.itemId,type:'취소되돌림',qty:-redeductQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',memo:`발주 #${orderId} 취소 되돌림`,orderId,createdBy:currentUser?currentUser.id:'',createdAt:restoreNow});
         DB.set('logs',logs3);
         oi.inventoryTracked=true;
         oi.inventoryDeducted=true;
@@ -622,17 +637,31 @@ function openOrderConfirmModal(targetStatus){
 
   // 2) 부족 품목 집계 (경고 표시용)
   const shortageList=[];
+  const shortageDemand=new Map();
+  const addShortageDemand=(item,qty,color)=>{
+    if(!item||!isTrackStock(item)||qty<1)return;
+    const normalized=item.noColor?'':(color||'');
+    const key=String(item.id)+'|'+normalized;
+    const row=shortageDemand.get(key)||{item,qty:0,color:normalized};
+    row.qty+=qty;
+    shortageDemand.set(key,row);
+  };
   document.querySelectorAll('.drawer-qty').forEach(inp=>{
     const qty=parseInt(inp.value)||0;
-    if(qty<1)return;
-    const stock=parseInt(inp.dataset.stock)||0;
     const itemId=parseInt(inp.dataset.itemId);
     const dbItem=dbItemsForVal.find(i=>i.id===itemId);
-    const tracksStock=inp.dataset.tracksStock==='true'||isTrackStock(dbItem);
-    if(tracksStock){
-      const s=calcShortage(qty,stock);
-      if(s>0)shortageList.push({name:inp.dataset.itemName||'?',shortage:s});
-    }
+    const ownColor=document.querySelector(`.item-color-select[data-item-id="${itemId}"]`);
+    addShortageDemand(dbItem,qty,ownColor?ownColor.value:((document.getElementById('shared-color-sel')||{}).value||''));
+    document.querySelectorAll(`.drawer-extra-color-row[data-item-id="${itemId}"]`).forEach(tr=>{
+      const extraQty=parseInt((tr.querySelector('.drawer-extra-qty')||{}).value)||0;
+      const extraColor=(tr.querySelector('.drawer-extra-color-sel')||{}).value||'';
+      addShortageDemand(dbItem,extraQty,extraColor);
+    });
+  });
+  shortageDemand.forEach(({item,qty,color})=>{
+    const stock=getWarehouseStock(item,whVal,color);
+    const shortage=calcShortage(qty,stock);
+    if(shortage>0)shortageList.push({name:(item.name||'?')+(color?' ('+color+')':''),shortage});
   });
 
   // 3) 폼에서 임시 발주서 객체 빌드 (저장 X, 미리보기 전용)
@@ -669,7 +698,7 @@ function _buildPreviewOrderFromForm(){
     const mat=inp.dataset.mat, val=parseInt(inp.value)||0;
     if(val>0){
       const isFixed=(typeof UPPER_FIXED!=='undefined'&&UPPER_FIXED.includes)?UPPER_FIXED.includes(mat):false;
-      const noteEl=isFixed?document.querySelector('.upper-note[data-mat="'+mat+'"]'):null;
+      const noteEl=isFixed?(inp.closest('tr')&&inp.closest('tr').querySelector('.upper-note')):null;
       const note=noteEl?noteEl.value.trim():'';
       const colorKey={'화이트':'white','블랙':'black','실버':'silver','샴페인골드':'champagne'}[upperCommonColor]||'white';
       const unitPrice=(typeof getActivePriceForItem==='function')?getActivePriceForItem(mat):null;
@@ -689,10 +718,36 @@ function _buildPreviewOrderFromForm(){
       }catch{/* lengthSplits JSON 파싱 실패 시 분할 없이 그대로 진행 (의도된 동작) */}
       upperMaterials.push(row);
     }
+    // [2026-08-03 fix] 상부 추가 색상 서브행도 미리보기에 반영 (총액 일치)
+    const _previewUpperExtras=(typeof _upperExtraRows==='function')?_upperExtraRows(mat):[];
+    _previewUpperExtras.forEach(exTr=>{
+      const eq=parseInt((exTr.querySelector('.upper-extra-qty')||{}).value)||0;
+      const ec=(exTr.querySelector('.upper-extra-color-sel')||{}).value||'';
+      if(eq>0 && ec){
+        const eKey={'화이트':'white','블랙':'black','실버':'silver','샴페인골드':'champagne'}[ec]||'white';
+        const mainTr=inp.closest('tr');
+        const eUnit=(typeof getOrderLinePrice==='function')
+          ? getOrderLinePrice(mainTr,getActivePriceForItem(mat))
+          : ((typeof getActivePriceForItem==='function')?getActivePriceForItem(mat):null);
+        const eSupply=(eUnit!=null)?eUnit*eq:null;
+        const eVat=eSupply!==null?Math.round(eSupply*0.1):null;
+        const existingRow=upperMaterials.find(r=>r.name===mat&&r.color===ec);
+        if(existingRow){
+          existingRow.qty+=eq;
+          existingRow[eKey]=existingRow.qty;
+          existingRow.amount=eUnit!=null?eUnit*existingRow.qty:null;
+          existingRow.vatAmount=existingRow.amount!==null?Math.round(existingRow.amount*0.1):null;
+          return;
+        }
+        const eRow={name:mat,color:ec,qty:eq,note:'',unitPrice:eUnit,amount:eSupply,vatAmount:eVat,white:0,black:0,silver:0,champagne:0};
+        eRow[eKey]=eq;
+        upperMaterials.push(eRow);
+      }
+    });
   });
 
   // 옷봉
-  const rod2400Required=(typeof rodEntries!=='undefined'&&rodEntries.length>0)?calcRod2400(rodEntries):0;
+  const rod2400Required=(typeof rodEntries!=='undefined'&&rodEntries.length>0)?calcRod2400(rodEntries,upperCommonColor):0;
   const rodItems=(typeof rodEntries!=='undefined'&&rodEntries.length>0)?[...rodEntries]:[];
   const rodTotalLen=(typeof rodEntries!=='undefined')?rodEntries.reduce((s,e)=>s+parseInt(e.size)*e.qty,0):0;
 
@@ -738,6 +793,30 @@ function _buildPreviewOrderFromForm(){
       const vatAmt=supply!==null?Math.round(supply*0.1):null;
       drawerItems.push({itemId,itemName,requiredQty:qty,color,handleOption:handleOpt,displayName:itemName,note:itemNote,unitPrice,amount:supply,vatAmount:vatAmt});
     }
+    // [2026-08-03 fix] 서랍 추가 색상 서브행도 미리보기에 반영 (총액 일치)
+    const iidPrev=parseInt(inp.dataset.itemId);
+    document.querySelectorAll(`.drawer-extra-color-row[data-item-id="${iidPrev}"]`).forEach(exTr=>{
+      const eq=parseInt((exTr.querySelector('.drawer-extra-qty')||{}).value)||0;
+      const ec=(exTr.querySelector('.drawer-extra-color-sel')||{}).value||'';
+      if(eq>0 && ec){
+        const dbItemE=(typeof getItems==='function'?getItems():DB.get('items',[])).find(i=>i.id===iidPrev);
+        const eName=dbItemE?dbItemE.name:(inp.dataset.itemName||'');
+        const mainTr=inp.closest('tr');
+        const eBase=(typeof getOrderLinePrice==='function')
+          ? getOrderLinePrice(mainTr,getActivePriceForItem(eName))
+          : ((typeof getActivePriceForItem==='function')?getActivePriceForItem(eName):null);
+        const eSupply=(eBase!=null)?eBase*eq:null;
+        const eVat=eSupply!==null?Math.round(eSupply*0.1):null;
+        const existingRow=drawerItems.find(r=>String(r.itemId)===String(iidPrev)&&r.color===ec);
+        if(existingRow){
+          existingRow.requiredQty+=eq;
+          existingRow.amount=eBase!=null?eBase*existingRow.requiredQty:null;
+          existingRow.vatAmount=existingRow.amount!==null?Math.round(existingRow.amount*0.1):null;
+        }else{
+          drawerItems.push({itemId:iidPrev,itemName:eName,requiredQty:eq,color:ec,handleOption:'basic',displayName:eName,note:'',unitPrice:eBase,amount:eSupply,vatAmount:eVat});
+        }
+      }
+    });
   });
 
   const drawerMemo=(document.getElementById('o-drawer-memo')?.value||'').trim();
@@ -1304,17 +1383,23 @@ function openOrderDetail(orderId){
   // 옷봉
   let rodHtml='';
   if(order.rodItems&&order.rodItems.length>0){
-    const rows=order.rodItems.map(e=>`<tr>
+    // [2026-08-03] 색상 컬럼. r.color 없으면 상부 공통색(upperCommonColor) 폴백
+    const _fallbackColor=order.upperCommonColor||'';
+    const rows=order.rodItems.map(e=>{
+      const c=e.color||_fallbackColor||'-';
+      return `<tr>
       <td class="dnum">${e.size}mm</td>
       <td class="dnum">${e.qty}개</td>
-    </tr>`).join('');
+      <td class="dnum">${c}</td>
+    </tr>`;
+    }).join('');
     rodHtml=`<div class="det-section" style="margin-bottom:14px">
       <div class="det-section-head det-head-blue">
         <i class="fas fa-minus"></i> 옷봉
       </div>
       <div class="det-section-body">
         <table class="det-tbl">
-          <thead><tr><th>절단 규격</th><th>수량</th></tr></thead>
+          <thead><tr><th>절단 규격</th><th>수량</th><th>색상</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
         <div class="det-rod-result">
@@ -1632,8 +1717,26 @@ function restoreDrawerItemsToModal(order){
   });
   if(!Object.keys(idToInp).length)return; // 아직 렌더 안됨
 
+  // [2026-08-03] itemId 별 그룹핑 — 같은 품목에 여러 색상 entry 있을 수 있음 (관리자 대리발주)
+  const _byItemId={};
   savedItems.forEach(oi=>{
-    if(!oi.requiredQty||oi.requiredQty<1)return; // 수량 0이면 스킵
+    if(!oi.requiredQty||oi.requiredQty<1)return;
+    const key=String(oi.itemId||oi.itemName||oi.displayName||'');
+    if(!_byItemId[key]) _byItemId[key]=[];
+    _byItemId[key].push(oi);
+  });
+  // [2026-08-03 fix] 서브행 항상 복원 (발주자 편집 시에도 데이터 손실 방지)
+  const _isAdmDrawerRestore=true;
+  const _shdC=(document.getElementById('shared-color-sel')||{}).value||'';
+
+  Object.entries(_byItemId).forEach(([_key, group])=>{
+    // 메인: 공통색과 매칭되는 entry 우선, 없으면 첫 개
+    // [문제3 fix] _isMain 우선, 없으면 색상 매칭, 없으면 첫번째
+    let mainEntry=group.find(e=>e._isMain===true);
+    if(!mainEntry) mainEntry=group.find(e=>e.color===_shdC);
+    if(!mainEntry) mainEntry=group[0];
+    const extras=group.filter(e=>e!==mainEntry);
+    const oi=mainEntry;
 
     let inp=null;
     // 1순위: itemId 직접 매칭
@@ -1656,8 +1759,9 @@ function restoreDrawerItemsToModal(order){
     if(oi.color){
       const domId=inp.dataset.itemId;
       const domName=inp.dataset.itemName;
-      let sel=document.querySelector(`.item-color-select[data-item-id="${domId}"]`);
-      if(!sel&&domName)sel=document.querySelector(`.item-color-select[data-item-name="${domName}"]`);
+      // dataset 직접 비교: 특수문자와 CSS.escape 미지원 구형 브라우저 모두 대응
+      let sel=Array.from(document.querySelectorAll('.item-color-select')).find(el=>String(el.dataset.itemId)===String(domId));
+      if(!sel&&domName)sel=Array.from(document.querySelectorAll('.item-color-select')).find(el=>el.dataset.itemName===domName);
       if(sel)sel.value=oi.color;
     }
     // 손잡이 옵션 복원
@@ -1677,8 +1781,18 @@ function restoreDrawerItemsToModal(order){
       const domId=inp.dataset.itemId;
       document.querySelectorAll(`.subtype-row[data-parent-id="${domId}"]`).forEach(tr=>{tr.style.display='';});
       oi.subTypeChecked.forEach(stName=>{
-        const chk=document.querySelector(`.subtype-chk[data-parent-id="${domId}"][data-subtype-name="${stName.replace(/"/g,'&quot;')}"]`);
+        const chk=Array.from(document.querySelectorAll('.subtype-chk')).find(el=>
+          String(el.dataset.parentId)===String(domId)&&String(el.dataset.subtypeName)===String(stName)
+        );
         if(chk)chk.checked=true;
+      });
+    }
+    // [2026-08-03] 추가 색상 서브행 복원 (관리자 대리발주 흐름에서만)
+    if(_isAdmDrawerRestore && extras.length>0 && typeof _addDrawerExtraColorRow==='function'){
+      const iid=inp.dataset.itemId;
+      const nm=inp.dataset.itemName;
+      extras.forEach(e=>{
+        if(e.requiredQty>0 && e.color) _addDrawerExtraColorRow(iid, nm, e.color, e.requiredQty);
       });
     }
   });
@@ -1688,7 +1802,18 @@ function restoreDrawerItemsToModal(order){
 // ── 복원 시점 보장: drawer-body 렌더 완료 후 1회 실행 ──
 function restoreDrawerItemsWhenReady(order, retry){
   retry=retry||0;
-  if(retry>30)return;
+  // 함수 진입 시점에 flag 리셋 (모달 재open 시 이전 상태 잔존 방지)
+  if(retry===0 && typeof window!=='undefined') window._drawerRestoreFailed=false;
+  // [2026-08-03 B3 fix] 서랍 데이터 있을 때만 실패로 판단 (없으면 복원 불필요)
+  const hasDrawerData=!!(order && Array.isArray(order.drawerItems||order.items) && (order.drawerItems||order.items).length>0);
+  if(retry>60){
+    if(hasDrawerData){
+      console.error('[restoreDrawerItemsWhenReady] drawer-body 렌더 대기 초과 — 서랍 데이터 복원 실패');
+      if(typeof toast==='function') toast('⚠ 서랍/옵션 데이터 복원 실패. 저장하지 말고 새로고침 후 다시 열어주세요.','error');
+      if(typeof window!=='undefined') window._drawerRestoreFailed=true;
+    }
+    return;
+  }
   const inputs=document.querySelectorAll('.drawer-qty');
   if(inputs.length>0){
     restoreDrawerItemsToModal(order);
@@ -1723,17 +1848,18 @@ async function rollbackInventoryForEdit(order){
     const cwKey=getColorWhKey(wh);
     let oiColor=items[iIdx].noColor?'':(oi.color||order.sharedColor||'');
     if(oiColor&&typeof normalizeStockColor==='function')oiColor=normalizeStockColor(oiColor);
+    const restoreQty=_deductedQtyForLine(oi);
     let before, afterVal;
     if(oiColor){
       if(!items[iIdx][cwKey])items[iIdx][cwKey]={};
       before=typeof getColorStock==='function'?getColorStock(items[iIdx][cwKey],oiColor):(items[iIdx][cwKey][oiColor]||0);
-      afterVal=before+(oi.requiredQty||0);
+      afterVal=before+restoreQty;
       if(typeof setColorStock==='function')setColorStock(items[iIdx][cwKey],oiColor,afterVal);
       else items[iIdx][cwKey][oiColor]=afterVal;
       items[iIdx][whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(items[iIdx][cwKey]):Object.values(items[iIdx][cwKey]).reduce((s,v)=>s+(v||0),0);
     } else {
       before=items[iIdx][whKey];
-      afterVal=before+(oi.requiredQty||0);
+      afterVal=before+restoreQty;
       items[iIdx][whKey]=afterVal;
     }
     items[iIdx].currentStock=(items[iIdx].stockSiheung||0)+(items[iIdx].stockPyeongtaek||0);
@@ -1741,7 +1867,7 @@ async function rollbackInventoryForEdit(order){
     const logs=DB.get('logs',[]);
     logs.push({
       id:_logIds.shift(),itemId:oi.itemId,type:'발주수정재반영',
-      qty:oi.requiredQty||0,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',
+      qty:restoreQty,beforeStock:before,afterStock:afterVal,warehouse:wh,color:oiColor||'',
       memo:`발주 #${order.id} 수정 진입 롤백`,orderId:order.id,
       createdBy:currentUser?currentUser.id:'',createdAt:now
     });
@@ -1817,24 +1943,34 @@ async function openEditOrder(orderId){
       ucEl2.value=order.upperCommonColor||(order.upperMaterials&&order.upperMaterials[0]&&order.upperMaterials[0].color)||'화이트';
       if(typeof checkUpperColorCodes==='function') checkUpperColorCodes(ucEl2.value);
     }
-    // 상부자재 수량 복원
-    (order.upperMaterials||[]).forEach(r=>{
-      const rawName=r.name||'';if(!rawName)return;
+    // [2026-08-03] 상부자재 name별 그룹핑 — 같은 name 여러 색상 entry 지원 (main + extras)
+    const _upperByNameEdit={};
+    (order.upperMaterials||[]).forEach(r=>{ if(r&&r.name){(_upperByNameEdit[r.name]||=[]).push(r);} });
+    const _isAdmEditRestore=true; // [2026-08-03 fix] 항상 복원
+    const _ucValEdit=(document.getElementById('upper-common-color')||{}).value||'';
+    Object.entries(_upperByNameEdit).forEach(([rawName, entries])=>{
+      let mainEntry=entries.find(e=>e._isMain===true)||entries.find(e=>e.color===_ucValEdit)||entries[0];
+      const extras=entries.filter(e=>e!==mainEntry);
+      const r=mainEntry;
       const qty=r.qty||(r.white||0)+(r.black||0)+(r.silver||0)+(r.champagne||0);
-      // 직접 매칭 우선 (저장명 = data-mat명), 실패 시 compat 폴백
-      let inp=document.querySelector(`.upper-qty[data-mat="${rawName}"]`);
-      if(!inp){const cn=compatUpperName(rawName);if(cn!==rawName)inp=document.querySelector(`.upper-qty[data-mat="${cn}"]`);}
+      let inp=_findUpperControl(rawName,'.upper-qty');
+      if(!inp){const cn=compatUpperName(rawName);if(cn!==rawName)inp=_findUpperControl(cn,'.upper-qty');}
       if(inp){inp.value=qty||'';updateUpperRowAmount(inp);}
       if(r.note){
-        let nEl=document.querySelector(`.upper-note[data-mat="${rawName}"]`);
-        if(!nEl){const cn=compatUpperName(rawName);if(cn!==rawName)nEl=document.querySelector(`.upper-note[data-mat="${cn}"]`);}
+        let nEl=_findUpperControl(rawName,'.upper-note');
+        if(!nEl){const cn=compatUpperName(rawName);if(cn!==rawName)nEl=_findUpperControl(cn,'.upper-note');}
         if(nEl)nEl.value=r.note;
       }
-      // [2026-07-14] 길이 분할 복원 (포스트바) — 임시저장 복원과 동일 로직 (Bug 1 수정)
       if(r.lengthSplits&&Array.isArray(r.lengthSplits)&&r.lengthSplits.length>0){
         const matKey=inp?.dataset?.mat||rawName;
         if(inp){inp.dataset.splits=JSON.stringify(r.lengthSplits);}
         if(typeof setRowLengthSplits==='function')setRowLengthSplits(matKey,r.lengthSplits);
+      }
+      if(_isAdmEditRestore && extras.length>0 && typeof _addUpperExtraColorRow==='function'){
+        extras.forEach(e=>{
+          const eq=e.qty||(e.white||0)+(e.black||0)+(e.silver||0)+(e.champagne||0);
+          if(eq>0&&e.color) _addUpperExtraColorRow(rawName, e.color, eq);
+        });
       }
     });
     // 공통 색상 + 서랍 색상별 코드 체크 (임시저장 복원과 동일 - Bug 2 수정)
@@ -1855,7 +1991,7 @@ async function openEditOrder(orderId){
     }
     // 옷봉
     if(order.rodItems&&order.rodItems.length>0){
-      order.rodItems.forEach(r=>rodEntries.push({size:r.size,qty:r.qty}));
+      order.rodItems.forEach(r=>rodEntries.push({size:r.size,qty:r.qty,color:r.color||''}));
       renderRodRows();
     }
     // 수정 모드 표시
@@ -1958,7 +2094,7 @@ function copyOrder(orderId){
     }
     // 옷봉 복원
     if(order.rodItems&&order.rodItems.length>0){
-      order.rodItems.forEach(r=>rodEntries.push({size:r.size,qty:r.qty}));
+      order.rodItems.forEach(r=>rodEntries.push({size:r.size,qty:r.qty,color:r.color||''}));
       renderRodRows();
     }
     // 상부 자재 복원 — DOM 직접 세팅 (_restoreDraftToModal 방식과 동일)
@@ -1968,16 +2104,29 @@ function copyOrder(orderId){
       ucCopyEl.value=storedColor;
       if(typeof checkUpperColorCodes==='function') checkUpperColorCodes(storedColor);
     }
-    (order.upperMaterials||[]).forEach(r=>{
-      const rawName=r.name||'';if(!rawName)return;
+    // [2026-08-03] name별 그룹핑 (copyOrder도 색상 서브행 지원)
+    const _upperByNameCopy={};
+    (order.upperMaterials||[]).forEach(r=>{ if(r&&r.name){(_upperByNameCopy[r.name]||=[]).push(r);} });
+    const _isAdmCopy=true; // [2026-08-03 fix] 항상 복원
+    const _ucValCopy=(document.getElementById('upper-common-color')||{}).value||'';
+    Object.entries(_upperByNameCopy).forEach(([rawName, entries])=>{
+      let mainEntry=entries.find(e=>e._isMain===true)||entries.find(e=>e.color===_ucValCopy)||entries[0];
+      const extras=entries.filter(e=>e!==mainEntry);
+      const r=mainEntry;
       const qty=r.qty||(r.white||0)+(r.black||0)+(r.silver||0)+(r.champagne||0);
-      let inp=document.querySelector(`.upper-qty[data-mat="${rawName}"]`);
-      if(!inp){const cn=compatUpperName(rawName);if(cn!==rawName)inp=document.querySelector(`.upper-qty[data-mat="${cn}"]`);}
+      let inp=_findUpperControl(rawName,'.upper-qty');
+      if(!inp){const cn=compatUpperName(rawName);if(cn!==rawName)inp=_findUpperControl(cn,'.upper-qty');}
       if(inp){inp.value=qty||'';updateUpperRowAmount(inp);}
       if(r.note){
-        let nEl=document.querySelector(`.upper-note[data-mat="${rawName}"]`);
-        if(!nEl){const cn=compatUpperName(rawName);if(cn!==rawName)nEl=document.querySelector(`.upper-note[data-mat="${cn}"]`);}
+        let nEl=_findUpperControl(rawName,'.upper-note');
+        if(!nEl){const cn=compatUpperName(rawName);if(cn!==rawName)nEl=_findUpperControl(cn,'.upper-note');}
         if(nEl)nEl.value=r.note;
+      }
+      if(_isAdmCopy && extras.length>0 && typeof _addUpperExtraColorRow==='function'){
+        extras.forEach(e=>{
+          const eq=e.qty||(e.white||0)+(e.black||0)+(e.silver||0)+(e.champagne||0);
+          if(eq>0&&e.color) _addUpperExtraColorRow(rawName, e.color, eq);
+        });
       }
     });
     // 서랍/옵션 복원 — restoreDrawerItemsWhenReady 사용 (재시도 보장)

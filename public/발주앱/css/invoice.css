@@ -452,6 +452,8 @@
 
 @media print {
   body > *:not(#invoiceModal) { display: none !important; }
+  /* print.js는 명세서를 공용 #print-area에 복제한다. 위의 옛 모달 전용 규칙보다 뒤에서 명시적으로 복구. */
+  body > #print-area { display: flex !important; }
   #invoiceModal {
     display: block !important;
     position: static !important;

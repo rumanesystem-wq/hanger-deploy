@@ -18,7 +18,7 @@ function numberToKorean(n) {
   if (n === 0) return '영원 정';
   const ONES = ['', '일', '이', '삼', '사', '오', '육', '칠', '팔', '구'];
   const UNITS = ['', '십', '백', '천'];
-  const BIGS  = ['', '만', '억'];
+  const BIGS  = ['', '만', '억', '조', '경'];
 
   function chunk(num) {
     const parts = [];
@@ -35,7 +35,9 @@ function numberToKorean(n) {
     let result = '';
     digits.forEach((d, i) => {
       if (d === 0) return;
-      result += (d === 1 && i > 0 ? '' : ONES[d]) + UNITS[3 - i];
+      // [2026-08-03] 금융 문서 관행: 위조 방지 위해 '일'을 항상 표기.
+      //   기존 로직은 i>0에서 '일'을 생략해서 11000 이 "일천원" 으로 잘못 표시됐음.
+      result += ONES[d] + UNITS[3 - i];
     });
     return result;
   }
@@ -166,12 +168,53 @@ function orderToInvoice(order) {
   });
 
   // 옷봉 2400 (가격표에서 조회)
-  if (order.rod2400Required > 0) {
+  // [2026-08-03] 색상별로 그룹핑해서 명세서에 여러 행으로 표시.
+  //  각 색상 그룹별로 FFD 절단 계산 → 2400 필요 개수.
+  //  fallback 공통색 = order.upperCommonColor.
+  // [2026-08-03 fix] dirty entry (size 0/빈, qty 0) 만 있으면 fallback 로 넘어가도록 필터 후 판단
+  const _rodItemsRaw = Array.isArray(order.rodItems) ? order.rodItems : [];
+  const _rodItems = _rodItemsRaw.filter(ri => ri && parseInt(ri.size) > 0 && parseInt(ri.qty) > 0);
+  if (_rodItems.length > 0) {
+    const _fallbackColor = order.upperCommonColor || '';
+    // 색상별 그룹핑
+    const byColor = {};
+    _rodItems.forEach(ri => {
+      if (!ri || !ri.size || !ri.qty) return;
+      const c = ri.color || _fallbackColor || '';
+      if (!byColor[c]) byColor[c] = [];
+      byColor[c].push({ size: parseInt(ri.size)||0, qty: parseInt(ri.qty)||0 });
+    });
+    // FFD 계산: 각 색상 그룹별 필요 2400 개수
+    const calcNeed = (entries) => {
+      const pieces = [];
+      entries.forEach(e => { for (let i = 0; i < e.qty; i++) pieces.push(e.size); });
+      if (pieces.length === 0) return 0;
+      pieces.sort((a, b) => b - a);
+      const bars = [];
+      pieces.forEach(p => {
+        let placed = false;
+        for (let i = 0; i < bars.length; i++) {
+          if (bars[i] + p <= 2400) { bars[i] += p; placed = true; break; }
+        }
+        if (!placed) bars.push(p);
+      });
+      return bars.length;
+    };
+    const r = resolveUnit(order.rodUnitPrice, '옷봉 2400');
+    Object.entries(byColor).forEach(([color, entries]) => {
+      const qty = calcNeed(entries);
+      if (qty <= 0) return;
+      const supply = Math.floor(qty * r.unitPrice);
+      const vat    = Math.round(supply * 0.1);
+      items.push({ name: '옷봉 2400', spec: color, qty, unitPrice: r.unitPrice, supply, vat, priceUnknown: r.priceUnknown });
+    });
+  } else if (order.rod2400Required > 0) {
+    // 옛 발주서(rodItems 없음): 총량 하나만 표시
     const qty = order.rod2400Required;
     const r = resolveUnit(order.rodUnitPrice, '옷봉 2400');
     const supply = Math.floor(qty * r.unitPrice);
     const vat    = Math.round(supply * 0.1);
-    items.push({ name: '옷봉 2400', spec: '', qty, unitPrice: r.unitPrice, supply, vat, priceUnknown: r.priceUnknown });
+    items.push({ name: '옷봉 2400', spec: order.upperCommonColor || '', qty, unitPrice: r.unitPrice, supply, vat, priceUnknown: r.priceUnknown });
   }
 
   // items가 없으면 단일 행 fallback (order.totalSupply 기반, priceUnknown=false로 정상 통과 의도)
@@ -180,7 +223,13 @@ function orderToInvoice(order) {
   }
 
   const totalSupply = items.reduce((s, i) => s + i.supply, 0);
-  const totalVat    = items.reduce((s, i) => s + i.vat, 0);
+  // 발주 저장 화면과 동일하게 전체 공급가액 기준으로 VAT를 한 번 반올림한다.
+  // 품목별 반올림 합계와 1원 이상 어긋나는 경우 마지막 행에 차이를 배분한다.
+  const totalVat    = Math.round(totalSupply * 0.1);
+  if (items.length > 0) {
+    const lineVat = items.reduce((s, i) => s + (Number(i.vat) || 0), 0);
+    items[items.length - 1].vat = (Number(items[items.length - 1].vat) || 0) + (totalVat - lineVat);
+  }
   const totalAmount = totalSupply + totalVat;
 
   return {

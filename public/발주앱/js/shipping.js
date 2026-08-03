@@ -102,7 +102,8 @@
       (o.rodItems||[]).forEach(function(r){
         const q=Number(r.qty)||0; if(q<=0) return;
         const mm=parseInt(r.size,10); if(!mm) return;
-        add(rod,'R|'+mm, mm+'mm', q, o);
+        const color=r.color||o.upperCommonColor||'';
+        add(rod,'R|'+mm+'|'+color, mm+'mm'+(color?' · '+color:''), q, o);
       });
       (o.shelfItems||[]).forEach(function(si){
         (si.entries||[]).forEach(function(e){

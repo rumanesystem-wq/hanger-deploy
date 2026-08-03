@@ -120,18 +120,28 @@ async function downloadOrderExcel(order){
       cmap.get(color).push({...r2,_qty:qty});
     });
     if(hasRod){
-      const raw=order.upperCommonColor;
-      const rc=cn[raw]||raw||(cord.length>0?cord[0]:'기타');
-      if(!cmap.has(rc)){cmap.set(rc,[]);cord.push(rc);}
-      cmap.get(rc).push({_isRod:true});
+      const rodsByColor=new Map();
+      (order.rodItems||[]).forEach(ri=>{
+        if(!ri||!(Number(ri.size)>0)||!(Number(ri.qty)>0))return;
+        const rc=ri.color||order.upperCommonColor||'기타';
+        if(!rodsByColor.has(rc))rodsByColor.set(rc,[]);
+        rodsByColor.get(rc).push(ri);
+      });
+      rodsByColor.forEach((entries,rc)=>{
+        if(!cmap.has(rc)){cmap.set(rc,[]);cord.push(rc);}
+        cmap.get(rc).push({_isRod:true,_entries:entries});
+      });
     }
     cord.forEach(clr=>{
       clrRow(clr); let alt=false;
       cmap.get(clr).forEach(r2=>{
         if(r2._isRod){
-          const rs=(order.rodItems||[]).map(ri=>`${ri.size}×${ri.qty}`).join(', ');
-          const ru=getActivePriceForItem('옷봉 2400')||4500, rq=order.rod2400Required||0;
-          dataRow('옷봉 2400',rq+'개',ru,calcSup(ru,rq,order.rodAmount),`절단: ${rs} / 총 ${(order.rodTotalLen||0).toLocaleString()}mm`,alt);
+          const entries=r2._entries||[];
+          const rs=entries.map(ri=>`${ri.size}×${ri.qty}`).join(', ');
+          const ru=order.rodUnitPrice!==null&&order.rodUnitPrice!==undefined&&order.rodUnitPrice!==''&&Number.isFinite(Number(order.rodUnitPrice))?Number(order.rodUnitPrice):(getActivePriceForItem('옷봉 2400')||4500);
+          const rq=(typeof calcRod2400==='function')?calcRod2400(entries,clr):(order.rod2400Required||0);
+          const totalLen=entries.reduce((sum,ri)=>sum+(Number(ri.size)||0)*(Number(ri.qty)||0),0);
+          dataRow('옷봉 2400',rq+'개',ru,calcSup(ru,rq,null),`절단: ${rs} / 총 ${totalLen.toLocaleString()}mm`,alt);
         }else{
           const n=typeof compatUpperName==='function'?compatUpperName(r2.name):r2.name;
           const qty=r2._qty||r2.qty||0, up=r2.unitPrice!==undefined?r2.unitPrice:getActivePriceForItem(n);
@@ -146,14 +156,14 @@ async function downloadOrderExcel(order){
   if((order.shelfItems||[]).length>0){
     secRow('■  선반 / 코너선반');
     thRow('품목/규격','수량','단가','공급가액','');
-    if(order.sharedColor)clrRow(order.sharedColor);
     order.shelfItems.forEach(item=>{
       fr(R,{bg:WHITE,bold:true,h:'left'}); gc(R,1,'  '+item.name); mg(R,1,R,5); rh(R,16); R++;
       let alt=false;
       (item.entries||[]).forEach(e=>{
         const spec=item.name==='코너선반'?`${e.width} × ${e.height}`:e.size;
         const up=e.unitPrice!==undefined?e.unitPrice:(item.name==='코너선반'?getCornerShelfPrice(e.width,e.height):getShelfPrice(e.size));
-        dataRow('    '+spec,e.qty+'개',up,calcSup(up,e.qty,e.amount),'',alt); alt=!alt;
+        const color=e.color||order.sharedColor||'';
+        dataRow('    '+spec+(color?` [${color}]`:''),e.qty+'개',up,calcSup(up,e.qty,e.amount),'',alt); alt=!alt;
       });
     });
   }
@@ -163,13 +173,13 @@ async function downloadOrderExcel(order){
   if(dRows.length>0||order.drawerMemo){
     secRow('■  서랍 / 옵션');
     thRow('품목명','수량','단가','공급가액','');
-    if(order.sharedColor)clrRow(order.sharedColor);
     let alt=false;
     dRows.forEach(oi=>{
       const it=dbItems.find(i=>i.id===oi.itemId);
       const iName=it?it.name:'?';
       const up=oi.unitPrice!==undefined?oi.unitPrice:getActivePriceForItem(iName);
-      dataRow(iName,(oi.requiredQty||0)+'개',up,calcSup(up,oi.requiredQty||0,oi.amount),'',alt); alt=!alt;
+      const color=(it&&it.noColor)?'':(oi.color||order.sharedColor||'');
+      dataRow(iName+(color?` [${color}]`:''),(oi.requiredQty||0)+'개',up,calcSup(up,oi.requiredQty||0,oi.amount),'',alt); alt=!alt;
     });
     if(order.drawerMemo){
       fr(R,{bg:'FFFFFBEB',fc:'FF92400E',sz:9,italic:true,wrap:true});
@@ -350,7 +360,7 @@ function renderOrderDocument(order){
 
   // 상부 자재
   let upperRows='';
-  if(order.upperMaterials&&order.upperMaterials.length>0){
+  if((order.upperMaterials&&order.upperMaterials.length>0)||(order.rodItems&&order.rodItems.length>0)){
     order.upperMaterials.forEach(r=>{
       const n=typeof compatUpperName==='function'?compatUpperName(r.name):r.name;
       let color=r.color||''; let qty=r.qty||0;
@@ -371,7 +381,7 @@ function renderOrderDocument(order){
           const stdLen={'포스트바 2050':2050,'포스트바 2250':2250,'포스트바 2400':2400}[n]||0;
           const isStd=Number(sp.length)===stdLen;
           const noteHtml=`<span style="font-size:13px;font-weight:800;color:#111">실제길이: ${sp.length}mm${isStd?' (정척)':''}</span>`;
-          upperRows+=`<tr><td class="doc-name">${n}</td><td class="doc-num">${sQty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${sStr}</td><td class="doc-note doc-note-bigo" style="text-align:center">${noteHtml}</td></tr>`;
+          upperRows+=`<tr><td class="doc-name">${n}${color?' ['+_escHtml(color)+']':''}</td><td class="doc-num">${sQty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${sStr}</td><td class="doc-note doc-note-bigo" style="text-align:center">${noteHtml}</td></tr>`;
           upperRows+=`<tr class="doc-mobile-note-row"><td colspan="4">실제길이: ${sp.length}mm${isStd?' (정척)':''}</td></tr>`;
         });
       }else{
@@ -379,20 +389,26 @@ function renderOrderDocument(order){
         const vat=supply!==null?Math.round(supply*0.1):null;
         const {s,v}=rowAmt(supply,vat);
         const noteDisp=r.note?`<span style="font-size:13px;font-weight:800;color:#111">실제길이: ${_escHtml(r.note)}mm</span>`:'';
-        upperRows+=`<tr><td class="doc-name">${n}</td><td class="doc-num">${qty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td><td class="doc-note doc-note-bigo${noteDisp?'':' doc-note-empty'}" style="text-align:center">${noteDisp}</td></tr>`;
+        upperRows+=`<tr><td class="doc-name">${n}${color?' ['+_escHtml(color)+']':''}</td><td class="doc-num">${qty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td><td class="doc-note doc-note-bigo${noteDisp?'':' doc-note-empty'}" style="text-align:center">${noteDisp}</td></tr>`;
         if(r.note) upperRows+=`<tr class="doc-mobile-note-row"><td colspan="4">실제길이: ${_escHtml(r.note)}mm</td></tr>`;
       }
     });
     if(order.rodItems&&order.rodItems.length>0){
-      const rodColor=order.upperCommonColor||(order.upperMaterials&&order.upperMaterials[0]&&order.upperMaterials[0].color)||'-';
-      const rodSizes=order.rodItems.map(e=>`${e.size}×${e.qty}`).join(', ');
-      const noteStr=`${rodSizes} / 총${(order.rodTotalLen||0).toLocaleString()}mm`;
-      const rodUp=getActivePriceForItem('옷봉 2400')||4500;
-      const rodSupply=rodUp*(order.rod2400Required||0);
-      const rodVat=Math.round(rodSupply*0.1);
-      const {s,v}=rowAmt(rodSupply,rodVat);
-      upperRows+=`<tr><td class="doc-name">옷봉 2400</td><td class="doc-num">${order.rod2400Required||0}개</td><td class="doc-note" style="text-align:right">${rodUp.toLocaleString()}원</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td><td class="doc-note doc-note-bigo${noteStr?'':' doc-note-empty'}" style="font-size:12px;font-weight:700;color:#111">${noteStr}</td></tr>`;
-      if(noteStr) upperRows+=`<tr class="doc-mobile-note-row"><td colspan="4">${noteStr}</td></tr>`;
+      const rodUp=order.rodUnitPrice!==null&&order.rodUnitPrice!==undefined&&order.rodUnitPrice!==''&&Number.isFinite(Number(order.rodUnitPrice))?Number(order.rodUnitPrice):(getActivePriceForItem('옷봉 2400')||4500);
+      const rodsByColor={};
+      order.rodItems.forEach(e=>{
+        const color=e.color||order.upperCommonColor||'';
+        (rodsByColor[color]||=[]).push(e);
+      });
+      Object.entries(rodsByColor).forEach(([color,entries])=>{
+        const qty=(typeof calcRod2400==='function')?calcRod2400(entries,color):(order.rod2400Required||0);
+        const rodSizes=entries.map(e=>`${e.size}×${e.qty}`).join(', ');
+        const totalLen=entries.reduce((sum,e)=>sum+(parseInt(e.size,10)||0)*(Number(e.qty)||0),0);
+        const noteStr=`${rodSizes} / 총${totalLen.toLocaleString()}mm`;
+        const rodSupply=rodUp*qty;
+        const {s}=rowAmt(rodSupply,Math.round(rodSupply*0.1));
+        upperRows+=`<tr><td class="doc-name">옷봉 2400${color?' ['+_escHtml(color)+']':''}</td><td class="doc-num">${qty}개</td><td class="doc-note" style="text-align:right">${rodUp.toLocaleString()}원</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td><td class="doc-note doc-note-bigo" style="font-size:12px;font-weight:700;color:#111">${noteStr}</td></tr>`;
+      });
     }
   }
   const upperSection=upperRows?`
@@ -423,7 +439,8 @@ function renderOrderDocument(order){
           const vat=Math.round(supply*0.1);
           const {s,v}=rowAmt(supply,vat);
           const upStr=up!==null?up.toLocaleString('ko-KR')+'원':'미정';
-          shelfRows+=`<tr><td class="doc-name" style="padding-left:12px">${spec}</td><td class="doc-num">${e.qty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td></tr>`;
+          const color=e.color||order.sharedColor||'';
+          shelfRows+=`<tr><td class="doc-name" style="padding-left:12px">${spec}${color?' ['+_escHtml(color)+']':''}</td><td class="doc-num">${e.qty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td></tr>`;
         });
       }
     });
@@ -447,14 +464,14 @@ function renderOrderDocument(order){
   let drawerRows='';
   dRows.forEach(oi=>{
     const it=dbItems.find(i=>i.id===oi.itemId);
-    const dispColor=(it&&it.hasColor)?(oi.color||order.sharedColor||'-'):(order.sharedColor||'-');
+    const dispColor=oi.color||order.sharedColor||'';
     const iName=it?it.name:'?';
     const up=oi.unitPrice!==undefined?oi.unitPrice:getActivePriceForItem(iName);
     const supply=oi.amount!==undefined?oi.amount:(up!==null?up*(oi.requiredQty||0):null);
     const vat=supply!==null?Math.round(supply*0.1):null;
     const {s,v}=rowAmt(supply,vat);
     const upStr=up!==null&&up!==undefined?up.toLocaleString('ko-KR')+'원':'미정';
-    drawerRows+=`<tr><td class="doc-name">${iName}</td><td class="doc-num">${oi.requiredQty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td></tr>`;
+    drawerRows+=`<tr><td class="doc-name">${iName}${dispColor?' ['+_escHtml(dispColor)+']':''}</td><td class="doc-num">${oi.requiredQty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td></tr>`;
   });
   if(order.drawerMemo) drawerRows+=`<tr><td colspan="4" class="doc-note" style="color:#555;font-style:italic">${_escHtml(order.drawerMemo)}</td></tr>`;
   const drawerSection=(drawerRows)?`

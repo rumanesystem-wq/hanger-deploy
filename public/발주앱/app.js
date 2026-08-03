@@ -2,8 +2,40 @@
 
 let _cancelTargetOrderId=null;
 
-async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
-  const items=DB.get('items',[]),logs=DB.get('logs',[]);
+async function _withInventoryWriteLock(work){
+  if(typeof window._acquireServerSaveLock!=='function'||typeof window._releaseServerSaveLock!=='function'){
+    throw new Error('재고 저장 잠금 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
+  }
+  const actor=(typeof currentUser!=='undefined'&&currentUser)?currentUser.id:'';
+  const lock=await window._acquireServerSaveLock(actor);
+  if(!lock||!lock.ok){
+    if(lock&&lock.reason==='locked')throw new Error('다른 사용자가 발주 또는 재고를 저장 중입니다. 잠시 후 다시 시도해주세요.');
+    throw new Error('재고 저장 잠금 획득에 실패했습니다. 다시 시도해주세요.');
+  }
+  try{return await work();}
+  finally{try{await window._releaseServerSaveLock();}catch(_e){}}
+}
+
+async function _serverInventoryState(){
+  if(!window._FS||typeof window._FS.get!=='function'||typeof window._FS.transactInventory!=='function'){
+    throw new Error('원자 재고 저장 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
+  }
+  const [items,prs]=await Promise.all([
+    window._FS.get('items',{fromServer:true}),
+    window._FS.get('purchase_requests',{fromServer:true})
+  ]);
+  if(!Array.isArray(items)||!Array.isArray(prs))throw new Error('서버 최신 재고를 불러오지 못했습니다.');
+  return{items:JSON.parse(JSON.stringify(items)),prs:JSON.parse(JSON.stringify(prs))};
+}
+
+async function processInventory(args){
+  return _withInventoryWriteLock(()=>_processInventoryUnlocked(args));
+}
+async function _processInventoryUnlocked({itemId,type,qty,memo,warehouse,logDate,color}){
+  const state=await _serverInventoryState();
+  const items=state.items,prs=state.prs;
+  const expectedItems=JSON.parse(JSON.stringify(items));
+  const expectedPrs=JSON.parse(JSON.stringify(prs));
   const idx=items.findIndex(i=>i.id===itemId);
   if(idx===-1)throw new Error('품목을 찾을 수 없습니다.');
   const item=items[idx];
@@ -43,10 +75,8 @@ async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
     items[idx][whKey]=after;
   }
   items[idx].currentStock=(items[idx].stockSiheung||0)+(items[idx].stockPyeongtaek||0);
-  await DB.set('items',items);
   const logTs=logDate?(logDate+'T00:00:00.000Z'):new Date().toISOString();
-  logs.push({id:_logIds[0],itemId,type,qty:type==='조정'?n-before:n,beforeStock:before,afterStock:after,warehouse:wh,color:color||'',memo:memo||'',createdAt:logTs});
-  DB.set('logs',logs);
+  const stockLogs=[{id:_logIds[0],itemId,type,qty:type==='조정'?n-before:n,beforeStock:before,afterStock:after,warehouse:wh,color:color||'',memo:memo||'',createdAt:logTs}];
   // 입고 시: 해당 품목의 대기 중인 발주 필요 항목 자동 완료 처리
   // [2026-07-24 Codex-3차] 정책: 엄격 FIFO
   // - 오산 입고는 PR 자동완료 X (발주 대상 아님)
@@ -54,7 +84,6 @@ async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
   // - 오래된 PR을 못 채우면 break, 이후 PR도 자동완료하지 않음 (queue jump 방지)
   // - 부분입고 누적은 미지원 (별도 UI에서 수동 처리 필요)
   if(type==='입고' && wh !== '오산' && qty > 0){
-    const prs=DB.get('purchase_requests',[]);
     let changed=false;
     let remaining=qty;
     const _now=new Date().toISOString();
@@ -77,13 +106,19 @@ async function processInventory({itemId,type,qty,memo,warehouse,logDate,color}){
       changed=true;
       if(remaining<=0) break;
     }
-    if(changed)DB.set('purchase_requests',prs);
   }
+  await window._FS.transactInventory({items,expectedItems,stockLogs,purchaseRequests:prs,expectedPurchaseRequests:expectedPrs});
   return{before,after,warehouse:wh};
 }
 
-async function processInventoryBatch({itemId,type,entries,memo,warehouse,logDate}){
-  const items=DB.get('items',[]),logs=DB.get('logs',[]);
+async function processInventoryBatch(args){
+  return _withInventoryWriteLock(()=>_processInventoryBatchUnlocked(args));
+}
+async function _processInventoryBatchUnlocked({itemId,type,entries,memo,warehouse,logDate}){
+  const state=await _serverInventoryState();
+  const items=state.items,prs=state.prs;
+  const expectedItems=JSON.parse(JSON.stringify(items));
+  const expectedPrs=JSON.parse(JSON.stringify(prs));
   const idx=items.findIndex(i=>i.id===itemId);
   if(idx===-1)throw new Error('품목을 찾을 수 없습니다.');
   const item=items[idx];
@@ -143,16 +178,13 @@ async function processInventoryBatch({itemId,type,entries,memo,warehouse,logDate
 
   items[idx][whKey]=typeof sumColorStockMap==='function'?sumColorStockMap(items[idx][cwKey]):Object.values(items[idx][cwKey]).reduce((s,v)=>s+(v||0),0);
   items[idx].currentStock=(items[idx].stockSiheung||0)+(items[idx].stockPyeongtaek||0);
-  await DB.set('items',items);
-
   const logTs=logDate?(logDate+'T00:00:00.000Z'):new Date().toISOString();
+  const stockLogs=[];
   results.forEach(r=>{
-    logs.push({id:r.id,itemId,type,qty:type==='조정'?r.after-r.before:r.qty,beforeStock:r.before,afterStock:r.after,warehouse:wh,color:r.color,memo:memo||'',createdAt:logTs});
+    stockLogs.push({id:r.id,itemId,type,qty:type==='조정'?r.after-r.before:r.qty,beforeStock:r.before,afterStock:r.after,warehouse:wh,color:r.color,memo:memo||'',createdAt:logTs});
   });
-  DB.set('logs',logs);
 
   if(type==='입고' && wh !== '오산'){
-    const prs=DB.get('purchase_requests',[]);
     let changed=false;
     const _now=new Date().toISOString();
     for(const r of results){
@@ -177,9 +209,8 @@ async function processInventoryBatch({itemId,type,entries,memo,warehouse,logDate
         if(remaining<=0)break;
       }
     }
-    if(changed)DB.set('purchase_requests',prs);
   }
-
+  await window._FS.transactInventory({items,expectedItems,stockLogs,purchaseRequests:prs,expectedPurchaseRequests:expectedPrs});
   return{count:results.length,warehouse:wh,results};
 }
 

@@ -964,6 +964,8 @@ const DEFAULT_ITEMS=[
   {name:'속서랍 3단',       category:'서랍장',drawerType:'inner',currentStock:0},
   {name:'겉서랍 4단',       category:'서랍장',drawerType:'outer',currentStock:0},
   {name:'속서랍 4단',       category:'서랍장',drawerType:'inner',currentStock:0},
+  {name:'겉서랍 5단',       category:'서랍장',drawerType:'outer',currentStock:0},
+  {name:'속서랍 5단',       category:'서랍장',drawerType:'inner',currentStock:0},
   {name:'겉서랍 아일랜드',  category:'서랍장',drawerType:'outer',currentStock:0},
   {name:'속서랍 아일랜드',  category:'서랍장',drawerType:'inner',currentStock:0},
   // 옵션 (활성 품목은 재고 관리 대상)
@@ -1518,6 +1520,7 @@ function initData(){
       [{name:'겉서랍 2단',category:'서랍장',drawerType:'outer'},{name:'속서랍 2단',category:'서랍장',drawerType:'inner'},
        {name:'겉서랍 3단',category:'서랍장',drawerType:'outer'},{name:'속서랍 3단',category:'서랍장',drawerType:'inner'},
        {name:'겉서랍 4단',category:'서랍장',drawerType:'outer'},{name:'속서랍 4단',category:'서랍장',drawerType:'inner'},
+       {name:'겉서랍 5단',category:'서랍장',drawerType:'outer'},{name:'속서랍 5단',category:'서랍장',drawerType:'inner'},
        {name:'겉서랍 아일랜드',category:'서랍장',drawerType:'outer'},{name:'속서랍 아일랜드',category:'서랍장',drawerType:'inner'}
       ].forEach(_ensure);
       // 옵션/서비스 기본 품목
@@ -1933,7 +1936,11 @@ async function saveOrder(payload, saveMode='발주확정'){
   //           shelfItems:[{name,white,maple,walnut,gray}],
   //           drawerItems:[{itemId,requiredQty}],
   //           drawerMemo, etcMemo}
-  let dbItems=DB.get('items',[]);const orders=DB.get('orders',[]),prs=DB.get('purchase_requests',[]);
+  let dbItems=DB.get('items',[]);
+  const orders=DB.get('orders',[]).map(o=>o&&typeof o==='object'?{...o}:o);
+  const prs=DB.get('purchase_requests',[]).map(p=>p&&typeof p==='object'?{...p}:p);
+  const newPrs=[];
+  const stockLogs=[];
   // 수정 모드: _editOverride로 원래 id/orderNum/status/등록자/등록일 유지
   // [2026-07-15 Critical 1] _editOverride 클리어를 저장 성공 후로 이동 — 실패 시 재시도가 편집 모드 유지되도록 (중복 발주서 생성 방지)
   const _eo=window._editOverride||null;
@@ -2093,6 +2100,8 @@ async function saveOrder(payload, saveMode='발주확정'){
       colorStockPyeongtaek:i.colorStockPyeongtaek?{...i.colorStockPyeongtaek}:i.colorStockPyeongtaek
     }));
   }
+  // transaction에서 바로 전 서버 상태와 비교할 기준. 이후 계산에서는 이 복사본을 변경하지 않는다.
+  const _itemsBeforeOrderMutation=JSON.parse(JSON.stringify(dbItems));
 
   const _drawerCount=Array.isArray(payload.drawerItems)?payload.drawerItems.length:0;
   const _editRollbackCount=(_originalOrderForEdit&&_originalOrderForEdit.stockDeducted)
@@ -2137,8 +2146,15 @@ async function saveOrder(payload, saveMode='발주확정'){
     if(oi&&typeof oi.inventoryDeducted==='boolean')return oi.inventoryDeducted;
     return !!(order&&order.stockDeducted&&_dbLegacyTracksInventoryLine(oi,item));
   }
+  function _dbDeductedQty(oi){
+    if(oi&&Number.isFinite(Number(oi.inventoryDeductedQty)))return Math.max(0,Number(oi.inventoryDeductedQty));
+    const requested=Math.max(0,Number(oi&&oi.requiredQty)||0);
+    if(oi&&Number.isFinite(Number(oi.shortageQty)))return Math.max(0,requested-Math.max(0,Number(oi.shortageQty)));
+    if(oi&&Number.isFinite(Number(oi.currentStockSnapshot)))return Math.min(requested,Math.max(0,Number(oi.currentStockSnapshot)));
+    return requested;
+  }
   function _applyStockDeltaForOrderLine(item,wh,color,qtyDelta,logType,memo,orderIdForLog,nowForLog){
-    if(!item||!qtyDelta)return;
+    if(!item||!qtyDelta)return 0;
     if(item.stockSiheung===undefined)item.stockSiheung=item.currentStock||0;
     if(item.stockPyeongtaek===undefined)item.stockPyeongtaek=0;
     const whKey=getWhKey(wh);
@@ -2157,13 +2173,12 @@ async function saveOrder(payload, saveMode='발주확정'){
       item[whKey]=afterVal;
     }
     item.currentStock=(item.stockSiheung||0)+(item.stockPyeongtaek||0);
-    const logs=DB.get('logs',[]);
-    logs.push({
-      id:_popId('logs'),itemId:item.id,type:logType,qty:qtyDelta,
+    stockLogs.push({
+      id:_popId('logs'),itemId:item.id,type:logType,qty:afterVal-before,
       beforeStock:before,afterStock:afterVal,warehouse:wh,color:color||'',
       memo,orderId:orderIdForLog,createdBy:currentUser?currentUser.id:'',createdAt:nowForLog
     });
-    DB.set('logs',logs);
+    return afterVal-before;
   }
 
   // [2026-07-31 Codex] 수정 저장 시점에만 기존 차감분을 되돌린 뒤 새 주문분을 다시 차감한다.
@@ -2178,7 +2193,7 @@ async function saveOrder(payload, saveMode='발주확정'){
       let oldColor=item.noColor?'':(oi.color||_originalOrderForEdit.sharedColor||'');
       if(oldColor&&typeof normalizeStockColor==='function')oldColor=normalizeStockColor(oldColor);
       _applyStockDeltaForOrderLine(
-        item,wh,oldColor,oi.requiredQty||0,
+        item,wh,oldColor,_dbDeductedQty(oi),
         '발주수정반환',
         `발주 #${_originalOrderForEdit.id} 수정 저장 전 기존 차감분 반환`,
         _originalOrderForEdit.id,now
@@ -2201,20 +2216,21 @@ async function saveOrder(payload, saveMode='발주확정'){
     const inventoryTracked=isTrackStock(item);
     const inventoryDeducted=inventoryTracked&&(effectiveSaveMode==='발주대기'||effectiveSaveMode==='발주확정'||effectiveSaveMode==='출고완료');
     const shortage=inventoryTracked?calcShortage(requiredQty,whStock):0;
-    savedDrawerItems.push({id:_popId('order_items'),orderId,itemId,requiredQty,color:orderColor,currentStockSnapshot:whStock,shortageQty:shortage,warehouse,inventoryTracked,inventoryDeducted,createdAt:now,handleOption:drawerItem.handleOption||'basic',displayName:drawerItem.displayName||'',note:drawerItem.note||'',unitPrice:drawerItem.unitPrice,amount:drawerItem.amount,vatAmount:drawerItem.vatAmount,subTypeChecked:drawerItem.subTypeChecked||[]});
+    const savedLine={id:_popId('order_items'),orderId,itemId,requiredQty,color:orderColor,currentStockSnapshot:whStock,shortageQty:shortage,warehouse,inventoryTracked,inventoryDeducted,inventoryDeductedQty:0,createdAt:now,handleOption:drawerItem.handleOption||'basic',displayName:drawerItem.displayName||'',note:drawerItem.note||'',unitPrice:drawerItem.unitPrice,amount:drawerItem.amount,vatAmount:drawerItem.vatAmount,subTypeChecked:drawerItem.subTypeChecked||[]};
+    savedDrawerItems.push(savedLine);
     if(shortage>0){
       // [2026-07-24 Codex-재검토-Critical-1] color 저장 — 다른 색상 입고에 오인 자동완료 방지
-      prs.push({id:_popId('purchase_requests'),orderId,itemId,requiredQty,color:orderColor||'',currentStockSnapshot:whStock,shortageQty:shortage,warehouse,status:'대기',createdAt:now,updatedAt:now});
+      const newPr={id:_popId('purchase_requests'),orderId,itemId,requiredQty,color:orderColor||'',currentStockSnapshot:whStock,shortageQty:shortage,warehouse,status:'대기',createdAt:now,updatedAt:now};
+      prs.push(newPr);
+      newPrs.push(newPr);
       shortageCount++;
     }
     // 서랍장 실재고 차감 — 발주대기·발주확정 모두 발주 넣는 시점에 즉시 차감 (임시저장은 미차감)
     if(inventoryDeducted){
-      _applyStockDeltaForOrderLine(item,warehouse,orderColor,-requiredQty,'발주차감',`발주 #${orderId}`,orderId,now);
+      const applied=_applyStockDeltaForOrderLine(item,warehouse,orderColor,-requiredQty,'발주차감',`발주 #${orderId}`,orderId,now);
+      savedLine.inventoryDeductedQty=Math.abs(applied);
     }
   });
-  // 차감된 재고 저장
-  await DB.set('items',dbItems);
-
   const orderDoc={
     id:orderId,
     // 기본 정보
@@ -2259,6 +2275,7 @@ async function saveOrder(payload, saveMode='발주확정'){
     siteName:payload.deliveryTo||'',
     customerName:payload.address||'',
   };
+  orderDoc._expectedPreviousUpdatedAt=_originalOrderForEdit?(_originalOrderForEdit.updatedAt||''):undefined;
   // 수정 모드: 기존 발주서를 같은 자리에 교체 (splice + push 분리 시 race condition 방지)
   // 신규 모드: 끝에 push
   if(_eo){
@@ -2268,11 +2285,18 @@ async function saveOrder(payload, saveMode='발주확정'){
   } else {
     orders.push(orderDoc);
   }
-  // [2026-07-09] 유케이 07-08 사고 재발 방지: orders 저장 완료를 await로 대기
-  // 실패 시 throw됨 → 호출처(order-modal.js) try/catch가 사용자에게 에러 토스트 노출
-  // 성공 토스트가 실제 저장 확인 전에 뜨는 문제 해결
-  await DB.set('orders',orders);
-  DB.set('purchase_requests',prs);
+  // 재고와 발주서를 원자적으로 커밋한다. 한쪽 write만 성공하는 부분 실패를 차단한다.
+  if(!window._FS||typeof window._FS.transactOrderInventory!=='function'){
+    throw new Error('원자 저장 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
+  }
+  await window._FS.transactOrderInventory({
+    order:orderDoc,
+    items:dbItems,
+    expectedItems:_itemsBeforeOrderMutation,
+    purchaseRequests:newPrs,
+    stockLogs
+  });
+  delete orderDoc._expectedPreviousUpdatedAt;
   // [2026-08-03] 편집 저장이면 발주 수정 이력 로그. 뭐 바뀌었는지 요약 텍스트로.
   if(_originalOrderForEdit){
     try{

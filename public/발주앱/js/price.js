@@ -83,6 +83,8 @@ const DRAWER_OPTION_PRICES = {
   "속서랍 3단": 92000,
   "겉서랍 4단": 139000,
   "속서랍 4단": 139000,
+  "겉서랍 5단": 160000,
+  "속서랍 5단": 160000,
   "겉서랍 아일랜드": 150000,
   "속서랍 아일랜드": 200000,
   "거울장": 87000,
@@ -293,7 +295,7 @@ function getOrderFinancialSummary(order){
     else{const p=getActivePriceForItem(compatUpperName(r.name||''));if(p!==null)totalSupply+=p*qty;}
   });
   if((order.rodItems||[]).length>0){
-    const rodPrice=getActivePriceForItem('옷봉 2400')||4500;
+    const rodPrice=order.rodUnitPrice!==null&&order.rodUnitPrice!==undefined&&order.rodUnitPrice!==''&&Number.isFinite(Number(order.rodUnitPrice))?Number(order.rodUnitPrice):(getActivePriceForItem('옷봉 2400')||4500);
     totalSupply+=rodPrice*(order.rod2400Required||0);
   }
   (order.shelfItems||[]).forEach(si=>{
