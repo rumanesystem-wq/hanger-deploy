@@ -55,17 +55,16 @@
   }
 
   // ── 서버 직접 읽기 (캐시 금지) ──
-  // enablePersistence가 켜져 있어 _FS.get()은 캐시값을 줄 수 있으므로 사용하지 않는다.
-  // {source:'server'}로 서버에서만 읽고(오프라인/서버불가 시 throw=폴백 없음), fromCache면 방어적으로 거부.
+  // [Phase 5 2026-07-31] 옛 hanger_data/orders 사용 중단 → 새 hanger_orders 컬렉션에서 서버 강제 조회
   async function _fetchOrdersFromServer(){
     const fs=_firestore();
     if(!fs) throw new Error('NO_FS');
-    const snap=await fs.collection('hanger_data').doc('orders').get({source:'server'});
-    if(snap.metadata && snap.metadata.fromCache) throw new Error('FROM_CACHE'); // 서버값이 아니면 거부
-    if(!snap.exists) throw new Error('NO_DATA'); // 문서없음 → 폴백 금지, 에러 처리
-    const orders=snap.data().value;
-    if(orders==null) throw new Error('NO_DATA');
-    return Array.isArray(orders) ? orders : [];
+    if(typeof window._FS==='undefined' || typeof window._FS.getAllOrders!=='function'){
+      throw new Error('NO_FS');
+    }
+    const orders = await window._FS.getAllOrders({fromServer:true});
+    if(!Array.isArray(orders)) throw new Error('NO_DATA');
+    return orders;
   }
 
   // (핫픽스 B' 20260610) 다른 모듈(orders.js)에서 서버 최신본 발주 조회 재사용

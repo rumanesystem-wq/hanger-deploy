@@ -454,8 +454,15 @@
         },
         // (Phase 3a 읽기 전환 20260611) hanger_orders 컬렉션 전체 발주서 로드
         // 호출자: syncFromServer (앱 시작 시 1회) — 옛 hanger_data/orders 대신 새 컬렉션에서 로드
-        async getAllOrders() {
-          const snap = await db.collection('hanger_orders').get();
+        // Phase 5 (2026-07-31): opts.fromServer=true 시 서버 강제 조회 + fromCache 감지 시 throw
+        async getAllOrders(opts) {
+          const forceServer = !!(opts && opts.fromServer);
+          const snap = forceServer
+            ? await db.collection('hanger_orders').get({ source: 'server' })
+            : await db.collection('hanger_orders').get();
+          if (forceServer && snap.metadata && snap.metadata.fromCache) {
+            throw new Error('hanger_orders 응답이 캐시로 폴백됨');
+          }
           return snap.docs.map(d => d.data()).filter(o => o && o.id != null);
         }
       };

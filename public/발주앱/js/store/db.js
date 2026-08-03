@@ -80,46 +80,42 @@ const DB={
       const self=this;
       return (async()=>{
         try{
+          // [Phase 5 2026-07-31] 옛 경로(hanger_data/orders 단일 배열) 사용 중단.
+          // 옛 문서가 1MB 한계 초과(1065KB) — 신규 저장 실패 위험 대응.
+          // baseline·write 모두 새 경로(hanger_orders 컬렉션) 사용. 옛 문서는 읽기 전용 유물로 보존.
+          if(typeof window._FS.getAllOrders!=='function' || typeof window._FS.upsertOrder!=='function'){
+            throw new Error('[Phase 5] _FS.getAllOrders/upsertOrder 미구현 — 저장 차단');
+          }
           const server=await Promise.race([
-            window._FS.get('orders'),
-            // [2026-07-09] 3초→10초: 모바일·저녁 네트워크에서 3초는 자주 실패 (유케이 07-08 사고 원인)
+            window._FS.getAllOrders({fromServer:true}),
             new Promise((_,rj)=>setTimeout(()=>rj(new Error('TIMEOUT')),10000))
           ]);
-          // Codex 보강 (Critical-1): _FS.get 실패가 null로 삼켜질 때 stale 저장 차단
-          // 운영에선 hanger_data/orders 문서가 항상 존재 → null/undefined는 실패로 간주
-          if (server === null || server === undefined) {
-            throw new Error('[안전망] orders 서버 재조회 실패(null) — fail-closed, 저장 차단');
-          }
-          if (!Array.isArray(server)) {
-            throw new Error('[안전망] orders 서버 응답 비배열 — fail-closed, 저장 차단');
+          if(!Array.isArray(server)){
+            throw new Error('[Phase 5] 새 경로 orders 응답 비배열 — 저장 차단');
           }
           const serverArr=server;
           const merged=_mergeById(serverArr, v);
+          // [Phase 5 롤백 보호] upsert 실패 시 _mem 복원용 이전 스냅샷 보관
+          const _memPrev = Array.isArray(window._mem&&window._mem['orders'])
+            ? window._mem['orders'].slice()
+            : null;
           const result=self._setInternal(k, merged,{skipRemote:true});
-          const remoteMerged=_cleanForFirestore(merged);
-          await window._FS.set(k, remoteMerged);
-          // ── (Phase 1 듀얼 라이트 20260611) 변경된 발주서만 hanger_orders/{orderNum}에도 단건 저장 ──
-          // 옛 경로(hanger_data/orders 배열) 성공 후에만 새 경로 시도. best-effort, 옛 경로 안전 우선.
-          // 일일 비교 함수로 차집합 모니터링 후 단계 4에서 읽기 전환 예정.
-          if(typeof window._FS.upsertOrder==='function'){
-            try{
-              const serverById=new Map((serverArr||[]).map(o=>[o.id,o]));
-              const changed=merged.filter(m=>{
-                if(!m||!m.orderNum) return false;
-                const prev=serverById.get(m.id);
-                if(!prev) return true; // 신규
-                // 단순 비교: updatedAt 차이로 변경 감지 (정확도 충분)
-                return (prev.updatedAt||'')!==(m.updatedAt||'');
-              });
-              if(changed.length>0){
-                // 비동기 best-effort (실패해도 옛 경로 성공으로 결과 반환)
-                Promise.allSettled(changed.map(o=>window._FS.upsertOrder(_cleanForFirestore(o))))
-                  .then(results=>{
-                    const failed=results.filter(r=>r.status==='rejected');
-                    if(failed.length>0) console.warn('[듀얼 라이트] hanger_orders 부분 실패:', failed.length, '/', changed.length);
-                  });
-              }
-            }catch(dwErr){ console.warn('[듀얼 라이트] 새 경로 처리 중 예외:', dwErr&&dwErr.message); }
+          // 변경분만 새 경로 단건 upsert. 실패 시 throw (best-effort 아님).
+          const serverById=new Map((serverArr||[]).map(o=>[o.id,o]));
+          const changed=merged.filter(m=>{
+            if(!m||!m.orderNum) return false;
+            const prev=serverById.get(m.id);
+            if(!prev) return true;
+            return (prev.updatedAt||'')!==(m.updatedAt||'');
+          });
+          if(changed.length>0){
+            const results=await Promise.allSettled(changed.map(o=>window._FS.upsertOrder(_cleanForFirestore(o))));
+            const failed=results.filter(r=>r.status==='rejected');
+            if(failed.length>0){
+              // _mem 롤백 — 사용자엔 저장 실패 뜨는데 유령 발주가 로컬에 남으면 다음 저장 baseline 꼬임 방지
+              if(_memPrev){ window._mem['orders']=_memPrev; }
+              throw new Error('[Phase 5] hanger_orders 저장 실패: '+failed.length+'/'+changed.length);
+            }
           }
           return result;
         }catch(e){
