@@ -1181,7 +1181,7 @@ function renderOrders(){
     <div class="card">${rows}</div>`;
   {const nb2=document.getElementById('new-order-btn');if(nb2)nb2.addEventListener('click',openOrderModal);}
   const orderNumInput=document.getElementById('order-filter-num');
-  if(orderNumInput)orderNumInput.addEventListener('input',e=>{orderFilterNum=e.target.value;renderOrders();});
+  if(orderNumInput)_imeSafeSearchInput(orderNumInput, v=>{orderFilterNum=v;renderOrders();}, {focusFlagKey:'_orderNumFilterFocused'});
   // 한글 IME 호환: 자동 검색 제거 → Enter 또는 blur(포커스 잃을 때) 검색
   (function(){
     const _si = document.getElementById('order-search-input');
@@ -1280,7 +1280,7 @@ function renderOrderHistTab(){
     <span style="color:var(--text-3)">~</span>
     <input class="form-input" type="date" id="hist-to-input" value="${histTo}"/>
     <button class="btn btn-outline btn-sm" id="hist-reset-btn">초기화</button>`;
-  document.getElementById('hist-site-input').addEventListener('input',e=>{histSite=e.target.value;renderOrderHistTab();});
+  _imeSafeSearchInput(document.getElementById('hist-site-input'), v=>{histSite=v;renderOrderHistTab();}, {focusFlagKey:'_histSiteFocused'});
   document.getElementById('hist-from-input').addEventListener('input',e=>{histFrom=e.target.value;renderOrderHistTab();});
   document.getElementById('hist-to-input').addEventListener('input',e=>{histTo=e.target.value;renderOrderHistTab();});
   document.getElementById('hist-reset-btn').addEventListener('click',()=>{histSite='';histFrom='';histTo='';renderOrderHistTab();});
@@ -1318,7 +1318,7 @@ function renderInvHistTab(){
     <span style="color:var(--text-3)">~</span>
     <input class="form-input" type="date" id="hist-to-input" value="${histTo}"/>
     <button class="btn btn-outline btn-sm" id="hist-reset-btn">초기화</button>`;
-  document.getElementById('hist-item-input').addEventListener('input',e=>{histItem=e.target.value;renderInvHistTab();});
+  _imeSafeSearchInput(document.getElementById('hist-item-input'), v=>{histItem=v;renderInvHistTab();}, {focusFlagKey:'_histItemFocused'});
   document.getElementById('hist-type-select').addEventListener('change',e=>{histType=e.target.value;renderInvHistTab();});
   document.getElementById('hist-from-input').addEventListener('input',e=>{histFrom=e.target.value;renderInvHistTab();});
   document.getElementById('hist-to-input').addEventListener('input',e=>{histTo=e.target.value;renderInvHistTab();});

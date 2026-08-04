@@ -164,8 +164,8 @@ function renderPurchaseRequests(){
       <span style="font-size:12px;color:var(--text-3)">총 ${prs.length}건</span>
     </div>
     <div class="card pr-table-wrap">${tableHtml}</div>`;
-  document.getElementById('pr-item-search').addEventListener('input',e=>{prFilterItem=e.target.value;renderPurchaseRequests();});
-  document.getElementById('pr-order-num').addEventListener('input',e=>{prFilterOrderNum=e.target.value;renderPurchaseRequests();});
+  _imeSafeSearchInput(document.getElementById('pr-item-search'), v=>{prFilterItem=v;renderPurchaseRequests();}, {focusFlagKey:'_prItemSearchFocused'});
+  _imeSafeSearchInput(document.getElementById('pr-order-num'), v=>{prFilterOrderNum=v;renderPurchaseRequests();}, {focusFlagKey:'_prOrderNumFocused'});
   document.getElementById('pr-status-filter').addEventListener('change',e=>{prFilterStatus=e.target.value;renderPurchaseRequests();});
   document.getElementById('pr-from').addEventListener('change',e=>{prFilterDateFrom=e.target.value;renderPurchaseRequests();});
   document.getElementById('pr-to').addEventListener('change',e=>{prFilterDateTo=e.target.value;renderPurchaseRequests();});
@@ -345,7 +345,7 @@ function renderStockView(){
 
   // 검색 이벤트 바인딩
   const svSearchEl=document.getElementById('sv-search-input');
-  if(svSearchEl)svSearchEl.addEventListener('input',e=>{_stockViewSearch=e.target.value;renderStockView();});
+  if(svSearchEl)_imeSafeSearchInput(svSearchEl, v=>{_stockViewSearch=v;renderStockView();}, {focusFlagKey:'_svSearchFocused'});
 
   // 아코디언 이벤트 바인딩
   document.querySelectorAll('.sv-item-row').forEach(row=>{
@@ -455,7 +455,7 @@ function renderStockLogs(){
       </table></div>${pgHtml}`:'<div class="empty"><i class="fas fa-clock-rotate-left"></i><p>기록이 없습니다.</p></div>'}
     </div>`;
   document.getElementById('slog-item-sel').addEventListener('change',e=>{stockLogItem=e.target.value;stockLogPage=1;renderStockLogs();});
-  document.getElementById('slog-item').addEventListener('input',e=>{stockLogFilter=e.target.value;stockLogPage=1;renderStockLogs();});
+  _imeSafeSearchInput(document.getElementById('slog-item'), v=>{stockLogFilter=v;stockLogPage=1;renderStockLogs();}, {focusFlagKey:'_slogItemFocusedA'});
   document.getElementById('slog-type').addEventListener('change',e=>{stockLogType=e.target.value;stockLogPage=1;renderStockLogs();});
   document.getElementById('slog-date-from').addEventListener('change',e=>{stockLogDateFrom=e.target.value;stockLogPage=1;renderStockLogs();});
   document.getElementById('slog-date-to').addEventListener('change',e=>{stockLogDateTo=e.target.value;stockLogPage=1;renderStockLogs();});
@@ -823,37 +823,15 @@ function renderInventory(filterItemId){
   // [2026-07-30] 재렌더로 인한 포커스·한글 IME 문제 방어
   // - 한글 조합 중(compositionstart~end)에는 re-render 하지 않음 (조합 버퍼 깨짐 방지)
   // - 재렌더 후 자동 포커스 복원 + 커서 끝으로
-  const invSearch=document.getElementById('inv-item-search');
-  if(invSearch){
-    // 재렌더 직후 포커스 복원 (직전 렌더가 검색 때문이었다면)
-    if(window._invSearchWasFocused){
-      window._invSearchWasFocused=false;
-      const len=invSearch.value.length;
-      invSearch.focus();
-      try{invSearch.setSelectionRange(len,len);}catch(_){}
-    }
-    let _composing=false;
-    invSearch.addEventListener('compositionstart',()=>{_composing=true;});
-    invSearch.addEventListener('compositionend',e=>{
-      _composing=false;
-      invItemSearch=e.target.value;
-      window._invSearchWasFocused=true;
-      renderInventory();
-    });
-    invSearch.addEventListener('input',e=>{
-      if(_composing)return; // 한글 조합 중엔 skip
-      invItemSearch=e.target.value;
-      window._invSearchWasFocused=true;
-      renderInventory();
-    });
-  }
+  // IME 안전 debounced 검색 헬퍼로 통합
+  _imeSafeSearchInput(document.getElementById('inv-item-search'), v=>{invItemSearch=v;renderInventory();}, {focusFlagKey:'_invSearchWasFocused'});
   const invZeroChk=document.getElementById('inv-only-zero');
   if(invZeroChk)invZeroChk.addEventListener('change',e=>{invOnlyZero=e.target.checked;invOnlyLow=false;renderInventory();});
   const invLowChk=document.getElementById('inv-only-low');
   if(invLowChk)invLowChk.addEventListener('change',e=>{invOnlyLow=e.target.checked;invOnlyZero=false;renderInventory();});
   // 재고 기록 필터 (페이지 초기화)
   document.getElementById('slog-item-sel').addEventListener('change',e=>{stockLogItem=e.target.value;invLogPage=1;renderInventory();});
-  document.getElementById('slog-item').addEventListener('input',e=>{stockLogFilter=e.target.value;invLogPage=1;renderInventory();});
+  _imeSafeSearchInput(document.getElementById('slog-item'), v=>{stockLogFilter=v;invLogPage=1;renderInventory();}, {focusFlagKey:'_slogItemFocusedB'});
   document.getElementById('slog-type').addEventListener('change',e=>{stockLogType=e.target.value;invLogPage=1;renderInventory();});
   document.getElementById('slog-date-from').addEventListener('change',e=>{stockLogDateFrom=e.target.value;invLogPage=1;renderInventory();});
   document.getElementById('slog-date-to').addEventListener('change',e=>{stockLogDateTo=e.target.value;invLogPage=1;renderInventory();});

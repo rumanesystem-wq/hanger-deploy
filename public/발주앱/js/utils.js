@@ -102,3 +102,71 @@ function makePaginationHtml(total, page, perPage, onClickFn){
 function logTypeCls(t){
   return t==='입고'?'type-in':t==='출고'?'type-out':t==='발주차감'||t==='발주수정재반영'?'badge-red':t==='취소롤백'?'badge-done':'type-adj';
 }
+
+// ── IME 안전 debounced 검색 input 헬퍼 ──
+// 문제: 한글 조합 중 재렌더 시 IME 상태 초기화로 글자 유실 (예: "겉서랍" → "겉ㅏㅂ")
+// 해결: compositionstart/end 감지 + debounce (조합 중엔 skip, 완료 후 delay 지연 재렌더)
+// 사용: _imeSafeSearchInput(inputEl, value => { stateVar = value; render(); }, { delay:200, focusFlagKey:'_mySearchFocused' })
+function _imeSafeSearchInput(inputEl, onChange, options){
+  if(!inputEl || typeof onChange!=='function') return;
+  const opts = options || {};
+  const delay = typeof opts.delay==='number' ? opts.delay : 200;
+  const focusFlagKey = opts.focusFlagKey || null;
+  // 타이머 키: focusFlagKey 기반으로 stable
+  const timerKey = focusFlagKey ? (focusFlagKey + '_timer') : null;
+  const valueKey = focusFlagKey ? (focusFlagKey + '_pendingVal') : null;
+  // 재바인딩 시 이전 pending 값 flush (다른 필터 조작으로 재렌더 시 사용자 입력 유실 방지)
+  if(timerKey && window[timerKey]){
+    clearTimeout(window[timerKey]);
+    window[timerKey] = null;
+    const pendingVal = valueKey ? window[valueKey] : null;
+    if(valueKey) window[valueKey] = null;
+    // 사용자가 입력했던 값을 microtask 로 flush → 다음 render 에서 반영
+    if(pendingVal != null){
+      // focusFlagKey 세팅은 microtask 안에서 (동기 재바인딩이 즉시 소비하지 않게)
+      Promise.resolve().then(() => {
+        if(focusFlagKey) window[focusFlagKey] = true;
+        onChange(pendingVal);
+      });
+    }
+  }
+  // 재렌더 직후 포커스 복원 (재렌더 원인이 이 검색이었다면)
+  if(focusFlagKey && window[focusFlagKey]){
+    window[focusFlagKey] = false;
+    try {
+      const len = inputEl.value.length;
+      inputEl.focus();
+      inputEl.setSelectionRange(len, len);
+    } catch(_){}
+  }
+  let _composing = false;
+  const trigger = value => {
+    if(timerKey && window[timerKey]) clearTimeout(window[timerKey]);
+    const _t = setTimeout(() => {
+      if(timerKey) window[timerKey] = null;
+      if(valueKey) window[valueKey] = null;
+      // 검색 직후 다른 메뉴로 이동해 기존 input이 DOM에서 제거된 경우,
+      // 오래된 콜백이 이전 화면을 다시 렌더하지 않도록 중단한다.
+      if(!inputEl.isConnected) return;
+      if(focusFlagKey) window[focusFlagKey] = true; // 실제 render 직전에만 true
+      onChange(value);
+    }, delay);
+    if(timerKey) window[timerKey] = _t;
+    if(valueKey) window[valueKey] = value;
+  };
+  inputEl.addEventListener('compositionstart', () => { _composing = true; });
+  inputEl.addEventListener('compositionend', e => {
+    _composing = false;
+    trigger(e.target.value);
+  });
+  // 일부 모바일 IME에서 compositionend 없이 포커스가 빠지는 경우 보완.
+  inputEl.addEventListener('blur', e => {
+    if(!_composing) return;
+    _composing = false;
+    trigger(e.target.value);
+  });
+  inputEl.addEventListener('input', e => {
+    if(_composing) return; // 한글 조합 중엔 skip (compositionend 에서 처리)
+    trigger(e.target.value);
+  });
+}

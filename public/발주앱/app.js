@@ -76,7 +76,9 @@ async function _processInventoryUnlocked({itemId,type,qty,memo,warehouse,logDate
   }
   items[idx].currentStock=(items[idx].stockSiheung||0)+(items[idx].stockPyeongtaek||0);
   const logTs=logDate?(logDate+'T00:00:00.000Z'):new Date().toISOString();
-  const stockLogs=[{id:_logIds[0],itemId,type,qty:type==='조정'?n-before:n,beforeStock:before,afterStock:after,warehouse:wh,color:color||'',memo:memo||'',createdAt:logTs}];
+  // qty 부호 규칙: 입고=+n, 출고=-n, 조정=델타(after-before)
+  const _logQty = type==='조정' ? (n-before) : (type==='출고' ? -n : n);
+  const stockLogs=[{id:_logIds[0],itemId,type,qty:_logQty,beforeStock:before,afterStock:after,warehouse:wh,color:color||'',memo:memo||'',createdAt:logTs}];
   // 입고 시: 해당 품목의 대기 중인 발주 필요 항목 자동 완료 처리
   // [2026-07-24 Codex-3차] 정책: 엄격 FIFO
   // - 오산 입고는 PR 자동완료 X (발주 대상 아님)
@@ -181,7 +183,9 @@ async function _processInventoryBatchUnlocked({itemId,type,entries,memo,warehous
   const logTs=logDate?(logDate+'T00:00:00.000Z'):new Date().toISOString();
   const stockLogs=[];
   results.forEach(r=>{
-    stockLogs.push({id:r.id,itemId,type,qty:type==='조정'?r.after-r.before:r.qty,beforeStock:r.before,afterStock:r.after,warehouse:wh,color:r.color,memo:memo||'',createdAt:logTs});
+    // qty 부호 규칙: 입고=+r.qty, 출고=-r.qty, 조정=델타(after-before)
+    const _logQty = type==='조정' ? (r.after-r.before) : (type==='출고' ? -r.qty : r.qty);
+    stockLogs.push({id:r.id,itemId,type,qty:_logQty,beforeStock:r.before,afterStock:r.after,warehouse:wh,color:r.color,memo:memo||'',createdAt:logTs});
   });
 
   if(type==='입고' && wh !== '오산'){
