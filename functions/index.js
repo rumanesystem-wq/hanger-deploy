@@ -14,6 +14,7 @@
 
 const { onCall, HttpsError, onRequest } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onDocumentDeleted } = require("firebase-functions/v2/firestore");
 const { logger } = require("firebase-functions");
 const admin  = require("firebase-admin");
 const axios  = require("axios");
@@ -188,35 +189,36 @@ exports.dailyFirestoreBackup = onSchedule(
 
     try {
       // 각 컬렉션을 독립 실행한다. 한 컬렉션 실패가 다른 백업을 막지 않는다.
+      // 보관 기간: hanger_data 는 7일(기존 유지), 신 컬렉션들은 30일 (사고 복구용 여유 확보).
       const specs = [
-        ['hanger_data', '_backups', 'map'],
-        ['hanger_orders', '_backups_hanger_orders', 'docs'],
-        ['hanger_orders_snapshots', '_backups_hanger_orders_snapshots', 'docs'],
-        ['hanger_orders_cancel_log', '_backups_hanger_orders_cancel_log', 'docs'],
-        ['hanger_order_edit_logs', '_backups_hanger_order_edit_logs', 'docs'],
+        ['hanger_data', '_backups', 'map', 7],
+        ['hanger_orders', '_backups_hanger_orders', 'docs', 30],
+        ['hanger_orders_snapshots', '_backups_hanger_orders_snapshots', 'docs', 30],
+        ['hanger_orders_cancel_log', '_backups_hanger_orders_cancel_log', 'docs', 30],
+        ['hanger_order_edit_logs', '_backups_hanger_order_edit_logs', 'docs', 30],
       ];
       const results = await Promise.allSettled(
         specs.map(([source, target, shape]) => _backupCollectionToDoc(db, source, target, dateStr, shape))
       );
 
-      // 오늘 백업이 성공한 컬렉션만 오래된 백업을 정리한다.
-      const cutoff = new Date(now);
-      cutoff.setDate(cutoff.getDate() - 7);
-      const cutoffStr = cutoff.toISOString().slice(0, 10);
+      // 오늘 백업이 성공한 컬렉션만 오래된 백업을 정리한다. cutoff 는 컬렉션별 다름.
       const failures = [];
       for (let i = 0; i < results.length; i++) {
         const r = results[i];
-        const [source, target] = specs[i];
+        const [source, target, , retentionDays] = specs[i];
         if (r.status !== 'fulfilled' || !r.value.backed) {
           const reason = r.status === 'rejected' ? (r.reason && r.reason.message) : r.value.reason;
           logger.error(`[dailyFirestoreBackup] ${source} 백업 실패/스킵:`, reason);
           failures.push(`${source}:${reason || 'unknown'}`);
           continue;
         }
-        logger.info(`[dailyFirestoreBackup] ${source} → ${r.value.count}건 (${Math.round(r.value.bytes/1024)}KB)`);
+        logger.info(`[dailyFirestoreBackup] ${source} → ${r.value.count}건 (${Math.round(r.value.bytes/1024)}KB, ${retentionDays}일 보관)`);
+        const cutoff = new Date(now);
+        cutoff.setDate(cutoff.getDate() - retentionDays);
+        const cutoffStr = cutoff.toISOString().slice(0, 10);
         try {
           const n = await _deleteOldBackups(db, target, cutoffStr);
-          if (n > 0) logger.info(`[dailyFirestoreBackup] ${target} 오래된 백업 ${n}건 삭제`);
+          if (n > 0) logger.info(`[dailyFirestoreBackup] ${target} ${retentionDays}일 이전 백업 ${n}건 삭제`);
         } catch (e) {
           logger.warn(`[dailyFirestoreBackup] ${target} 삭제 실패:`, e.message);
         }
@@ -241,7 +243,14 @@ exports.dailyFirestoreBackup = onSchedule(
 async function notifySlackOrdersMissing(result) {
   const url = process.env.SLACK_WEBHOOK_URL;
   if (!url) { logger.warn("[notifySlackOrdersMissing] SLACK_WEBHOOK_URL 미설정 — 스킵"); return { sent: false, reason: 'no_webhook' }; }
-  const missingLines = result.missing.slice(0, 30).map(m => `  → ${m.orderNum || '(orderNum없음)'} (docId: ${m.docId})`).join('\n');
+  const restoreToken = process.env.RESTORE_API_TOKEN;
+  const restoreBase = process.env.RESTORE_BASE_URL || 'https://asia-northeast3-tooktakproject.cloudfunctions.net/restoreOrder';
+  const missingLines = result.missing.slice(0, 30).map(m => {
+    const restoreLink = restoreToken
+      ? `${restoreBase}?docId=${encodeURIComponent(m.docId)}&token=${encodeURIComponent(restoreToken)}`
+      : '(RESTORE_API_TOKEN 미설정)';
+    return `  → ${m.orderNum || '(orderNum없음)'} (docId: ${m.docId})\n     복원: ${restoreLink}`;
+  }).join('\n');
   const lines = [
     `:rotating_light: *사라진 발주서 감지* (${result.checkedAt})`,
     `• 직전 스냅샷: ${result.prevAt} (${result.prevCount}건)`,
@@ -249,7 +258,7 @@ async function notifySlackOrdersMissing(result) {
     `• 사라진 doc: ${result.missing.length}건`,
     missingLines,
     result.missing.length > 30 ? `  (표시 30건 초과, 나머지는 GCP 로그)` : '',
-    `• 즉시 확인 필요 (Firestore 콘솔 · 백업 · 원인 파악)`
+    `• 즉시 확인 필요 — 링크는 미리보기 후 복원 실행`
   ].filter(Boolean);
   try {
     await axios.post(url, { text: lines.join("\n") }, { timeout: 10000 });
@@ -589,5 +598,249 @@ async function _runInvoicesIntegrityCheck(triggerLabel) {
 exports.hourlyInvoicesIntegrityCheck = onSchedule(
   { schedule: "30 8-17 * * *", timeZone: "Asia/Seoul", region: "asia-northeast3" },
   async () => _runInvoicesIntegrityCheck("hourly")
+);
+
+// ─── iter2: 실시간 삭제 감지 (onDocumentDeleted) ────────────────
+// hanger_orders/{docId} 삭제 즉시 슬랙 알림 + 서버측 audit log 기록.
+// 스냅샷 diff(3시간 주기)의 사각지대를 보완.
+// 참고: 문서를 update 로 status='취소' 처리하는 경우엔 발동 X (delete 만).
+function _buildRestoreUrl(docId) {
+  const baseUrl = process.env.RESTORE_BASE_URL || 'https://asia-northeast3-tooktakproject.cloudfunctions.net/restoreOrder';
+  const token = process.env.RESTORE_API_TOKEN;
+  if (!token) return null;
+  return `${baseUrl}?docId=${encodeURIComponent(docId)}&token=${encodeURIComponent(token)}`;
+}
+
+exports.onOrderDeleted = onDocumentDeleted(
+  { document: "hanger_orders/{docId}", region: "asia-northeast3" },
+  async (event) => {
+    const docId = event.params.docId;
+    const before = (event.data && event.data.data()) || {};
+    const now = new Date().toISOString();
+    const orderNum = before.orderNum ? String(before.orderNum) : '';
+    logger.warn(`[onOrderDeleted] 삭제 감지: hanger_orders/${docId} (orderNum=${orderNum})`);
+
+    // 서버측 audit log 기록 (클라이언트 위조 방지 관점의 부수효과)
+    try {
+      const db = admin.firestore();
+      const logId = `delete_trigger_${docId}_${Date.now()}`;
+      await db.collection("hanger_orders_cancel_log").doc(logId).set({
+        id: logId,
+        type: '삭제감지(서버트리거)',
+        orderId: docId,
+        orderNum: orderNum,
+        source: 'onDocumentDeleted',
+        deletedSnapshot: before,
+        at: admin.firestore.FieldValue.serverTimestamp(),
+        detectedAt: now
+      });
+    } catch (e) {
+      logger.warn("[onOrderDeleted] audit log 실패:", e.message);
+    }
+
+    // 슬랙 알림 + 복원 링크
+    const url = process.env.SLACK_WEBHOOK_URL;
+    if (!url) {
+      logger.warn("[onOrderDeleted] SLACK_WEBHOOK_URL 미설정 — 알림 스킵");
+      return;
+    }
+    const restoreUrl = _buildRestoreUrl(docId);
+    const lines = [
+      `:rotating_light: *발주서 실시간 삭제 감지* (${now})`,
+      `• docId: ${docId}`,
+      `• orderNum: ${orderNum || '(없음)'}`,
+      `• 삭제 시각: ${now}`,
+      restoreUrl
+        ? `• 복원 링크: ${restoreUrl}\n  (미리보기 후 확인, 최근 30일 백업에서 자동 검색)`
+        : `• 복원 링크: RESTORE_API_TOKEN 미설정 — Firestore 콘솔에서 수동 복원 필요`,
+      `• 서버측 audit log: hanger_orders_cancel_log 에 기록됨`
+    ].filter(Boolean);
+    try {
+      await axios.post(url, { text: lines.join("\n") }, { timeout: 10000 });
+      logger.info("[onOrderDeleted] 슬랙 알림 완료");
+    } catch (e) {
+      logger.error("[onOrderDeleted] 슬랙 발송 실패:", e.message);
+    }
+  }
+);
+
+// ─── iter2: 발주서 복원 함수 (HTTP endpoint, 슬랙 링크용) ─────────
+// GET /restoreOrder?docId=xxx[&date=YYYY-MM-DD]&token=xxx[&confirm=true]
+// - token 인증 필수
+// - date 없으면 최근 백업에서 자동 검색 (30일)
+// - confirm=true 없으면 미리보기 페이지만 표시
+// - 실제 복원 시 hanger_orders_cancel_log 에 이벤트 기록
+async function _findBackupWithDoc(db, docId, explicitDate) {
+  if (explicitDate) {
+    const doc = await db.collection("_backups_hanger_orders").doc(explicitDate).get();
+    if (!doc.exists) return { found: false, reason: `${explicitDate} 백업 doc 없음` };
+    const docs = doc.data().docs || [];
+    const target = docs.find(d => d && d.docId === docId);
+    return target ? { found: true, date: explicitDate, target } : { found: false, reason: `${explicitDate} 백업에 docId=${docId} 없음` };
+  }
+  const snap = await db.collection("_backups_hanger_orders")
+    .orderBy(admin.firestore.FieldPath.documentId(), "desc")
+    .limit(30)
+    .get();
+  for (const doc of snap.docs) {
+    const docs = doc.data().docs || [];
+    const target = docs.find(d => d && d.docId === docId);
+    if (target) return { found: true, date: doc.id, target };
+  }
+  return { found: false, reason: `최근 30일 백업에 docId=${docId} 없음` };
+}
+
+function _htmlEscape(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// 복원 성공 시 슬랙 알림 (파괴적 작업 감지·감사 목적)
+async function _notifyRestoreSuccess(docId, orderNum, date, actorIp) {
+  const url = process.env.SLACK_WEBHOOK_URL;
+  if (!url) return;
+  try {
+    await axios.post(url, {
+      text: `:white_check_mark: *발주서 복원 완료* (${new Date().toISOString()})\n• docId: ${docId}\n• orderNum: ${orderNum || '(없음)'}\n• 백업 날짜: ${date}\n• 요청 IP: ${actorIp}\n• hanger_orders_cancel_log 에 이벤트 기록됨`
+    }, { timeout: 10000 });
+  } catch (e) { logger.warn("[restoreOrder] 성공 알림 발송 실패:", e.message); }
+}
+
+// 인증 실패·비정상 요청 로깅 (brute force 감지 흔적)
+function _logAuthAttempt(kind, req, extra) {
+  const ip = req.ip || req.headers['x-forwarded-for'] || '(unknown)';
+  const ua = req.headers['user-agent'] || '(no-ua)';
+  logger.warn(`[restoreOrder] ${kind} ip=${ip} ua=${ua} ${extra || ''}`);
+}
+
+exports.restoreOrder = onRequest(
+  { region: "asia-northeast3", invoker: "public" },
+  async (req, res) => {
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    // Slack unfurl 방지: X-Robots-Tag + Cache-Control
+    res.set('X-Robots-Tag', 'noindex, nofollow');
+    res.set('Cache-Control', 'no-store');
+
+    const expectedToken = process.env.RESTORE_API_TOKEN;
+    if (!expectedToken) {
+      logger.error('[restoreOrder] RESTORE_API_TOKEN 미설정');
+      res.status(500).send('<h1>500</h1><p>RESTORE_API_TOKEN 환경변수 미설정. functions/.env 확인.</p>');
+      return;
+    }
+
+    // 실행(POST) vs 미리보기(GET)
+    const isExecute = req.method === 'POST';
+    const params = isExecute ? (req.body || {}) : (req.query || {});
+    const token = String(params.token || '');
+    if (token !== expectedToken) {
+      _logAuthAttempt('AUTH_FAIL', req, `method=${req.method}`);
+      res.status(401).send('<h1>401 인증 실패</h1><p>token 불일치. 시도가 로깅되었습니다.</p>');
+      return;
+    }
+
+    const docId = String(params.docId || '');
+    const explicitDate = params.date ? String(params.date) : '';
+    if (!docId) {
+      res.status(400).send('<h1>400</h1><p>docId 파라미터 필요.</p>');
+      return;
+    }
+
+    try {
+      const db = admin.firestore();
+      const result = await _findBackupWithDoc(db, docId, explicitDate);
+      if (!result.found) {
+        _logAuthAttempt('BACKUP_MISS', req, `docId=${docId} date=${explicitDate}`);
+        res.status(404).send(`<h1>404 백업 없음</h1><p>${_htmlEscape(result.reason)}</p>`);
+        return;
+      }
+
+      const currentRef = db.collection("hanger_orders").doc(docId);
+      const currentDoc = await currentRef.get();
+      const alreadyExists = currentDoc.exists;
+
+      // 덮어쓰기 절대 금지 — 옛 데이터로 오늘 수정본 파괴 방지
+      if (alreadyExists) {
+        _logAuthAttempt('OVERWRITE_REFUSED', req, `docId=${docId}`);
+        res.status(409).send(`<!doctype html><html><head><meta charset="utf-8"><title>409 이미 존재</title></head><body style="font-family:sans-serif;max-width:600px;margin:20px auto;padding:0 20px">
+<h1 style="color:#c00">409 이미 존재</h1>
+<p><b>docId</b>: ${_htmlEscape(docId)} — hanger_orders 에 doc이 이미 있음.</p>
+<p>복원 API는 <b>덮어쓰기 금지</b> — 옛 백업으로 오늘 수정본을 파괴할 위험.</p>
+<p>정말 덮으려면: Firestore 콘솔에서 해당 doc 을 먼저 삭제 후 다시 이 링크 요청.</p>
+</body></html>`);
+        return;
+      }
+
+      // GET = 미리보기, POST = 실행
+      if (!isExecute) {
+        const dataJson = _htmlEscape(JSON.stringify(result.target.data, null, 2));
+        res.send(`<!doctype html><html><head><meta charset="utf-8"><title>발주서 복원 미리보기</title></head><body style="font-family:sans-serif;max-width:800px;margin:20px auto;padding:0 20px">
+<h1>발주서 복원 미리보기</h1>
+<table style="border-collapse:collapse">
+<tr><td style="padding:4px 8px"><b>docId</b></td><td>${_htmlEscape(docId)}</td></tr>
+<tr><td style="padding:4px 8px"><b>orderNum</b></td><td>${_htmlEscape(result.target.data.orderNum || '(없음)')}</td></tr>
+<tr><td style="padding:4px 8px"><b>백업 날짜</b></td><td>${_htmlEscape(result.date)}</td></tr>
+<tr><td style="padding:4px 8px"><b>현재 상태</b></td><td><span style="color:#080">✓ 없음 (복원 안전)</span></td></tr>
+</table>
+<h2>백업 내용</h2>
+<pre style="max-height:500px;overflow:auto;background:#f5f5f5;padding:10px;border:1px solid #ddd">${dataJson}</pre>
+<form method="POST" action="" style="margin:20px 0">
+  <input type="hidden" name="docId" value="${_htmlEscape(docId)}">
+  <input type="hidden" name="date" value="${_htmlEscape(result.date)}">
+  <input type="hidden" name="token" value="${_htmlEscape(token)}">
+  <button type="submit" style="background:#c00;color:#fff;padding:12px 24px;border:0;border-radius:4px;font-weight:bold;font-size:1em;cursor:pointer">복원 실행</button>
+</form>
+<p style="color:#666;font-size:0.9em">GET 은 미리보기만, 실제 복원은 POST (버튼 클릭). Slack unfurl 자동 실행 방지.</p>
+</body></html>`);
+        return;
+      }
+
+      // 실제 복원 (POST) — .create() 로 원자적 처리 (TOCTOU 방지)
+      // 사전 check(라인 위) 통과 후에도 set 직전에 doc 이 생겼으면 create 가 ALREADY_EXISTS throw
+      try {
+        await currentRef.create(result.target.data);
+      } catch (createErr) {
+        // ALREADY_EXISTS 여러 형식 방어: gRPC 숫자 코드(6) / 문자열 / status / 메시지
+        const c = createErr && createErr.code;
+        const s = createErr && createErr.status;
+        const m = (createErr && createErr.message) || '';
+        const isAlreadyExists = c === 6 || c === 'already-exists' || c === 'ALREADY_EXISTS'
+          || s === 'ALREADY_EXISTS' || /already.?exists/i.test(m);
+        if (isAlreadyExists) {
+          _logAuthAttempt('OVERWRITE_REFUSED_TOCTOU', req, `docId=${docId}`);
+          res.status(409).send(`<h1>409 이미 존재 (race)</h1><p>미리보기와 실행 사이에 doc 이 생성됨. 새 요청 필요.</p>`);
+          return;
+        }
+        throw createErr;
+      }
+      const orderNum = result.target.data.orderNum ? String(result.target.data.orderNum) : '';
+      const logId = `restore_${docId}_${Date.now()}`;
+      const actorIp = req.ip || req.headers['x-forwarded-for'] || '(unknown)';
+      await db.collection("hanger_orders_cancel_log").doc(logId).set({
+        id: logId,
+        type: '복원',
+        orderId: docId,
+        orderNum,
+        source: `_backups_hanger_orders/${result.date}`,
+        actor: 'restore_api',
+        actorIp,
+        at: admin.firestore.FieldValue.serverTimestamp(),
+        restoredAt: new Date().toISOString()
+      });
+      logger.info(`[restoreOrder] 복원 성공: ${docId} (백업=${result.date}, ip=${actorIp})`);
+      // 성공 시 Slack 알림 (감사 흔적)
+      await _notifyRestoreSuccess(docId, orderNum, result.date, actorIp);
+
+      res.send(`<!doctype html><html><head><meta charset="utf-8"><title>복원 완료</title></head><body style="font-family:sans-serif;max-width:600px;margin:20px auto;padding:0 20px">
+<h1 style="color:#080">✓ 복원 완료</h1>
+<p><b>docId</b>: ${_htmlEscape(docId)}</p>
+<p><b>orderNum</b>: ${_htmlEscape(orderNum || '(없음)')}</p>
+<p><b>백업 날짜</b>: ${_htmlEscape(result.date)}</p>
+<p><code>hanger_orders_cancel_log</code> 에 복원 이벤트 기록됨.</p>
+<p>Slack 에 복원 완료 알림도 발송됨.</p>
+</body></html>`);
+    } catch (e) {
+      logger.error("[restoreOrder] 오류:", e.message, e.stack);
+      res.status(500).send(`<h1>500 복원 실패</h1><p>${_htmlEscape(e.message)}</p>`);
+    }
+  }
 );
 
