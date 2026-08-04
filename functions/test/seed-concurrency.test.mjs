@@ -3,7 +3,7 @@
 // 현재 read-modify-write 패턴 → RED 예상. 수정(transaction or arrayUnion) 후 GREEN.
 import { describe, it, expect, beforeEach } from "vitest";
 
-process.env.FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080";
+process.env.FIRESTORE_EMULATOR_HOST ||= "127.0.0.1:8080";
 process.env.GCLOUD_PROJECT = "tooktak-test";
 process.env.GOOGLE_CLOUD_PROJECT = "tooktak-test";
 

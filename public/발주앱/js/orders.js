@@ -425,6 +425,49 @@ async function cancelOrder(orderId, cancelReason){
   prs.forEach(p=>{if(p.orderId===orderId&&p.status==='대기'){p.status='취소';p.updatedAt=new Date().toISOString();}});
   DB.set('purchase_requests',prs);
 
+  // [2026-08-04] cancel audit log — 스냅샷 diff 대조용 + 감사 추적
+  // 실패해도 취소 자체는 성공 처리 (로그 실패로 취소 롤백 X)
+  try{
+    if(window._FS&&typeof window._FS.collectionAdd==='function'){
+      const _eventId='cancel_'+orderId+'_'+Date.now();
+      const _auditWrite=window._FS.collectionAdd('hanger_orders_cancel_log',_eventId,{
+        id:_eventId,
+        type:'발주취소',
+        orderId:orderId,
+        orderNum:order.orderNum||'',
+        reason:cancelReason||'',
+        actor:{
+          userId:currentUser?currentUser.id:'',
+          userName:currentUser?(currentUser.name||''):'',
+          role:(typeof isAdmin==='function'&&isAdmin())?'admin':'user'
+        },
+        orderSnapshot:{
+          deliveryTo:order.deliveryTo||'',
+          shipDate:order.shipDate||'',
+          totalAmount:Number(order.totalAmount)||0,
+          status:order.status||''
+        },
+        at:(typeof firebase!=='undefined'&&firebase.firestore&&firebase.firestore.FieldValue)
+          ? firebase.firestore.FieldValue.serverTimestamp()
+          : new Date().toISOString()
+      });
+      // 취소 저장은 이미 완료된 상태이므로, 감사 로그 지연이 UI를 무기한 대기시키지 않게 한다.
+      let _auditTimer;
+      try{
+        await Promise.race([
+          _auditWrite,
+          new Promise((_,reject)=>{
+            _auditTimer=setTimeout(()=>reject(new Error('감사 로그 저장 타임아웃')),5000);
+          })
+        ]);
+      }finally{
+        if(_auditTimer)clearTimeout(_auditTimer);
+      }
+    }
+  }catch(logErr){
+    console.warn('[cancel audit log 실패]',logErr&&logErr.message);
+  }
+
   return true;
   }finally{
     if(_cancelLockAcquired&&typeof window._releaseServerCancelLock==='function'){

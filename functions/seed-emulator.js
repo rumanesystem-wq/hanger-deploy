@@ -79,6 +79,10 @@ async function main() {
     value: [],
     updatedAt: new Date().toISOString()
   });
+  await db.collection('hanger_data').doc('purchase_requests').set({
+    value: [],
+    updatedAt: new Date().toISOString()
+  });
   console.log(`✓ Firestore: orders/invoices 빈 컨테이너`);
 
   console.log('\n━━━ 시드 완료 ━━━');

@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 
 // index.js의 admin.initializeApp()이 에뮬레이터·테스트 프로젝트를 쓰도록 import 전에 env 설정
-process.env.FIRESTORE_EMULATOR_HOST = "127.0.0.1:8080";
+process.env.FIRESTORE_EMULATOR_HOST ||= "127.0.0.1:8080";
 const fft = (await import("firebase-functions-test")).default({ projectId: "tooktak-test" });
 process.env.GCLOUD_PROJECT = "tooktak-test";
 process.env.GOOGLE_CLOUD_PROJECT = "tooktak-test";

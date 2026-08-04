@@ -2,6 +2,7 @@
 // 오산 창고 추가 회귀 — 재고 관리 전용, 발주 대상 아님
 
 import { test, expect, Page } from "@playwright/test";
+import { resetAndSeed } from "../helpers/emu-reset";
 
 test.setTimeout(90_000);
 
@@ -30,6 +31,11 @@ async function loginOrderer(page: Page) {
 
 test.describe("오산 창고 추가 (재고 관리 전용, 발주 대상 아님)", () => {
   test.describe.configure({ retries: 2 });
+
+  // 다른 회귀 테스트가 변경한 에뮬레이터 재고를 이어받지 않도록 각 테스트를 격리한다.
+  test.beforeEach(async () => {
+    await resetAndSeed();
+  });
 
   test("O1: 재고 관리 화면에 오산 컬럼·카드 표시", async ({ page }) => {
     await loginAdmin(page);
