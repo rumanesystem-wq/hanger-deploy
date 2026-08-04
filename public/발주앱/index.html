@@ -917,6 +917,9 @@
       </button>
       <span class="topbar-role" id="topbar-role" style="white-space:nowrap;flex-shrink:0"></span>
       <span class="topbar-date" id="topbar-date" style="white-space:nowrap;flex-shrink:0"></span>
+      <button id="alert-failure-badge" title="발주서 삭제 알림 실패 (미처리)" style="display:none;background:#dc2626;color:#fff;border:0;border-radius:12px;padding:4px 10px;font-size:12px;font-weight:800;cursor:pointer;align-items:center;gap:4px;white-space:nowrap;flex-shrink:0">
+        <i class="fas fa-exclamation-triangle"></i> 알림실패 <span class="alert-failure-count">0</span>
+      </button>
       <div style="position:relative">
         <button id="profile-btn" onclick="toggleProfile()" style="background:none;border:none;cursor:pointer;display:flex;align-items:center;gap:7px;padding:5px 8px;border-radius:var(--r-sm);transition:background .15s" onmouseenter="this.style.background='var(--bg)'" onmouseleave="this.style.background='none'">
           <span id="profile-avatar" style="width:32px;height:32px;border-radius:50%;background:var(--primary-light);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800"></span>
@@ -1472,6 +1475,21 @@
 <script src="js/features/ledger/validate.js"></script>
 <script src="js/features/ledger/query.js"></script>
 <script src="js/features/ledger/render.js"></script>
+
+<!-- 알림 실패 배지 (관리자 전용, 발주서 삭제 알림 실패 시 표시) -->
+<div id="alert-failure-modal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:8px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">
+    <div style="padding:16px;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:16px;font-weight:700">발주서 삭제 알림 실패 목록</div>
+      <button id="alert-failure-modal-close" style="background:none;border:0;font-size:24px;cursor:pointer;color:#666">×</button>
+    </div>
+    <div id="alert-failure-list" style="flex:1;overflow-y:auto"></div>
+    <div style="padding:12px 16px;border-top:1px solid #eee;font-size:12px;color:#666">
+      실패 원인 확인 후 슬랙에 수동 알림 · 필요 시 발주서 되살리기 · 해결 버튼으로 처리 완료 표시
+    </div>
+  </div>
+</div>
+<script src="js/features/alert-failures/index.js"></script>
 <script>
 // ── 오프라인 감지 ──
 function _syncOffline(){

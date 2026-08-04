@@ -734,6 +734,9 @@ function doLogout(){
   if(window._fbAuth){window._fbAuth.signOut().catch(()=>{});}
   currentUser=null;
   DB.set('session',null);
+  if(window.LumaneAlertFailures&&typeof window.LumaneAlertFailures.syncForCurrentUser==='function'){
+    window.LumaneAlertFailures.syncForCurrentUser();
+  }
   sessionStorage.removeItem('sh_tab_session');
   // 자동로그인 해제 (아이디 저장은 유지)
   localStorage.removeItem('sh_auto_login');
@@ -757,6 +760,9 @@ function requireAdmin(){
 function showApp(){
   document.getElementById('login-screen').classList.remove('active');
   document.getElementById('app').classList.add('active');
+  if(window.LumaneAlertFailures&&typeof window.LumaneAlertFailures.syncForCurrentUser==='function'){
+    window.LumaneAlertFailures.syncForCurrentUser();
+  }
   const roleEl=document.getElementById('topbar-role');
   roleEl.textContent=isAdmin()?'관리자':'발주자';
   roleEl.className='topbar-role '+(isAdmin()?'role-admin':'role-orderer');
