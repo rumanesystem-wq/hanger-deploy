@@ -115,8 +115,8 @@ const PRICE_DISPLAY_LABEL = {
   '선반 370':        '선반  370mm ~ 400mm',
   '선반 570':        '선반  570mm ~ 600mm',
   '선반 770':        '선반  770mm ~ 800mm',
-  '선반 비규격':     '선반  비규격 (800mm 초과 ~ 1200mm 이하)',
-  '선반 2400':       '선반  1200mm 이상 ~ 2400mm 이하',
+  '선반 비규격':     '선반  비규격 (800mm 초과 ~ 1220mm 이하)',
+  '선반 2400':       '선반  1220mm 초과 ~ 2400mm 이하',
   '코너선반 780':    '코너선반  780×585mm 이하',
   '코너선반 비규격': '코너선반  780×585mm 초과 (비규격)',
 };
@@ -218,7 +218,7 @@ function getShelfPrice(size){
   if(mm<=400)          return getUnitPriceFromSettings('선반 370')??2700;
   if(mm<=600)          return getUnitPriceFromSettings('선반 570')??3600;
   if(mm<=800)          return getUnitPriceFromSettings('선반 770')??4600;
-  if(mm<=1200)         return getUnitPriceFromSettings('선반 비규격')??7500;
+  if(mm<=1220)         return getUnitPriceFromSettings('선반 비규격')??7500;
   return getUnitPriceFromSettings('선반 2400')??13500;
 }
 
@@ -250,8 +250,8 @@ function getShelfEcountCode(size,color){
   else if(mm>620&&mm<=720)   key='선반 670';
   else if(mm>720&&mm<=835)   key='선반 770';
   else if(mm>835&&mm<=1000)  key='선반 900';
-  else if(mm>1000&&mm<=1200) key='비규격 선반';
-  else if(mm>1200)           key='선반 2400';
+  else if(mm>1000&&mm<=1220) key='비규격 선반';
+  else if(mm>1220)           key='선반 2400';
   else return null;
   return SHELF_ECOUNT_CODES[key]?.[color]||null;
 }

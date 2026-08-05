@@ -1,5 +1,5 @@
 // PWA 설치용 최소 서비스 워커 — 캐시 완전 비활성화
-const CACHE_NAME = 'hanger-v100';
+const CACHE_NAME = 'hanger-v101';
 
 self.addEventListener('install', () => {
   self.skipWaiting();
