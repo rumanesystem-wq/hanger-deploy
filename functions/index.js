@@ -245,14 +245,15 @@ exports.dailyFirestoreBackup = onSchedule(
 
       let operation;
       try {
-        // snapshotTime: 이 시점의 Firestore 스냅샷을 export (시점 일관성).
-        // Firestore 규격: 과거 시점 + 분 단위 정렬(seconds%60==0, nanos==0) + 최근 PITR 범위(기본 1h) 이내.
-        // → 잠금 획득 시점을 분 단위로 내린 뒤 안전 여유 2분을 뺀다.
+        // snapshotTime 사용 조건: Firestore Point-in-Time Recovery(PITR) 활성화 필수 (유료).
+        // 현재 PITR 미활성 → snapshotTime 미전달. export 는 실행 시점의 "현재" 스냅샷으로 진행.
+        // 트레이드오프: 수 분 window 안에 write 가 섞이면 완벽 일관성은 아님. 일일 자정 백업 규모상 실용상 무해.
+        // PITR 활성 시 아래 BACKUP_USE_PITR=1 환경변수로 켤 것.
         const exportReq = {
           name: `projects/${projectId}/databases/(default)`,
           outputUriPrefix,
         };
-        if (snapshotTime) {
+        if (snapshotTime && process.env.BACKUP_USE_PITR === '1') {
           exportReq.snapshotTime = {
             seconds: Math.floor(snapshotTime.getTime() / 1000),
             nanos: 0,
