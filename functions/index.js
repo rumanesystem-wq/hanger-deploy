@@ -134,7 +134,8 @@ exports.getNextIds = onCall(
 // Firestore Admin `exportDocuments` API 를 호출해 지정 버킷으로 전체 컬렉션을 통째 export.
 // 원본 데이터는 read-only 로 접근 — 어떤 컬렉션도 삭제·수정하지 않음.
 // 보관 정책: GCS 버킷 Lifecycle 규칙(30일) 이 자동 처리 (버킷 설정에서 관리).
-// 복원 경로: Firebase Console → Firestore → Import → 해당 GCS 폴더 선택 → 원클릭.
+// 복원 경로: 전체 장애 복구 전용. 전체 import는 동일 ID의 현재 문서를 덮어쓰므로
+// 운영 DB에 바로 실행하지 않는다. 단일 발주는 hanger_orders_deleted_recovery를 사용한다.
 // 옛 `_backups*` 컬렉션 문서들은 읽기 전용 유물로 그대로 보존 (지우지 않음).
 const BACKUP_GCS_BUCKET = process.env.BACKUP_GCS_BUCKET || 'tooktakproject-firestore-backups';
 
@@ -198,12 +199,14 @@ exports.dailyFirestoreBackup = onSchedule(
           const startedMs = cur.startedAt && cur.startedAt.toMillis ? cur.startedAt.toMillis() : 0;
           const staleMs = Date.now() - startedMs;
           if (status === 'completed') return;
-          if (status === 'started' && staleMs < 24 * 60 * 60 * 1000) return;
+          if ((status === 'started' || status === 'awaiting_verify')
+              && staleMs < 24 * 60 * 60 * 1000) return;
           if (status === 'skipped_already_in_progress' && staleMs < 60 * 60 * 1000) return;
         }
-        // snapshotTime = 잠금 획득 시점. exportDocuments 에 넘겨 시점 일관성 확보.
-        // (exportDocuments 는 이 시점의 스냅샷을 export → export 도중 새 write 는 반영 안 됨)
-        snapshotTime = new Date();
+        // Firestore 규격에 맞춘 실제 export 기준 시각을 감사 문서에도 그대로 남긴다.
+        // 과거 시점 + 분 단위 정렬을 보장하기 위해 현재 분에서 2분을 뺀다.
+        const alignedMs = Math.floor(Date.now() / 60000) * 60000 - 2 * 60000;
+        snapshotTime = new Date(alignedMs);
         tx.set(opsAuditRef, {
           dateStr,
           outputUriPrefix,
@@ -211,6 +214,16 @@ exports.dailyFirestoreBackup = onSchedule(
           status: 'started',
           snapshotTime: admin.firestore.Timestamp.fromDate(snapshotTime),
           startedAt: admin.firestore.FieldValue.serverTimestamp(),
+          // 같은 날짜의 실패 실행을 수동 재시도할 때 옛 상태가 섞이지 않게 정리한다.
+          operationName: admin.firestore.FieldValue.delete(),
+          completedAt: admin.firestore.FieldValue.delete(),
+          failedAt: admin.firestore.FieldValue.delete(),
+          errorMessage: admin.firestore.FieldValue.delete(),
+          waitLimitExceededAt: admin.firestore.FieldValue.delete(),
+          finalOutputUriPrefix: admin.firestore.FieldValue.delete(),
+          verifiedBy: admin.firestore.FieldValue.delete(),
+          lastVerifyFailedAt: admin.firestore.FieldValue.delete(),
+          lastVerifyError: admin.firestore.FieldValue.delete(),
         }, { merge: true });
         acquiredLock = true;
       });
@@ -234,32 +247,28 @@ exports.dailyFirestoreBackup = onSchedule(
       try {
         // snapshotTime: 이 시점의 Firestore 스냅샷을 export (시점 일관성).
         // Firestore 규격: 과거 시점 + 분 단위 정렬(seconds%60==0, nanos==0) + 최근 PITR 범위(기본 1h) 이내.
-        // → 잠금 획득 시점을 직전 분으로 내림 후 안전 여유 2분 뒤로.
+        // → 잠금 획득 시점을 분 단위로 내린 뒤 안전 여유 2분을 뺀다.
         const exportReq = {
           name: `projects/${projectId}/databases/(default)`,
           outputUriPrefix,
         };
         if (snapshotTime) {
-          const alignedMs = Math.floor(snapshotTime.getTime() / 60000) * 60000 - 2 * 60000;
           exportReq.snapshotTime = {
-            seconds: Math.floor(alignedMs / 1000),
+            seconds: Math.floor(snapshotTime.getTime() / 1000),
             nanos: 0,
           };
         }
         [operation] = await client.exportDocuments(exportReq);
       } catch (e) {
         // 서버측 이미 진행 중 응답도 방어 (잠금 우회 재실행이 서버까지 도달한 케이스).
-        const alreadyInProgress =
-          e && (e.code === 9 || /already in progress|another operation/i.test(e.message || ''));
+        // code=9(FAILED_PRECONDITION)만으로 동시 실행이라고 단정하면 다른 설정 오류까지
+        // 조용히 숨길 수 있다. 실제 동시 실행 문구가 있을 때만 별도 로그를 남긴다.
+        const alreadyInProgress = e
+          && /already in progress|another (?:export )?operation/i.test(e.message || '');
         if (alreadyInProgress) {
-          logger.warn(`[dailyFirestoreBackup] 서버측 이미 export 진행 중 — 스킵: ${e.message}`);
-          await opsAuditRef.set({
-            status: 'skipped_already_in_progress',
-            reason: e.message,
-            recordedAt: admin.firestore.FieldValue.serverTimestamp(),
-          }, { merge: true });
-          return;
+          logger.warn(`[dailyFirestoreBackup] 서버측 이미 export 진행 중 — 이번 실행 실패 처리: ${e.message}`);
         }
+        // 동시 실행을 포함해 시작하지 못한 모든 오류는 outer catch에서 failed+Slack 처리한다.
         throw e;
       }
 
@@ -275,10 +284,16 @@ exports.dailyFirestoreBackup = onSchedule(
       // 대부분(현재 데이터 규모 ≈수 MB)은 30~60s 안에 끝나므로 실무상 여기서 완료 확인됨.
       const WAIT_LIMIT_MS = 480 * 1000;
       const timeoutBox = { timedOut: false };
+      let timeoutId;
       const timeoutSentinel = new Promise((resolve) => {
-        setTimeout(() => { timeoutBox.timedOut = true; resolve(['__TIMEOUT__']); }, WAIT_LIMIT_MS);
+        timeoutId = setTimeout(() => { timeoutBox.timedOut = true; resolve(['__TIMEOUT__']); }, WAIT_LIMIT_MS);
       });
-      const [response] = await Promise.race([operation.promise(), timeoutSentinel]);
+      let response;
+      try {
+        [response] = await Promise.race([operation.promise(), timeoutSentinel]);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
 
       if (timeoutBox.timedOut) {
         // 함수 타임아웃 안이지만 wait 한계 초과 → export 는 GCP 에서 계속 진행 중.
@@ -334,8 +349,10 @@ exports.verifyBackupOperations = onSchedule(
     const { v1 } = require('@google-cloud/firestore');
     const client = new v1.FirestoreAdminClient();
 
-    // 최근 48시간 이내 미완료 op 만 확인 (오래된 좀비는 수동 조사).
+    // 최근 48시간 이내 미완료 op를 확인한다. 오래된 좀비나 operationName 유실도
+    // 로그에만 묻지 않고 상태를 종료한 뒤 Slack으로 알린다.
     const cutoffMs = Date.now() - 48 * 60 * 60 * 1000;
+    const missingOperationCutoffMs = Date.now() - 15 * 60 * 1000;
 
     const inflightStatuses = ['started', 'awaiting_verify'];
     const snap = await db.collection('hanger_backup_ops')
@@ -346,11 +363,56 @@ exports.verifyBackupOperations = onSchedule(
     for (const doc of snap.docs) {
       const data = doc.data() || {};
       const startedMs = data.startedAt && data.startedAt.toMillis ? data.startedAt.toMillis() : 0;
-      if (startedMs && startedMs < cutoffMs) {
-        logger.warn(`[verifyBackupOperations] ${doc.id} 48h 초과 좀비 — 수동 조사 필요 (op=${data.operationName || 'unknown'})`);
+      if (!startedMs) {
+        const errMsg = 'startedAt 누락/형식 오류 — 백업 상태 추적 불가';
+        logger.error(`[verifyBackupOperations] ${doc.id} ${errMsg}`);
+        await doc.ref.set({
+          status: 'failed',
+          failedAt: admin.firestore.FieldValue.serverTimestamp(),
+          errorMessage: errMsg,
+          verifiedBy: 'verifyBackupOperations',
+        }, { merge: true });
+        await _sendSlackWithCooldown(
+          db,
+          'backupExportFailed',
+          `:x: *일일 백업 상태 오염* (${doc.id})\n• 오류: ${errMsg}\n• hanger_backup_ops 문서 확인 필요`
+        );
         continue;
       }
-      if (!data.operationName) continue; // op 이름 없으면 확인 불가
+      if (startedMs && startedMs < cutoffMs) {
+        const errMsg = `48h 초과 미완료 백업 (op=${data.operationName || 'unknown'})`;
+        logger.error(`[verifyBackupOperations] ${doc.id} ${errMsg}`);
+        await doc.ref.set({
+          status: 'failed',
+          failedAt: admin.firestore.FieldValue.serverTimestamp(),
+          errorMessage: errMsg,
+          verifiedBy: 'verifyBackupOperations',
+        }, { merge: true });
+        await _sendSlackWithCooldown(
+          db,
+          'backupExportFailed',
+          `:x: *일일 백업 장기 미완료* (${doc.id})\n• 오류: ${errMsg}\n• GCP 로그 확인 필요`
+        );
+        continue;
+      }
+      if (!data.operationName) {
+        // export 시작 직전의 정상 짧은 구간은 기다리고, 15분 넘으면 추적 불가 실패로 확정한다.
+        if (startedMs > missingOperationCutoffMs) continue;
+        const errMsg = '15분 이상 operationName 없이 started 상태 — export 시작 여부 확인 불가';
+        logger.error(`[verifyBackupOperations] ${doc.id} ${errMsg}`);
+        await doc.ref.set({
+          status: 'failed',
+          failedAt: admin.firestore.FieldValue.serverTimestamp(),
+          errorMessage: errMsg,
+          verifiedBy: 'verifyBackupOperations',
+        }, { merge: true });
+        await _sendSlackWithCooldown(
+          db,
+          'backupExportFailed',
+          `:x: *일일 백업 추적 실패* (${doc.id})\n• 오류: ${errMsg}\n• GCP Import/Export 작업 목록 확인 필요`
+        );
+        continue;
+      }
 
       try {
         const [op] = await client.operationsClient.getOperation({ name: data.operationName });
@@ -375,26 +437,26 @@ exports.verifyBackupOperations = onSchedule(
           );
         } else {
           logger.info(`[verifyBackupOperations] ${doc.id} 백업 완료 확정 (op=${data.operationName})`);
-          let finalUri = data.outputUriPrefix;
-          try {
-            const metaBuf = op.response && op.response.value;
-            if (metaBuf) {
-              // response 는 Any(pb) — outputUriPrefix 문자열이 있는지 raw 파싱 (best effort).
-              const raw = Buffer.isBuffer(metaBuf) ? metaBuf.toString('utf8') : String(metaBuf);
-              const m = raw.match(/gs:\/\/[^\s]+/);
-              if (m) finalUri = m[0];
-            }
-          } catch (_e) {}
           await doc.ref.set({
             status: 'completed',
             completedAt: admin.firestore.FieldValue.serverTimestamp(),
-            finalOutputUriPrefix: finalUri,
+            // 요청 시점에 기록한 prefix가 복원 가능한 정확한 경로다.
+            finalOutputUriPrefix: data.outputUriPrefix,
             verifiedBy: 'verifyBackupOperations',
           }, { merge: true });
           await _clearAlertKey(db, 'backupExportFailed');
         }
       } catch (e) {
-        logger.warn(`[verifyBackupOperations] ${doc.id} 확인 실패: ${e.message}`);
+        logger.error(`[verifyBackupOperations] ${doc.id} 확인 실패: ${e.message}`);
+        await doc.ref.set({
+          lastVerifyFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastVerifyError: String(e.message || e).slice(0, 500),
+        }, { merge: true });
+        await _sendSlackWithCooldown(
+          db,
+          'backupVerifyFailed',
+          `:warning: *백업 완료 여부 확인 실패* (${doc.id})\n• 오퍼레이션: ${data.operationName}\n• 오류: ${e.message}\n• 다음 매시 검증에서 재시도`
+        );
       }
     }
   }
