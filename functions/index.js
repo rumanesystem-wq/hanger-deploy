@@ -184,25 +184,32 @@ exports.dailyFirestoreBackup = onSchedule(
     // ── 날짜별 중복 실행 잠금 (트랜잭션) ────────────────────────────────
     // 같은 KST 하루 안에 두 번 이상 트리거되면 두 번째부터는 스킵.
     // 이전 실행이 실패/스킵으로 남았고 24h 지났으면 재시도 허용.
+    // 트랜잭션 재시도 가능성이 있어 acquiredLock/snapshotTime 은 매 시도마다 초기화.
     let acquiredLock = false;
+    let snapshotTime = null;
     try {
       await db.runTransaction(async (tx) => {
+        acquiredLock = false;
+        snapshotTime = null;
         const snap = await tx.get(opsAuditRef);
         if (snap.exists) {
           const cur = snap.data() || {};
           const status = cur.status;
           const startedMs = cur.startedAt && cur.startedAt.toMillis ? cur.startedAt.toMillis() : 0;
           const staleMs = Date.now() - startedMs;
-          // 진행 중이거나 이미 완료된 오늘 백업이 있으면 스킵 (24h 넘게 정지된 started 상태만 재시도 허용).
-          if (status === 'completed') return; // acquiredLock 그대로 false → 스킵
+          if (status === 'completed') return;
           if (status === 'started' && staleMs < 24 * 60 * 60 * 1000) return;
           if (status === 'skipped_already_in_progress' && staleMs < 60 * 60 * 1000) return;
         }
+        // snapshotTime = 잠금 획득 시점. exportDocuments 에 넘겨 시점 일관성 확보.
+        // (exportDocuments 는 이 시점의 스냅샷을 export → export 도중 새 write 는 반영 안 됨)
+        snapshotTime = new Date();
         tx.set(opsAuditRef, {
           dateStr,
           outputUriPrefix,
           runToken,
           status: 'started',
+          snapshotTime: admin.firestore.Timestamp.fromDate(snapshotTime),
           startedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         acquiredLock = true;
@@ -225,10 +232,21 @@ exports.dailyFirestoreBackup = onSchedule(
 
       let operation;
       try {
-        [operation] = await client.exportDocuments({
+        // snapshotTime: 이 시점의 Firestore 스냅샷을 export (시점 일관성).
+        // Firestore 규격: 과거 시점 + 분 단위 정렬(seconds%60==0, nanos==0) + 최근 PITR 범위(기본 1h) 이내.
+        // → 잠금 획득 시점을 직전 분으로 내림 후 안전 여유 2분 뒤로.
+        const exportReq = {
           name: `projects/${projectId}/databases/(default)`,
           outputUriPrefix,
-        });
+        };
+        if (snapshotTime) {
+          const alignedMs = Math.floor(snapshotTime.getTime() / 60000) * 60000 - 2 * 60000;
+          exportReq.snapshotTime = {
+            seconds: Math.floor(alignedMs / 1000),
+            nanos: 0,
+          };
+        }
+        [operation] = await client.exportDocuments(exportReq);
       } catch (e) {
         // 서버측 이미 진행 중 응답도 방어 (잠금 우회 재실행이 서버까지 도달한 케이스).
         const alreadyInProgress =
@@ -253,8 +271,26 @@ exports.dailyFirestoreBackup = onSchedule(
       }, { merge: true });
 
       // 실제 완료까지 대기 — export가 폴더 생성·파일 write 끝낼 때까지.
-      // 실패 시 promise가 reject → catch 로 진입.
-      const [response] = await operation.promise();
+      // 함수 타임아웃(540s) 안전 여유로 480s 안에 완료 안 되면 verify 함수에 넘긴다.
+      // 대부분(현재 데이터 규모 ≈수 MB)은 30~60s 안에 끝나므로 실무상 여기서 완료 확인됨.
+      const WAIT_LIMIT_MS = 480 * 1000;
+      const timeoutBox = { timedOut: false };
+      const timeoutSentinel = new Promise((resolve) => {
+        setTimeout(() => { timeoutBox.timedOut = true; resolve(['__TIMEOUT__']); }, WAIT_LIMIT_MS);
+      });
+      const [response] = await Promise.race([operation.promise(), timeoutSentinel]);
+
+      if (timeoutBox.timedOut) {
+        // 함수 타임아웃 안이지만 wait 한계 초과 → export 는 GCP 에서 계속 진행 중.
+        // verifyBackupOperations 가 나중에 실제 상태 확인해 completed/failed 로 갱신한다.
+        logger.warn(`[dailyFirestoreBackup] export 대기 한계 초과(${WAIT_LIMIT_MS}ms) — 진행 중 상태로 남김 (verify 함수가 후속 확인)`);
+        await opsAuditRef.set({
+          status: 'awaiting_verify',
+          waitLimitExceededAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        // 실패 cooldown 해제 안 함 — 실제 완료 확인은 verify 함수에서.
+        return;
+      }
 
       logger.info(`[dailyFirestoreBackup] GCS export 완료 → ${response && response.outputUriPrefix || outputUriPrefix}`);
       await opsAuditRef.set({
@@ -283,6 +319,83 @@ exports.dailyFirestoreBackup = onSchedule(
         `:x: *일일 백업 실패* (${dateStr})\n• 대상: gs://${BACKUP_GCS_BUCKET}/${dateStr}\n• 오퍼레이션: ${operationName || '(시작 전)'}\n• 오류: ${e.message}\n• GCP 로그(dailyFirestoreBackup) 확인 필요\n• 이 알림은 24h 내 최초 1회만 발송 (cooldown)`
       );
       throw e;
+    }
+  }
+);
+
+// ─── 5-b. 백업 완료 검증 (매시 30분) ───────────────────────────────────────
+// dailyFirestoreBackup 이 wait 한계 초과로 'awaiting_verify' 로 남긴 op 이나,
+// 예상 밖으로 'started' 로 오래 남아있는 op 를 GCP Operation API 로 실제 상태 조회.
+// 완료 확인 시 → status='completed', 실패 확인 시 → 'failed' + Slack 알림.
+exports.verifyBackupOperations = onSchedule(
+  { schedule: "30 * * * *", timeZone: "UTC", region: "asia-northeast3", timeoutSeconds: 300 },
+  async () => {
+    const db = admin.firestore();
+    const { v1 } = require('@google-cloud/firestore');
+    const client = new v1.FirestoreAdminClient();
+
+    // 최근 48시간 이내 미완료 op 만 확인 (오래된 좀비는 수동 조사).
+    const cutoffMs = Date.now() - 48 * 60 * 60 * 1000;
+
+    const inflightStatuses = ['started', 'awaiting_verify'];
+    const snap = await db.collection('hanger_backup_ops')
+      .where('status', 'in', inflightStatuses)
+      .get();
+    if (snap.empty) return;
+
+    for (const doc of snap.docs) {
+      const data = doc.data() || {};
+      const startedMs = data.startedAt && data.startedAt.toMillis ? data.startedAt.toMillis() : 0;
+      if (startedMs && startedMs < cutoffMs) {
+        logger.warn(`[verifyBackupOperations] ${doc.id} 48h 초과 좀비 — 수동 조사 필요 (op=${data.operationName || 'unknown'})`);
+        continue;
+      }
+      if (!data.operationName) continue; // op 이름 없으면 확인 불가
+
+      try {
+        const [op] = await client.operationsClient.getOperation({ name: data.operationName });
+        if (!op || !op.done) {
+          logger.info(`[verifyBackupOperations] ${doc.id} 아직 진행 중 (op=${data.operationName})`);
+          continue;
+        }
+        // 완료됨 — 성공/실패 판정
+        if (op.error) {
+          const errMsg = op.error.message || `code=${op.error.code}`;
+          logger.error(`[verifyBackupOperations] ${doc.id} 백업 실패 확정: ${errMsg}`);
+          await doc.ref.set({
+            status: 'failed',
+            failedAt: admin.firestore.FieldValue.serverTimestamp(),
+            errorMessage: errMsg,
+            verifiedBy: 'verifyBackupOperations',
+          }, { merge: true });
+          await _sendSlackWithCooldown(
+            db,
+            'backupExportFailed',
+            `:x: *일일 백업 실패 (verify)* (${doc.id})\n• 오퍼레이션: ${data.operationName}\n• 오류: ${errMsg}\n• GCP 로그 확인 필요\n• 이 알림은 24h 내 최초 1회만 발송 (cooldown)`
+          );
+        } else {
+          logger.info(`[verifyBackupOperations] ${doc.id} 백업 완료 확정 (op=${data.operationName})`);
+          let finalUri = data.outputUriPrefix;
+          try {
+            const metaBuf = op.response && op.response.value;
+            if (metaBuf) {
+              // response 는 Any(pb) — outputUriPrefix 문자열이 있는지 raw 파싱 (best effort).
+              const raw = Buffer.isBuffer(metaBuf) ? metaBuf.toString('utf8') : String(metaBuf);
+              const m = raw.match(/gs:\/\/[^\s]+/);
+              if (m) finalUri = m[0];
+            }
+          } catch (_e) {}
+          await doc.ref.set({
+            status: 'completed',
+            completedAt: admin.firestore.FieldValue.serverTimestamp(),
+            finalOutputUriPrefix: finalUri,
+            verifiedBy: 'verifyBackupOperations',
+          }, { merge: true });
+          await _clearAlertKey(db, 'backupExportFailed');
+        }
+      } catch (e) {
+        logger.warn(`[verifyBackupOperations] ${doc.id} 확인 실패: ${e.message}`);
+      }
     }
   }
 );
