@@ -129,105 +129,159 @@ exports.getNextIds = onCall(
   }
 );
 
-// ─── 5. Firestore 정기 백업 (매일 KST 00:00) ─────────────────
-// hanger_data 컬렉션: _backups/{YYYY-MM-DD} 에 스냅샷 저장 (기존)
-// hanger_orders/snapshots/cancel_log/edit_logs: _backups_{name}/{YYYY-MM-DD} 로 별도 저장 (2026-08-04 추가)
-// 8일 이상 된 백업은 자동 삭제 (7일치 보관)
-async function _backupCollectionToDoc(db, collectionName, backupCollectionName, dateStr, shape = 'docs') {
-  const snap = await db.collection(collectionName).get();
-  // 보조 컬렉션의 `_` prefix 상태 doc은 백업에서 제외
-  const docs = snap.docs
-    // hanger_data는 기존 복구 호환을 위해 _seq_*, _migrations 등도 모두 백업한다.
-    // _runlock 같은 상태 문서가 있는 보조 컬렉션만 `_` prefix doc을 제외한다.
-    .filter(d => collectionName === 'hanger_data' || !d.id.startsWith('_'))
-    .map(d => ({ docId: d.id, data: d.data() }));
-  // hanger_data는 기존 복구 스크립트 호환을 위해 {data:{docId:doc}} 형식을 유지한다.
-  const payload = shape === 'map'
-    ? { data: Object.fromEntries(docs.map(d => [d.docId, d.data])) }
-    : { count: docs.length, docs };
-  const json = JSON.stringify(payload);
-  const bytes = Buffer.byteLength(json, 'utf8');
-  // Firestore 문서 1MiB(~1,048,576 bytes) 한계. 900KB 이상이면 잘라내지 말고 로그·알림 후 skip.
-  if (bytes > 900 * 1024) {
-    logger.warn(`[백업] ${collectionName} 크기 초과 ${Math.round(bytes/1024)}KB — 백업 skip. GCS Firestore Export 필요.`);
-    await _sendSlackWithCooldown(
-      db,
-      `backupSizeExceeded_${collectionName}`,
-      `:warning: *일일 백업 크기 초과* (${dateStr})\n• 컬렉션: ${collectionName}\n• 크기: ${Math.round(bytes/1024)}KB (1MiB 한계 근접)\n• 이 컬렉션은 이번 회차 백업 스킵됨. GCS 기반 Firestore Export 로 이전 필요.\n• 이 알림은 24h 내 최초 1회만 발송 (cooldown)`
-    );
-    return { name: collectionName, backed: false, reason: 'size_exceeded', bytes };
-  }
-  await db.collection(backupCollectionName).doc(dateStr).set({
-    backedUpAt: admin.firestore.FieldValue.serverTimestamp(),
-    bytes,
-    ...payload
-  });
-  // 크기 정상 → 이전 크기초과 알림 cooldown 자동 해제
-  await _clearAlertKey(db, `backupSizeExceeded_${collectionName}`);
-  return { name: collectionName, backed: true, count: docs.length, bytes };
-}
-
-async function _deleteOldBackups(db, collectionName, cutoffStr) {
-  const oldSnap = await db.collection(collectionName)
-    .where(admin.firestore.FieldPath.documentId(), "<", cutoffStr)
-    .get();
-  if (oldSnap.empty) return 0;
-  const batch = db.batch();
-  oldSnap.forEach(doc => batch.delete(doc.ref));
-  await batch.commit();
-  return oldSnap.size;
-}
+// ─── 5. Firestore 정기 백업 — GCS Export 방식 (매일 KST 00:00) ───────────────
+// [2026-08-05] 옛 in-Firestore 백업(1MiB 한계) 폐지, Google Cloud Storage 로 이전.
+// Firestore Admin `exportDocuments` API 를 호출해 지정 버킷으로 전체 컬렉션을 통째 export.
+// 원본 데이터는 read-only 로 접근 — 어떤 컬렉션도 삭제·수정하지 않음.
+// 보관 정책: GCS 버킷 Lifecycle 규칙(30일) 이 자동 처리 (버킷 설정에서 관리).
+// 복원 경로: Firebase Console → Firestore → Import → 해당 GCS 폴더 선택 → 원클릭.
+// 옛 `_backups*` 컬렉션 문서들은 읽기 전용 유물로 그대로 보존 (지우지 않음).
+const BACKUP_GCS_BUCKET = process.env.BACKUP_GCS_BUCKET || 'tooktakproject-firestore-backups';
 
 exports.dailyFirestoreBackup = onSchedule(
-  { schedule: "0 15 * * *", timeZone: "UTC", region: "asia-northeast3" },
+  {
+    schedule: "0 15 * * *",
+    timeZone: "UTC",
+    region: "asia-northeast3",
+    // export 완료(LRO)까지 대기하려면 넉넉한 타임아웃 필요. v2 스케줄 함수 최대 = 540s.
+    timeoutSeconds: 540,
+    memory: "512MiB",
+  },
   async () => {
     const db = admin.firestore();
 
-    // 오늘 날짜 (KST = UTC+9)
+    // 오늘 날짜 (KST = UTC+9). cold start로 UTC 14:59에 진입해도 KST 자정 이후 폴더로 찍히도록
+    // schedule은 15:00 UTC (=KST 00:00) 고정이라 실제 KST 다음 날짜가 정상.
     const now = new Date();
     now.setHours(now.getHours() + 9);
     const dateStr = now.toISOString().slice(0, 10); // "YYYY-MM-DD"
 
-    try {
-      // 각 컬렉션을 독립 실행한다. 한 컬렉션 실패가 다른 백업을 막지 않는다.
-      // 보관 기간: hanger_data 는 7일(기존 유지), 신 컬렉션들은 30일 (사고 복구용 여유 확보).
-      const specs = [
-        ['hanger_data', '_backups', 'map', 7],
-        ['hanger_orders', '_backups_hanger_orders', 'docs', 30],
-        ['hanger_orders_snapshots', '_backups_hanger_orders_snapshots', 'docs', 30],
-        ['hanger_orders_cancel_log', '_backups_hanger_orders_cancel_log', 'docs', 30],
-        ['hanger_order_edit_logs', '_backups_hanger_order_edit_logs', 'docs', 30],
-        ['hanger_orders_deleted_recovery', '_backups_hanger_orders_deleted_recovery', 'docs', 30],
-      ];
-      const results = await Promise.allSettled(
-        specs.map(([source, target, shape]) => _backupCollectionToDoc(db, source, target, dateStr, shape))
+    const projectId = (admin.app().options && admin.app().options.projectId)
+      || process.env.GCLOUD_PROJECT
+      || process.env.GCP_PROJECT
+      || null;
+    if (!projectId) {
+      // 실행 환경에서 projectId 를 못 얻으면 엉뚱한 프로젝트에 export 하는 것보다 실패가 안전.
+      const msg = 'projectId 확인 불가 (admin.options / GCLOUD_PROJECT / GCP_PROJECT 모두 미설정)';
+      logger.error("[dailyFirestoreBackup] " + msg);
+      await _sendSlackWithCooldown(
+        db,
+        'backupExportFailed',
+        `:x: *일일 백업 실패* (${dateStr})\n• 대상: gs://${BACKUP_GCS_BUCKET}/${dateStr}\n• 오류: ${msg}\n• 이 알림은 24h 내 최초 1회만 발송 (cooldown)`
       );
+      throw new Error(msg);
+    }
+    // 폴더명 충돌 방지: 같은 날 재실행 시 각기 다른 sub-path 사용.
+    // 형식: gs://bucket/YYYY-MM-DD/<HHMMSS>-<random8>/
+    const nowTs = new Date();
+    nowTs.setHours(nowTs.getHours() + 9);
+    const hhmmss = nowTs.toISOString().slice(11, 19).replace(/:/g, '');
+    const rand8 = crypto.randomBytes(4).toString('hex');
+    const runToken = `${hhmmss}-${rand8}`;
+    const outputUriPrefix = `gs://${BACKUP_GCS_BUCKET}/${dateStr}/${runToken}`;
+    const opsAuditRef = db.collection('hanger_backup_ops').doc(dateStr);
 
-      // 오늘 백업이 성공한 컬렉션만 오래된 백업을 정리한다. cutoff 는 컬렉션별 다름.
-      const failures = [];
-      for (let i = 0; i < results.length; i++) {
-        const r = results[i];
-        const [source, target, , retentionDays] = specs[i];
-        if (r.status !== 'fulfilled' || !r.value.backed) {
-          const reason = r.status === 'rejected' ? (r.reason && r.reason.message) : r.value.reason;
-          logger.error(`[dailyFirestoreBackup] ${source} 백업 실패/스킵:`, reason);
-          failures.push(`${source}:${reason || 'unknown'}`);
-          continue;
+    // ── 날짜별 중복 실행 잠금 (트랜잭션) ────────────────────────────────
+    // 같은 KST 하루 안에 두 번 이상 트리거되면 두 번째부터는 스킵.
+    // 이전 실행이 실패/스킵으로 남았고 24h 지났으면 재시도 허용.
+    let acquiredLock = false;
+    try {
+      await db.runTransaction(async (tx) => {
+        const snap = await tx.get(opsAuditRef);
+        if (snap.exists) {
+          const cur = snap.data() || {};
+          const status = cur.status;
+          const startedMs = cur.startedAt && cur.startedAt.toMillis ? cur.startedAt.toMillis() : 0;
+          const staleMs = Date.now() - startedMs;
+          // 진행 중이거나 이미 완료된 오늘 백업이 있으면 스킵 (24h 넘게 정지된 started 상태만 재시도 허용).
+          if (status === 'completed') return; // acquiredLock 그대로 false → 스킵
+          if (status === 'started' && staleMs < 24 * 60 * 60 * 1000) return;
+          if (status === 'skipped_already_in_progress' && staleMs < 60 * 60 * 1000) return;
         }
-        logger.info(`[dailyFirestoreBackup] ${source} → ${r.value.count}건 (${Math.round(r.value.bytes/1024)}KB, ${retentionDays}일 보관)`);
-        const cutoff = new Date(now);
-        cutoff.setDate(cutoff.getDate() - retentionDays);
-        const cutoffStr = cutoff.toISOString().slice(0, 10);
-        try {
-          const n = await _deleteOldBackups(db, target, cutoffStr);
-          if (n > 0) logger.info(`[dailyFirestoreBackup] ${target} ${retentionDays}일 이전 백업 ${n}건 삭제`);
-        } catch (e) {
-          logger.warn(`[dailyFirestoreBackup] ${target} 삭제 실패:`, e.message);
-        }
-      }
-      if (failures.length) throw new Error(`일부 백업 실패: ${failures.join(', ')}`);
+        tx.set(opsAuditRef, {
+          dateStr,
+          outputUriPrefix,
+          runToken,
+          status: 'started',
+          startedAt: admin.firestore.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        acquiredLock = true;
+      });
     } catch (e) {
-      logger.error("[dailyFirestoreBackup] 오류:", e.message);
+      logger.error("[dailyFirestoreBackup] 잠금 트랜잭션 실패:", e.message);
+      throw e;
+    }
+    if (!acquiredLock) {
+      logger.info(`[dailyFirestoreBackup] ${dateStr} 이미 처리됨(완료/진행) — 스킵`);
+      return;
+    }
+
+    let operationName = null;
+    try {
+      // firebase-admin 이 내부적으로 쓰는 @google-cloud/firestore v1 Admin 클라이언트 이용.
+      // collectionIds 미지정 → 모든 컬렉션 export.
+      const { v1 } = require('@google-cloud/firestore');
+      const client = new v1.FirestoreAdminClient();
+
+      let operation;
+      try {
+        [operation] = await client.exportDocuments({
+          name: `projects/${projectId}/databases/(default)`,
+          outputUriPrefix,
+        });
+      } catch (e) {
+        // 서버측 이미 진행 중 응답도 방어 (잠금 우회 재실행이 서버까지 도달한 케이스).
+        const alreadyInProgress =
+          e && (e.code === 9 || /already in progress|another operation/i.test(e.message || ''));
+        if (alreadyInProgress) {
+          logger.warn(`[dailyFirestoreBackup] 서버측 이미 export 진행 중 — 스킵: ${e.message}`);
+          await opsAuditRef.set({
+            status: 'skipped_already_in_progress',
+            reason: e.message,
+            recordedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }, { merge: true });
+          return;
+        }
+        throw e;
+      }
+
+      operationName = operation.name;
+      logger.info(`[dailyFirestoreBackup] GCS export 시작 → ${outputUriPrefix} (op=${operationName})`);
+      // operation 이름 추가 기록 (started 상태는 위 트랜잭션에서 이미 세팅됨).
+      await opsAuditRef.set({
+        operationName,
+      }, { merge: true });
+
+      // 실제 완료까지 대기 — export가 폴더 생성·파일 write 끝낼 때까지.
+      // 실패 시 promise가 reject → catch 로 진입.
+      const [response] = await operation.promise();
+
+      logger.info(`[dailyFirestoreBackup] GCS export 완료 → ${response && response.outputUriPrefix || outputUriPrefix}`);
+      await opsAuditRef.set({
+        status: 'completed',
+        completedAt: admin.firestore.FieldValue.serverTimestamp(),
+        finalOutputUriPrefix: (response && response.outputUriPrefix) || outputUriPrefix,
+      }, { merge: true });
+      // 실제 완료 확인 후에만 이전 실패 cooldown 해제.
+      await _clearAlertKey(db, 'backupExportFailed');
+    } catch (e) {
+      logger.error("[dailyFirestoreBackup] GCS export 실패:", e.message);
+      // 감사 기록 (실패도 남긴다).
+      try {
+        await opsAuditRef.set({
+          dateStr,
+          outputUriPrefix,
+          operationName,
+          status: 'failed',
+          failedAt: admin.firestore.FieldValue.serverTimestamp(),
+          errorMessage: e.message || String(e),
+        }, { merge: true });
+      } catch (_e) {}
+      await _sendSlackWithCooldown(
+        db,
+        'backupExportFailed',
+        `:x: *일일 백업 실패* (${dateStr})\n• 대상: gs://${BACKUP_GCS_BUCKET}/${dateStr}\n• 오퍼레이션: ${operationName || '(시작 전)'}\n• 오류: ${e.message}\n• GCP 로그(dailyFirestoreBackup) 확인 필요\n• 이 알림은 24h 내 최초 1회만 발송 (cooldown)`
+      );
       throw e;
     }
   }
