@@ -338,15 +338,125 @@
         return Math.max(fromSeq, fromArray);
       }
 
+      // [2026-08-25] id 기반 배열 컬렉션의 안전 저장 — 로컬 diff → 트랜잭션으로 서버 위에 부분 apply
+      // 이전 방식: 로컬 배열 통째로 서버 덮어씀 → 다른 PC 동시 편집·신규 사라짐, 삭제 부활
+      // 대상 컬렉션: items, purchase_requests, accounts, invoices, logs (id 필드 있는 배열)
+      // 제외: price_settings(name 기반, 관리자 단독), _migrations/session(map, 리스크 낮음), orders(별도 upsert 있음)
+      // 로직:
+      //   - prev = window._mem[key] (이 클라가 알던 마지막 상태)
+      //   - 로컬 삭제 id (prev에 있고 next에 없음) → 서버에서 제거
+      //   - 로컬 신규 id (prev에 없고 next에 있음) → 서버에 추가
+      //   - 로컬 편집 id → 필드 단위 diff — 이 클라가 안 바꾼 필드는 서버값 유지 (다른 PC 편집 보존)
+      const _stableJSON = o => {
+        if (o === null || typeof o !== 'object') return JSON.stringify(o);
+        if (Array.isArray(o)) return '['+o.map(_stableJSON).join(',')+']';
+        return '{'+Object.keys(o).sort().map(k=>JSON.stringify(k)+':'+_stableJSON(o[k])).join(',')+'}';
+      };
+      const _idBasedKeys = new Set(['items','purchase_requests','accounts','invoices','logs']);
+      const _deepCopyBaseline = value => {
+        if (value === undefined) return undefined;
+        try { return JSON.parse(JSON.stringify(value)); }
+        catch (_) {
+          if (Array.isArray(value)) return value.map(_deepCopyBaseline);
+          if (value && typeof value === 'object') {
+            const out = {};
+            Object.keys(value).forEach(k => { out[k] = _deepCopyBaseline(value[k]); });
+            return out;
+          }
+          return value;
+        }
+      };
+      // 같은 키의 fire-and-forget 저장 순서를 보장하고, 발주 CAS가 이 클라이언트의
+      // 직전 items 저장을 외부 변경으로 오인하지 않도록 pending write를 조회 가능하게 한다.
+      const _writeQueues = new Map();
+      const _enqueueWrite = (key, writer) => {
+        const prior = _writeQueues.get(key) || Promise.resolve();
+        const task = prior.catch(() => {}).then(writer);
+        _writeQueues.set(key, task);
+        return task.finally(() => {
+          if (_writeQueues.get(key) === task) _writeQueues.delete(key);
+        });
+      };
+      // prev는 각 큐 작업이 실행될 때 직전 write의 committed baseline에서 읽는다.
+      async function _txMergeById(key, value, prev) {
+        const ref = db.collection('hanger_data').doc(key);
+        const prevLocal = Array.isArray(prev) ? prev
+          : ((window._mem && Array.isArray(window._mem[key])) ? window._mem[key] : []);
+        const prevById = new Map();
+        prevLocal.forEach(i => { if (i && i.id != null) prevById.set(i.id, i); });
+        const nextById = new Map();
+        value.forEach(i => { if (i && i.id != null) nextById.set(i.id, i); });
+        const localDeletedIds = new Set();
+        prevById.forEach((_, id) => { if (!nextById.has(id)) localDeletedIds.add(id); });
+        let committed = [];
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(ref);
+          const server = (snap.exists && Array.isArray(snap.data().value)) ? snap.data().value : [];
+          const merged = new Map();
+          server.forEach(i => { if (i && i.id != null) merged.set(i.id, i); });
+          // 1) 로컬 삭제 반영
+          localDeletedIds.forEach(id => merged.delete(id));
+          // 2) 로컬 신규/변경 반영 — 필드 단위 diff
+          nextById.forEach((item, id) => {
+            const prevItem = prevById.get(id);
+            if (!prevItem) { merged.set(id, item); return; } // 신규
+            const serverItem = merged.get(id);
+            if (!serverItem) return; // 다른 PC 삭제 존중
+            const outItem = Object.assign({}, serverItem);
+            const keys = new Set([...Object.keys(prevItem), ...Object.keys(item)]);
+            keys.forEach(k => {
+              const prevV = prevItem[k];
+              const nextV = item[k];
+              if (_stableJSON(prevV) !== _stableJSON(nextV)) {
+                if (nextV === undefined) delete outItem[k];
+                else outItem[k] = nextV;
+              }
+              // 안 바꿈 → 서버값 유지
+            });
+            merged.set(id, outItem);
+          });
+          const out = Array.from(merged.values()).sort((a, b) => {
+            const ai = a.id, bi = b.id;
+            if (typeof ai === 'number' && typeof bi === 'number') return ai - bi;
+            return String(ai).localeCompare(String(bi));
+          });
+          committed = out;
+          tx.set(ref, { value: out, updatedAt: new Date().toISOString() });
+        });
+        return committed;
+      }
+
       window._FS = {
         async set(key, value) {
-          try {
-            await db.collection('hanger_data').doc(key).set({ value, updatedAt: new Date().toISOString() });
-          } catch(e) {
-            // H2 보강 (Codex): 실패 시 throw — 호출자가 성공으로 오인 차단
-            console.error('[Firestore set 실패]', key, e.message);
-            throw new Error('[Firestore set 실패] '+key+': '+(e&&e.message));
-          }
+          // 호출자가 같은 배열을 후속 변경해도 이 write의 요청값은 바뀌지 않게 고정한다.
+          const requestedValue = _deepCopyBaseline(value);
+          return _enqueueWrite(key, async () => {
+            try {
+              let committedValue = requestedValue;
+              if (_idBasedKeys.has(key) && Array.isArray(requestedValue)) {
+                // prior가 끝난 뒤 실행되므로 여기서 읽어야 바로 전 write의 커밋본이 보인다.
+                const prev = (window._memBaseline && window._memBaseline[key]) || [];
+                committedValue = await _txMergeById(key, requestedValue, prev);
+              } else {
+                await db.collection('hanger_data').doc(key).set({ value: requestedValue, updatedAt: new Date().toISOString() });
+              }
+              if (!window._memBaseline) window._memBaseline = {};
+              // baseline은 요청값이 아니라 트랜잭션이 서버에 실제로 쓴 병합본이어야 한다.
+              window._memBaseline[key] = _deepCopyBaseline(committedValue);
+              // 저장 도중 더 최신 로컬 변경이 없을 때만 서버 병합본으로 메모리도 맞춘다.
+              if (window._mem && _stableJSON(window._mem[key]) === _stableJSON(requestedValue)) {
+                window._mem[key] = _deepCopyBaseline(committedValue);
+              }
+            } catch(e) {
+              // H2 보강 (Codex): 실패 시 throw — 호출자가 성공으로 오인 차단
+              console.error('[Firestore set 실패]', key, e.message);
+              throw new Error('[Firestore set 실패] '+key+': '+(e&&e.message));
+            }
+          });
+        },
+        async awaitPendingWrites(keys) {
+          const targetKeys = Array.isArray(keys) ? keys : [keys];
+          await Promise.all(targetKeys.map(key => _writeQueues.get(key) || Promise.resolve()));
         },
         async get(key, opts) {
           try {
@@ -435,13 +545,15 @@
           });
           if (!window._mem) window._mem = {};
           window._mem.invoices = committedInvoices || [];
+          if (!window._memBaseline) window._memBaseline = {};
+          window._memBaseline.invoices = _deepCopyBaseline(window._mem.invoices);
           window.dispatchEvent(new CustomEvent('hanger:invoices-changed', {
             detail: { invoices: window._mem.invoices }
           }));
           return committedResult;
         },
         // 발주서와 재고를 한 transaction으로 저장한다. 둘 중 하나만 저장되는 상태를 허용하지 않는다.
-        async transactOrderInventory({order,items,expectedItems,purchaseRequests,stockLogs}) {
+        async transactOrderInventory({order,items,expectedItems,purchaseRequests,replacePurchaseRequestsForOrderId,stockLogs}) {
           if(!order||!order.orderNum) throw new Error('order/orderNum 필수');
           const itemsRef=db.collection('hanger_data').doc('items');
           const prsRef=db.collection('hanger_data').doc('purchase_requests');
@@ -487,7 +599,12 @@
               });
               return result;
             };
-            committedPrs=mergeAdded(serverPrs,purchaseRequests);
+            // 편집 저장은 기존 주문 PR 제거와 새 부족분 PR 추가를 같은 transaction에서 수행한다.
+            // 신규 저장은 다른 주문의 PR을 그대로 둔 채 추가만 한다.
+            const prsBase=replacePurchaseRequestsForOrderId===null||replacePurchaseRequestsForOrderId===undefined
+              ? serverPrs
+              : serverPrs.filter(p=>!p||String(p.orderId)!==String(replacePurchaseRequestsForOrderId));
+            committedPrs=mergeAdded(prsBase,purchaseRequests);
             committedLogs=mergeAdded(serverLogs,stockLogs);
             delete nextOrder._expectedPreviousUpdatedAt;
             tx.set(itemsRef,{value:nextItems,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
@@ -503,6 +620,11 @@
           window._mem.orders=localOrders;
           window._mem.purchase_requests=committedPrs;
           window._mem.logs=committedLogs;
+          if(!window._memBaseline)window._memBaseline={};
+          // 이 경로는 _FS.set을 거치지 않으므로 직접 커밋한 서버 상태를 diff 기준에도 반영한다.
+          window._memBaseline.items=_deepCopyBaseline(nextItems);
+          window._memBaseline.purchase_requests=_deepCopyBaseline(committedPrs);
+          window._memBaseline.logs=_deepCopyBaseline(committedLogs);
           return nextOrder;
         },
         async transactInventory({items,expectedItems,stockLogs,purchaseRequests,expectedPurchaseRequests}) {
@@ -542,6 +664,10 @@
           window._mem.items=nextItems;
           window._mem.logs=committedLogs;
           window._mem.purchase_requests=nextPrs;
+          if(!window._memBaseline)window._memBaseline={};
+          window._memBaseline.items=_deepCopyBaseline(nextItems);
+          window._memBaseline.logs=_deepCopyBaseline(committedLogs);
+          window._memBaseline.purchase_requests=_deepCopyBaseline(nextPrs);
         },
         async collectionDelete(coll, docId) {
           try {
@@ -1449,8 +1575,8 @@
 <script src="js/inventory.js"></script>
 <script src="js/orders.js"></script>
 <script src="js/shipping.js"></script>
-<script src="js/order-modal.js"></script>
     <script src="js/excel-print.js"></script>
+<script src="js/order-modal.js"></script>
 <script src="app.js"></script>
 <!-- 거래명세서 모듈 (의존 순서: types→utils→query→render→pdf→print→index) -->
 <script src="js/features/invoice/types.js"></script>

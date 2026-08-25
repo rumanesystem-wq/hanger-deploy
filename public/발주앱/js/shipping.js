@@ -96,8 +96,11 @@
     orders.forEach(function(o){
       (o.upperMaterials||[]).forEach(function(r){
         const q=Number(r.qty)||0; if(q<=0) return;
-        const color=r.color||o.upperCommonColor||'';
-        add(upper,'U|'+r.name+'|'+color, (r.name||'-')+(color?' · '+color:''), q, o);
+        // [2026-07-14] noColor 품목(명시적 r.color==='' 저장)은 upperCommonColor로 오분류 방지
+        const _isNoColor = typeof r.color==='string' && r.color==='';
+        const color=_isNoColor?'':(r.color||o.upperCommonColor||'');
+        const label=(r.name||'-')+(color?' · '+color:(_isNoColor?' · 색상없음':''));
+        add(upper,'U|'+r.name+'|'+color, label, q, o);
       });
       (o.rodItems||[]).forEach(function(r){
         const q=Number(r.qty)||0; if(q<=0) return;

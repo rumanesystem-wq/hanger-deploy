@@ -3,7 +3,7 @@
 // 각 테스트 시작 시 호출해서 이전 테스트 오염을 없앤다.
 // 대상: docker hanger-emu — host 포트 Firestore 18080, Auth 19099 (tooktak-emulator와 반드시 구분)
 
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import * as path from "path";
 
 // [2026-07-24 Codex] hanger-emu docker 포트 매핑:
@@ -29,15 +29,25 @@ export async function resetAuth(): Promise<void> {
 
 export function runSeed(): void {
   const seedPath = path.resolve(__dirname, "..", "..", "functions", "seed-emulator.js");
-  execSync(`node "${seedPath}"`, {
-    stdio: "pipe",
-    timeout: 15000,
-    env: {
-      ...process.env,
-      FIRESTORE_EMULATOR_HOST: "localhost:18080",
-      FIREBASE_AUTH_EMULATOR_HOST: "localhost:19099"
-    }
-  });
+  // [2026-07-14] execSync → execFileSync + timeout 60s:
+  //  - Windows에서 execSync는 cmd.exe 경유 → 일부 환경에서 `spawnSync cmd.exe UNKNOWN` 실패 (INV-G2/DRAFT-R1 원인)
+  //  - execFileSync는 node.exe 직접 호출 → cmd.exe 우회
+  //  - timeout 60s는 e2e 병렬 부하 대비 여유
+  try {
+    execFileSync("node", [seedPath], {
+      stdio: "pipe",
+      timeout: 60000,
+      env: {
+        ...process.env,
+        FIRESTORE_EMULATOR_HOST: "localhost:18080",
+        FIREBASE_AUTH_EMULATOR_HOST: "localhost:19099"
+      }
+    });
+  } catch (e: any) {
+    const stderr = (e && e.stderr) ? e.stderr.toString() : "";
+    const stdout = (e && e.stdout) ? e.stdout.toString() : "";
+    throw new Error(`seed-emulator.js 실행 실패\n  stderr: ${stderr}\n  stdout: ${stdout}\n  message: ${e?.message || e}`);
+  }
 }
 
 export async function resetAndSeed(): Promise<void> {

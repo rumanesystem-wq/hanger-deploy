@@ -226,4 +226,82 @@ test.describe("발주 저장 흐름 회귀 (유케이 07-08 사고 재발 방지
     expect(stillFound, "수정 저장 후에도 '테스트업체' 발주서가 리스트에 있어야 함").toBe(true);
   });
 
+  test("S3: 발주 편집 검증 실패 시 기존 PR을 삭제하지 않는다", async ({ page }) => {
+    await createTestOrderAsOrderer(page);
+
+    const seeded = await page.evaluate(async () => {
+      const w = window as any;
+      const orders = w.DB.get("orders", []);
+      const order = orders[orders.length - 1];
+      if (!order) return null;
+      const pr = {
+        id: 990003,
+        orderId: order.id,
+        itemId: 1,
+        requiredQty: 10,
+        shortageQty: 5,
+        warehouse: "시흥",
+        status: "대기",
+        createdAt: new Date().toISOString(),
+      };
+      w.DB.set("purchase_requests", [...w.DB.get("purchase_requests", []), pr]);
+      await w._FS.awaitPendingWrites(["purchase_requests"]);
+      return { orderId: order.id, prId: pr.id };
+    });
+    expect(seeded, "편집 실패 검증용 발주/PR 생성").toBeTruthy();
+
+    await logout(page);
+    await loginAs(page, "admin", "admin", "123456");
+    await page.locator('[data-nav="orders"]').first().click().catch(() => {});
+    await page.waitForTimeout(1000);
+    await page.locator(`tr[data-order-id="${seeded!.orderId}"]`).click();
+    await page.locator("#edit-order-btn").click();
+    await page.waitForSelector("#order-modal", { state: "visible" });
+
+    // submitEditOrder에는 진입하지만 submitOrder 검증에서 실패하도록 출고일을 비운다.
+    await page.fill("#o-ship-y", "");
+    await page.locator("#order-modal .order-modal-bottom .btn-primary").first().click();
+    await page.waitForTimeout(500);
+    await page.evaluate(async () => {
+      const w = window as any;
+      await w._FS.awaitPendingWrites(["purchase_requests"]);
+    });
+
+    const serverPrExists = await page.evaluate(async (prId) => {
+      const prs = await (window as any)._FS.get("purchase_requests", { fromServer: true });
+      return Array.isArray(prs) && prs.some((p: any) => p.id === prId);
+    }, seeded!.prId);
+    expect(serverPrExists, "검증 실패 전의 기존 PR이 서버에 남아야 함").toBe(true);
+  });
+
+  test("S4: 연속 삭제·복원 write는 직전 committed baseline을 사용한다", async ({ page }) => {
+    await loginAs(page, "admin", "admin", "123456");
+
+    const restored = await page.evaluate(async () => {
+      const w = window as any;
+      const pr = {
+        id: 990004,
+        orderId: 990004,
+        itemId: 1,
+        requiredQty: 1,
+        shortageQty: 1,
+        warehouse: "시흥",
+        status: "대기",
+        createdAt: new Date().toISOString(),
+      };
+      w.DB.set("purchase_requests", [pr]);
+      await w._FS.awaitPendingWrites(["purchase_requests"]);
+
+      // 첫 write가 커밋되기 전에 복원 write를 큐에 넣어 stale baseline 회귀를 재현한다.
+      w.DB.set("purchase_requests", []);
+      w.DB.set("purchase_requests", [pr]);
+      await w._FS.awaitPendingWrites(["purchase_requests"]);
+
+      const server = await w._FS.get("purchase_requests", { fromServer: true });
+      return Array.isArray(server) && server.some((p: any) => p.id === pr.id);
+    });
+
+    expect(restored, "삭제 직후 큐잉한 복원 write가 서버에 반영되어야 함").toBe(true);
+  });
+
 });

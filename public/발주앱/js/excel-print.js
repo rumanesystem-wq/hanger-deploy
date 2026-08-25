@@ -114,8 +114,10 @@ async function downloadOrderExcel(order){
     const cn={white:'화이트',black:'블랙',silver:'실버',champagne:'샴페인골드'};
     upperMats.forEach(r2=>{
       let color=r2.color||'',qty=r2.qty||0;
-      if(!color||!qty){for(const k of ['white','black','silver','champagne']){if(r2[k]>0){color=cn[k];qty=r2[k];break;}}}
-      if(!color)color='기타';
+      // [2026-07-14] noColor는 명시적 r2.color === '' (color 프로퍼티 존재)만 판정 — 레거시(color 미존재)는 색상 fallback
+      const _isNoColor = qty>0 && typeof r2.color==='string' && r2.color==='';
+      if(!_isNoColor && (!color||!qty)){for(const k of ['white','black','silver','champagne']){if(r2[k]>0){color=cn[k];qty=r2[k];break;}}}
+      if(!color)color = _isNoColor ? '색상없음' : '기타';
       if(!cmap.has(color)){cmap.set(color,[]);cord.push(color);}
       cmap.get(color).push({...r2,_qty:qty});
     });
@@ -381,7 +383,7 @@ function renderOrderDocument(order){
           const stdLen={'포스트바 2050':2050,'포스트바 2250':2250,'포스트바 2400':2400}[n]||0;
           const isStd=Number(sp.length)===stdLen;
           const noteHtml=`<span style="font-size:13px;font-weight:800;color:#111">실제길이: ${sp.length}mm${isStd?' (정척)':''}</span>`;
-          upperRows+=`<tr><td class="doc-name">${n}${color?' ['+_escHtml(color)+']':''}</td><td class="doc-num">${sQty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${sStr}</td><td class="doc-note doc-note-bigo" style="text-align:center">${noteHtml}</td></tr>`;
+          upperRows+=`<tr><td class="doc-name">${_escHtml(n)}${color?' ['+_escHtml(color)+']':''}</td><td class="doc-num">${sQty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${sStr}</td><td class="doc-note doc-note-bigo" style="text-align:center">${noteHtml}</td></tr>`;
           upperRows+=`<tr class="doc-mobile-note-row"><td colspan="4">실제길이: ${sp.length}mm${isStd?' (정척)':''}</td></tr>`;
         });
       }else{
@@ -389,7 +391,7 @@ function renderOrderDocument(order){
         const vat=supply!==null?Math.round(supply*0.1):null;
         const {s,v}=rowAmt(supply,vat);
         const noteDisp=r.note?`<span style="font-size:13px;font-weight:800;color:#111">실제길이: ${_escHtml(r.note)}mm</span>`:'';
-        upperRows+=`<tr><td class="doc-name">${n}${color?' ['+_escHtml(color)+']':''}</td><td class="doc-num">${qty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td><td class="doc-note doc-note-bigo${noteDisp?'':' doc-note-empty'}" style="text-align:center">${noteDisp}</td></tr>`;
+        upperRows+=`<tr><td class="doc-name">${_escHtml(n)}${color?' ['+_escHtml(color)+']':''}</td><td class="doc-num">${qty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td><td class="doc-note doc-note-bigo${noteDisp?'':' doc-note-empty'}" style="text-align:center">${noteDisp}</td></tr>`;
         if(r.note) upperRows+=`<tr class="doc-mobile-note-row"><td colspan="4">실제길이: ${_escHtml(r.note)}mm</td></tr>`;
       }
     });
@@ -430,7 +432,7 @@ function renderOrderDocument(order){
   let shelfRows='';
   if(order.shelfItems&&order.shelfItems.length>0){
     order.shelfItems.forEach(item=>{
-      shelfRows+=`<tr class="doc-sub-header"><td colspan="4">${item.name}</td></tr>`;
+      shelfRows+=`<tr class="doc-sub-header"><td colspan="4">${_escHtml(item.name)}</td></tr>`;
       if(item.entries){
         item.entries.forEach(e=>{
           const spec=item.name==='코너선반'?`${e.width} × ${e.height}`:e.size;
@@ -440,7 +442,7 @@ function renderOrderDocument(order){
           const {s,v}=rowAmt(supply,vat);
           const upStr=up!==null?up.toLocaleString('ko-KR')+'원':'미정';
           const color=e.color||order.sharedColor||'';
-          shelfRows+=`<tr><td class="doc-name" style="padding-left:12px">${spec}${color?' ['+_escHtml(color)+']':''}</td><td class="doc-num">${e.qty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td></tr>`;
+          shelfRows+=`<tr><td class="doc-name" style="padding-left:12px">${_escHtml(spec)}${color?' ['+_escHtml(color)+']':''}</td><td class="doc-num">${e.qty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td></tr>`;
         });
       }
     });
@@ -471,7 +473,7 @@ function renderOrderDocument(order){
     const vat=supply!==null?Math.round(supply*0.1):null;
     const {s,v}=rowAmt(supply,vat);
     const upStr=up!==null&&up!==undefined?up.toLocaleString('ko-KR')+'원':'미정';
-    drawerRows+=`<tr><td class="doc-name">${iName}${dispColor?' ['+_escHtml(dispColor)+']':''}</td><td class="doc-num">${oi.requiredQty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td></tr>`;
+    drawerRows+=`<tr><td class="doc-name">${_escHtml(iName)}${dispColor?' ['+_escHtml(dispColor)+']':''}</td><td class="doc-num">${oi.requiredQty}개</td><td class="doc-note" style="text-align:right">${upStr}</td><td class="doc-note" style="text-align:right;font-weight:700">${s}</td></tr>`;
   });
   if(order.drawerMemo) drawerRows+=`<tr><td colspan="4" class="doc-note" style="color:#555;font-style:italic">${_escHtml(order.drawerMemo)}</td></tr>`;
   const drawerSection=(drawerRows)?`

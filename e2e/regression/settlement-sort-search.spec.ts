@@ -125,6 +125,12 @@ test.describe("정산 — 정렬 + 검색 회귀", () => {
   });
 
   test("R2: 검색 활성 상태에서 정렬해도 search-hidden 상태가 유지된다", async ({ page }) => {
+    // seed-ledger-print-test의 정산 데이터는 2026-07에 고정되어 있다.
+    // 현재 월 기본값에 의존하면 실행 날짜에 따라 고객 행이 0건이 되어 정렬 검증 전에 실패한다.
+    await page.locator('#date-input').fill('2026-07');
+    await page.evaluate(() => (window as any).loadData());
+    await page.waitForSelector('#tbody-ordererwise tr.row-main', { timeout: 10_000 });
+
     await openFirstCustomer(page);
 
     const search = page.locator("#quick-search");

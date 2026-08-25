@@ -235,7 +235,7 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
 
     // 조작: order.warehouse='오산' + oi.warehouse='오산' (양쪽 invalid) + stockDeducted=true
     // 실제 cancelOrder 호출 → _assertOrderableWarehouses throw → 어떤 mutation도 없어야
-    const setup = await page.evaluate(({ tid }) => {
+    const setup = await page.evaluate(async ({ tid }) => {
       const orderId = 999901;
       const orders = window.DB.get("orders", []);
       orders.push({
@@ -249,7 +249,9 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       });
-      window.DB.set("orders", orders);
+      // orders 저장은 서버 baseline 재조회 후 upsert하는 비동기 경로다.
+      // 완료 전에 cancelOrder를 호출하면 테스트 주문이 아직 _mem/서버에 없어 C3 자체가 race가 된다.
+      await window.DB.set("orders", orders);
       // 시흥 재고 스냅샷
       const item = window.DB.get("items", []).find((i: any) => i.id === tid);
       const logsBefore = window.DB.get("logs", []).length;

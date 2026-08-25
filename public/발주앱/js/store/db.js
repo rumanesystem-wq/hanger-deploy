@@ -4,6 +4,21 @@
 // ── IndexedDB 3중 백업 (orders 전용) ──────────────────────────
 // ── 메모리 미러 (window._mem) — 진실 소스는 Firestore, 로컬은 세션 캐시·폴백만 ──
 if(!window._mem) window._mem={};
+if(!window._memBaseline) window._memBaseline={};
+
+function _deepCopyMem(value){
+  if(value===undefined)return undefined;
+  try{return JSON.parse(JSON.stringify(value));}
+  catch(_e){
+    if(Array.isArray(value))return value.map(_deepCopyMem);
+    if(value&&typeof value==='object'){
+      const out={};
+      Object.keys(value).forEach(k=>{out[k]=_deepCopyMem(value[k]);});
+      return out;
+    }
+    return value;
+  }
+}
 // _IDB: 더 이상 사용 안 함 (기존 IndexedDB 데이터 삭제·마이그레이션 코드 미포함 — 영향 회피). 호출부 보존용 no-op.
 const _IDB={ save(){}, loadAll(){return Promise.resolve([]);} };
 
@@ -34,6 +49,8 @@ function _cleanForFirestore(value){
 const DB={
   // 발주서가 사라지면 안 되는 키 목록
   // H3 보강 (Codex): invoices도 통째 덮어쓰기 방어 대상에 포함
+  // [2026-07-14] items는 _GUARD에서 제외: _mergeById가 stock/isActive/noColor 저장 못 함 (Codex P1 지적)
+  // items 방어는 syncFromServer(라인 300+)의 빈값/현저감소 로컬 유지로만 처리
   _GUARD:new Set(['orders','purchase_requests','accounts','logs','session','invoices']),
 
   get(k,d=[]){
@@ -131,8 +148,13 @@ const DB={
   _setInternal(k,v,opts={}){
     let toStore=v;
 
+    // [2026-08-25] _FS.set 트랜잭션이 diff/merge 담당하는 컬렉션은 union 스킵
+    //   union이 앞에서 돌면 로컬 삭제가 무효화되어 트랜잭션이 삭제 반영 못함.
+    //   session·orders 등은 아래 union 로직 유지 (별도 방어).
+    const _TX_KEYS = new Set(['items','purchase_requests','accounts','invoices','logs']);
+
     // ── 보호 키: 항상 병합 (절대 줄어들지 않음) ──
-    if(this._GUARD.has(k)&&Array.isArray(v)){
+    if(this._GUARD.has(k)&&Array.isArray(v)&&!_TX_KEYS.has(k)){
       try{
         const existing=(window._mem&&Array.isArray(window._mem[k]))?window._mem[k]:[];
         if(Array.isArray(existing)&&existing.length>0){
@@ -151,6 +173,7 @@ const DB={
 
     // Firestore에 저장 — items는 initData 마이그레이션 중 잠금 (race condition 방지)
     if(window._FS && !(opts&&opts.skipRemote) && !(k==='items' && window._itemsInitLock)){
+      // 큐 실행 시점에 직전 write의 committed baseline을 읽도록 _FS에 위임한다.
       window._FS.set(k,toStore).catch(e=>console.warn('[Firestore sync 실패]',k,e.message));
     }
   },
@@ -293,9 +316,18 @@ async function syncFromServer(){
   try{
     const data=await window._FS.getAll();
     const _GUARD_KEYS=['orders','purchase_requests','accounts','logs'];
+    // items는 라인 300 분기에서 별도 방어 (else 진입 안 하므로 _GUARD_KEYS에 넣어도 무효)
     const _SHRINK_RATIO=0.5;  // 서버가 기존의 50% 미만이면 사고로 간주 (개발자 조정 가능 상수)
     for(const [k,v] of Object.entries(data)){
       if(k==='items' && Array.isArray(v)){
+        // [2026-07-14] 서버 items 빈값/현저감소 시 로컬 유지 (신규 품목 사라짐 방어)
+        const _prevItems=Array.isArray(window._mem[k])?window._mem[k]:null;
+        const _vEmpty=v.length===0;
+        const _vShrunk=_prevItems&&_prevItems.length>0&&v.length<_prevItems.length*_SHRINK_RATIO;
+        if(_prevItems&&_prevItems.length>0&&(_vEmpty||_vShrunk)){
+          console.warn(`[안전망] 서버 items 비정상(${_vEmpty?'빈값':'현저감소 '+v.length+'<'+_prevItems.length}) → 로컬 유지`);
+          continue;
+        }
         // items: 서버값 자체의 동명 중복만 정리 (입력=서버값, 로컬 병합 아님)
         const byName=new Map();
         v.forEach(i=>{
@@ -351,6 +383,8 @@ async function syncFromServer(){
         console.warn('[Phase 3a] hanger_orders 로드 실패, 옛 데이터 유지:', e&&e.message);
       }
     }
+    // 이후 로컬 diff는 이 클라이언트가 마지막으로 서버에서 받은 상태를 기준으로 계산한다.
+    window._memBaseline=_deepCopyMem(window._mem);
   }catch(e){
     console.warn('[Firestore 수신 실패] 로컬 폴백으로 계속합니다.',e&&e.message);
     _loadLocalFallback();
@@ -1999,6 +2033,15 @@ async function saveOrder(payload, saveMode='발주확정'){
   //  ④ 통과 시 serverItems를 반환 → downstream mutation의 시작점을 로컬 stale이 아닌 서버 최신값으로 (A1·A3)
   async function _assertFreshBeforeOrderSave(){
     if(!window._FS||typeof window._FS.get!=='function')return null;
+    // DB.set은 호환성 때문에 fire-and-forget이다. 같은 클라이언트의 직전 컬렉션
+    // 저장이 CAS 도중 완료되면 외부 재고 변경으로 보이므로 먼저 모두 완료시킨다.
+    if(typeof window._FS.awaitPendingWrites==='function'){
+      try{
+        await window._FS.awaitPendingWrites(['items','purchase_requests','logs']);
+      }catch(e){
+        throw new Error('이전 데이터 저장 완료를 확인하지 못했습니다. 다시 시도해주세요. ('+((e&&e.message)||'')+')');
+      }
+    }
     // A5: 편집 모드면 서버 orders 재조회
     if(_eo){
       let serverOrders;
@@ -2052,8 +2095,6 @@ async function saveOrder(payload, saveMode='발주확정'){
     if(_originalOrderForEdit&&_originalOrderForEdit.stockDeducted){
       (_originalOrderForEdit.drawerItems||_originalOrderForEdit.items||[]).forEach(oi=>_collect(oi,_originalOrderForEdit,'old'));
     }
-    if(itemIdsToCheck.size===0)return null;
-
     let serverItems;
     try{
       serverItems=await Promise.race([
@@ -2066,7 +2107,9 @@ async function saveOrder(payload, saveMode='발주확정'){
     if(!Array.isArray(serverItems)){
       throw new Error('서버 최신 재고 확인 실패. 새로고침 후 다시 저장해주세요.');
     }
-    // A2: 대상 item마다 (창고 수량 + 색상 지도) 지문 비교
+    // A2: 대상 item마다 (창고 수량 + 색상 지도) 지문 비교.
+    // 대상이 없는 임시저장도 아래 transaction이 items 전체 CAS를 수행하므로,
+    // 방금 읽은 서버 배열을 mutation/baseline으로 사용해야 한다.
     // 오산 재고는 발주 대상 아님 → 지문 제외 (다른 관리자가 오산 조정만 해도 튕기는 것 방지)
     // 색상 지도의 키 순서는 Firestore doc마다 다를 수 있어 정렬 후 문자열화 (M1 오탐 방지)
     function _stable(obj){
@@ -2300,6 +2343,7 @@ async function saveOrder(payload, saveMode='발주확정'){
     items:dbItems,
     expectedItems:_itemsBeforeOrderMutation,
     purchaseRequests:newPrs,
+    replacePurchaseRequestsForOrderId:_eo?orderDoc.id:null,
     stockLogs
   });
   delete orderDoc._expectedPreviousUpdatedAt;

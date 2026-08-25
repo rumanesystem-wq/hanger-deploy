@@ -401,40 +401,102 @@ function renderUpperTable(){
     const db=dbItems.find(i=>normalizeName(i.name)===normalizeName(compat)||normalizeName(i.name)===normalizeName(name));
     return !db||db.isActive!==false;
   };
-  const allItems=[...UPPER_FIXED,...UPPER_EA].filter(isItemActive);
+  // items 마스터의 category='상부자재' 신규 품목 자동 병합
+  // 이중 정규화: compatUpperName(별칭) + normalizeName(공백·특수문자) 통과 후 비교
+  // (UPPER_COMPAT은 저장명↔마스터명 매핑, normalizeName은 '코너앵글'='코너 앵글' 등 취급)
+  const _canonUpper=n=>{
+    const c=(typeof compatUpperName==='function')?compatUpperName(n):n;
+    return (typeof normalizeName==='function')?normalizeName(c):c;
+  };
+  const _fixedCanonSet=new Set([...UPPER_FIXED,...UPPER_EA].map(_canonUpper));
+  const _editSrc=window._pendingEditOrder||window._editOverride||null;
+  // noColor 조회 맵 — 렌더링·저장·검증에서 공용
+  // key는 canonical 이름(_canonUpper 통과)으로 저장 → 별칭·공백 변형 매칭 통일
+  const _upperNoColorMap=new Map(
+    dbItems.filter(i=>i.category==='상부자재').map(i=>[_canonUpper(i.name),!!i.noColor])
+  );
+  const _upperMasterCanonSet=new Set(
+    dbItems.filter(i=>i.category==='상부자재').map(i=>_canonUpper(i.name))
+  );
+  if(_editSrc&&Array.isArray(_editSrc.upperMaterials)){
+    _editSrc.upperMaterials.forEach(r=>{
+      const canon=r&&r.name?_canonUpper(r.name):'';
+      if(r&&r.color===''&&canon&&!_upperMasterCanonSet.has(canon)){
+        _upperNoColorMap.set(canon,true);
+      }
+    });
+  }
+  const _isUpperNoColor=n=>_upperNoColorMap.get(_canonUpper(n))===true;
+  window._isUpperNoColor=_isUpperNoColor; // submitOrder·미리보기에서 참조
+  window._canonUpper=_canonUpper; // _isUpperNoColor에서 참조 시 필요
+  const _seenUpperItems=new Set();
+  const upperFromItems=dbItems
+    .filter(i=>i.category==='상부자재'&&i.isActive!==false)
+    .map(i=>i.name)
+    .filter(name=>{
+      const c=_canonUpper(name);
+      if(_fixedCanonSet.has(c)||_seenUpperItems.has(c))return false;
+      _seenUpperItems.add(c);
+      return true;
+    });
+  // 편집 모드: 원본 발주서에 있던 이름이 items에서 이름변경/비활성됐어도 렌더 (라인 사라짐 방지)
+  // openEditOrder는 _editOverride 세팅 전에 renderUpperTable 호출 → _pendingEditOrder를 우선 참조
+  const _activeAll=[...UPPER_FIXED,...UPPER_EA,...upperFromItems].filter(isItemActive);
+  // canonical 비교 — 별칭(예: '선반바(ABS) 400' ↔ '선반바 400') 중복 렌더 방지
+  const _activeCanonSet=new Set(_activeAll.map(_canonUpper));
+  // canonical 기준 중복 제거 — 같은 name의 upperMaterials 여러 개(색상별)가 같은 mat tr을 반복 렌더하는 사고 방지
+  const _editingNames=[];
+  if(_editSrc&&Array.isArray(_editSrc.upperMaterials)){
+    const _seenEdit=new Set();
+    _editSrc.upperMaterials.forEach(r=>{
+      const n=(typeof compatUpperName==='function')?compatUpperName(r.name||''):(r.name||'');
+      if(!n)return;
+      const c=_canonUpper(n);
+      if(_activeCanonSet.has(c))return;
+      if(_seenEdit.has(c))return;
+      _seenEdit.add(c);
+      _editingNames.push(n);
+    });
+  }
+  const allItems=[..._activeAll,..._editingNames];
   const COLOR_OPTS=['화이트','블랙','실버','샴페인골드'];
   const _ucCommon=(document.getElementById('upper-common-color')||{}).value||'';
   tbody.innerHTML=allItems.map((name,gi)=>{
     const isFixed=UPPER_FIXED.includes(name);
     const price=getActivePriceForItem(name);
     const priceHtml=orderUnitPriceHtml(price,{kind:'upper'});
-    const isPostBar=name.startsWith('포스트바');
+    // 길이 분할 UI는 표준 길이가 정의된 포스트바에만 노출 (신규 포스트바 변형은 일반 EA 방식)
+    const isPostBar=name.startsWith('포스트바')&&(typeof POSTBAR_STD_LENGTH!=='undefined')&&(POSTBAR_STD_LENGTH[name]>0);
+    // XSS 방어: name은 items 마스터(관리자 입력)에서 올 수 있어 innerHTML/속성 삽입 전 escape 필수
+    const nameE=(typeof _escHtml==='function')?_escHtml(name):name;
     let noteCell;
     if(isPostBar){
       // 포스트바: 길이 분할 토글 버튼만 (비고 입력칸 제거)
-      noteCell='<td><button type="button" class="upper-split-btn" data-mat="'+name+'" title="길이 분할" style="padding:5px 10px;font-size:12px;border:1px solid #1e40af;background:#fff;color:#1e40af;border-radius:4px;cursor:pointer;font-weight:600">📏 길이 분할 <i class="fas fa-chevron-down" style="font-size:10px;margin-left:2px"></i></button><div class="upper-split-info" data-mat="'+name+'" style="margin-top:6px"></div></td>';
+      noteCell='<td><button type="button" class="upper-split-btn" data-mat="'+nameE+'" title="길이 분할" style="padding:5px 10px;font-size:12px;border:1px solid #1e40af;background:#fff;color:#1e40af;border-radius:4px;cursor:pointer;font-weight:600">📏 길이 분할 <i class="fas fa-chevron-down" style="font-size:10px;margin-left:2px"></i></button><div class="upper-split-info" data-mat="'+nameE+'" style="margin-top:6px"></div></td>';
     }else if(isFixed){
       // 선반바 등 고정 품목: 비고 입력칸 유지
-      noteCell='<td><input type="text" class="form-input upper-note" data-mat="'+name+'" placeholder="실제길이" style="padding:4px 6px;font-size:12px;max-width:110px"/></td>';
+      noteCell='<td><input type="text" class="form-input upper-note" data-mat="'+nameE+'" placeholder="실제길이" style="padding:4px 6px;font-size:12px;max-width:110px"/></td>';
     }else{
       noteCell='<td></td>';
     }
-    // 관리자일 때 "+ 색 추가" 버튼 td (개별 색상 서브행 확장)
+    // 관리자일 때 "+ 색 추가" 버튼 td (개별 색상 서브행 확장) — noColor 품목은 색상 무관하므로 빈 셀
     let colorTd='';
     if(_isAdmU){
-      colorTd='<td class="td-center"><button type="button" class="btn upper-add-color-btn" data-mat="'+name+'" style="padding:3px 8px;font-size:11px;border:1px solid #3b82f6;background:#eff6ff;color:#1d4ed8;border-radius:4px;font-weight:600;white-space:nowrap"><i class="fas fa-plus"></i> 색 추가</button></td>';
+      colorTd=_isUpperNoColor(name)
+        ?'<td class="td-center" style="color:var(--text-3);font-size:11px">-</td>'
+        :'<td class="td-center"><button type="button" class="btn upper-add-color-btn" data-mat="'+nameE+'" style="padding:3px 8px;font-size:11px;border:1px solid #3b82f6;background:#eff6ff;color:#1d4ed8;border-radius:4px;font-weight:600;white-space:nowrap"><i class="fas fa-plus"></i> 색 추가</button></td>';
     }
-    let html='<tr data-price-row="1" data-upper-main="'+name+'"'+((!isFixed&&gi===UPPER_FIXED.length)?' class="cat-divider-row"':'')+'>'+
-      '<td class="td-name" style="font-size:13px">'+name+' <span class="unit-badge">EA</span></td>'+
+    let html='<tr data-price-row="1" data-upper-main="'+nameE+'"'+((!isFixed&&gi===UPPER_FIXED.length)?' class="cat-divider-row"':'')+'>'+
+      '<td class="td-name" style="font-size:13px">'+nameE+' <span class="unit-badge">EA</span></td>'+
       '<td>'+priceHtml+'</td>'+
-      '<td class="td-center">'+stepperHtml('upper-qty','data-mat="'+name+'"')+'</td>'+
+      '<td class="td-center">'+stepperHtml('upper-qty','data-mat="'+nameE+'"')+'</td>'+
       colorTd+
       noteCell+
       '<td class="td-center row-supply-val" data-raw-supply="0">'+supplyAmtHtml(0)+'</td>'+
     '</tr>';
     // 포스트바: 인라인 확장 행 (펼침/접힘)
     if(isPostBar){
-      html+='<tr class="upper-split-expand" data-mat="'+name+'" style="display:none"><td colspan="'+_colCount+'" style="background:#eff6ff;padding:12px 16px;border-top:1px solid #bfdbfe"><div class="split-form" data-mat="'+name+'"></div></td></tr>';
+      html+='<tr class="upper-split-expand" data-mat="'+nameE+'" style="display:none"><td colspan="'+_colCount+'" style="background:#eff6ff;padding:12px 16px;border-top:1px solid #bfdbfe"><div class="split-form" data-mat="'+nameE+'"></div></td></tr>';
     }
     return html;
   }).join('');
@@ -449,7 +511,8 @@ function renderUpperTable(){
   // EA 구분행 삽입 (첫 번째 UPPER_EA 행 앞에)
   const firstEAName=UPPER_EA.find(n=>allItems.includes(n));
   if(firstEAName){
-    const firstEARow=tbody.querySelector(`.upper-qty[data-mat="${firstEAName}"]`)?.closest('tr');
+    const firstEAEsc=(typeof CSS!=='undefined'&&CSS.escape)?CSS.escape(firstEAName):firstEAName;
+    const firstEARow=tbody.querySelector(`.upper-qty[data-mat="${firstEAEsc}"]`)?.closest('tr');
     if(firstEARow){
       const divRow=document.createElement('tr');
       divRow.innerHTML='<td colspan="'+_colCount+'" style="background:#f8fafc;font-size:11px;font-weight:700;color:var(--text-3);padding:4px 8px">EA 수량형</td>';
@@ -510,10 +573,12 @@ function _addUpperExtraColorRow(matName, presetColor, presetQty){
   const extra=document.createElement('tr');
   extra.className='upper-extra-color-row';
   extra.dataset.mat=matName;
+  // XSS 방어: matName은 items 마스터에서 올 수 있어 innerHTML/속성 삽입 전 escape
+  const matNameE=(typeof _escHtml==='function')?_escHtml(matName):matName;
   extra.innerHTML=`
     <td colspan="2" style="text-align:right;color:#3730a3;background:#f9fafb;padding-right:8px;font-size:12px">└ 추가 색상:</td>
-    <td class="td-center" style="background:#f9fafb">${stepperHtml('upper-extra-qty no-spinner','data-mat="'+matName+'"',initQty)}</td>
-    <td class="td-center" style="background:#f9fafb"><select class="form-input upper-extra-color-sel" data-mat="${matName}" style="width:100%;max-width:130px;padding:3px 22px 3px 6px;font-size:12px">${opts}</select></td>
+    <td class="td-center" style="background:#f9fafb">${stepperHtml('upper-extra-qty no-spinner','data-mat="'+matNameE+'"',initQty)}</td>
+    <td class="td-center" style="background:#f9fafb"><select class="form-input upper-extra-color-sel" data-mat="${matNameE}" style="width:100%;max-width:130px;padding:3px 22px 3px 6px;font-size:12px">${opts}</select></td>
     <td colspan="${Math.max(1,_colCount-4)}" style="background:#f9fafb"><button type="button" class="btn upper-extra-del-btn" style="padding:3px 8px;font-size:11px;border:1px solid #fca5a5;background:#fee2e2;color:#dc2626;border-radius:4px;font-weight:600;cursor:pointer">× 삭제</button></td>`;
   // main row 및 이미 있는 extra 행들 아래에 삽입
   let anchor=mainRow;
@@ -770,6 +835,8 @@ function selectOrdererForOrder(ordererId){
 
 function openOrderModal(){
   proxyOrdererForOrder=null;
+  // [2026-07-14] 편집 흐름 잔재 정리 — 신규 발주 진입 시 이전 편집 order의 이름이 UI에 남지 않도록
+  window._pendingEditOrder=null;
   _resetOrderModalBtn(); // saveBtn onclick 항상 초기화
   if(!isAdmin()){
     const myDrafts=getOrders().filter(o=>{
@@ -782,6 +849,7 @@ function openOrderModal(){
       const draft=myDrafts[0];
       const label=draft.orderNum||('#'+draft.id);
       const doLoad=confirm(`임시저장된 발주서가 있습니다 [${label}].\n불러오시겠습니까?\n\n확인 → 임시저장 불러오기\n취소 → 새로 작성`);
+      if(doLoad)window._pendingEditOrder=draft;
       _openOrderModalRender(null);
       if(doLoad){
         setTimeout(()=>{
@@ -1438,11 +1506,16 @@ async function submitOrder(saveMode='발주확정'){
     }
     // [2026-07-15] 색상 필수 조건부 — 해당 카테고리에 수량 입력한 품목이 있을 때만 색상 필수
     // [H1] 옷봉(rodEntries)도 상부자재 색상 사용 — 옷봉만 발주 시 색상 검증 skip 방지
-    // 상부자재 색상: 상부자재 or 옷봉에 항목이 있을 때
-    const hasUpperItems = Array.from(document.querySelectorAll('.upper-qty'))
-      .some(inp => (parseInt(inp.value)||0) > 0)
+    // 상부자재 색상: 색상 있는 상부자재 or 옷봉에 항목이 있을 때 (noColor 품목만 있으면 색상 검증 skip)
+    const hasColoredUpperItems = Array.from(document.querySelectorAll('.upper-qty'))
+      .some(inp => {
+        if((parseInt(inp.value)||0) <= 0) return false;
+        const mat = inp.dataset.mat || '';
+        const noColor = (typeof window._isUpperNoColor==='function') ? window._isUpperNoColor(mat) : false;
+        return !noColor;
+      })
       || (typeof rodEntries !== 'undefined' && rodEntries.length > 0);
-    if (hasUpperItems) {
+    if (hasColoredUpperItems) {
       const ucCheck=document.getElementById('upper-common-color');
       if(!ucCheck||!ucCheck.value){
         _markRequired(ucCheck,'상부자재 색상을 선택해주세요.');
@@ -1501,13 +1574,15 @@ async function submitOrder(saveMode='발주확정'){
     const unitPrice=getOrderLinePrice(inp.closest('tr'),getActivePriceForItem(mat));
     // 메인 행 (공통색 수량) — val>0 일 때만
     if(val>0){
-      const rowColor=upperCommonColor;
+      // noColor 품목(예: 나비너트)은 색상 없이 저장 — 공통 색상 강제 매핑 X
+      const _matNoColor=(typeof window._isUpperNoColor==='function')?window._isUpperNoColor(mat):false;
+      const rowColor=_matNoColor?'':upperCommonColor;
       const colorKey=COLOR_KEY_MAP[rowColor]||'white';
       const supply=(unitPrice!==null)?unitPrice*val:null;
       const vatAmt=supply!==null?Math.round(supply*0.1):null;
       // [2026-08-03 문제3 fix] _isMain:true → 복원 시 확실한 메인 판단
       const row={name:mat,color:rowColor,qty:val,note,unitPrice,amount:supply,vatAmount:vatAmt,_isMain:true,white:0,black:0,silver:0,champagne:0};
-      row[colorKey]=val;
+      if(!_matNoColor)row[colorKey]=val; // noColor는 색상 카운트도 안 함
       // 길이 분할 (포스트바만)
       try{
         const splitsRaw=inp.dataset.splits;
@@ -1741,10 +1816,11 @@ function setRowLengthSplits(matName,splits){
   const inp=_findUpperControl(matName,'.upper-qty');
   if(!inp)return;
   inp.dataset.splits=JSON.stringify(splits||[]);
-  // 셀 표시 갱신
-  const btn=document.querySelector(`.upper-split-btn[data-mat="${matName}"]`);
+  // 셀 표시 갱신 — matName에 특수문자(따옴표·백슬래시) 포함 시 selector 파싱 실패 방어
+  const matEsc=(typeof CSS!=='undefined'&&CSS.escape)?CSS.escape(matName):matName;
+  const btn=document.querySelector(`.upper-split-btn[data-mat="${matEsc}"]`);
   const noteEl=_findUpperControl(matName,'.upper-note');
-  const splitInfoEl=document.querySelector(`.upper-split-info[data-mat="${matName}"]`);
+  const splitInfoEl=document.querySelector(`.upper-split-info[data-mat="${matEsc}"]`);
   const isPostBar=matName.startsWith('포스트바');
   if(splits&&splits.length>0){
     // 분할 정보 HTML
@@ -1778,8 +1854,10 @@ function setRowLengthSplits(matName,splits){
 }
 
 function toggleLengthSplitInline(matName){
-  const expandRow=document.querySelector(`.upper-split-expand[data-mat="${matName}"]`);
-  const btn=document.querySelector(`.upper-split-btn[data-mat="${matName}"]`);
+  // matName selector 안전화 (특수문자 방어)
+  const matEsc=(typeof CSS!=='undefined'&&CSS.escape)?CSS.escape(matName):matName;
+  const expandRow=document.querySelector(`.upper-split-expand[data-mat="${matEsc}"]`);
+  const btn=document.querySelector(`.upper-split-btn[data-mat="${matEsc}"]`);
   if(!expandRow)return;
   const isOpen=expandRow.style.display!=='none';
   if(isOpen){
@@ -1800,8 +1878,10 @@ function toggleLengthSplitInline(matName){
   const current=getRowLengthSplits(matName);
   let splits=current.length>0?JSON.parse(JSON.stringify(current)):[{qty:totalQty,length:stdLen}];
   const formEl=expandRow.querySelector('.split-form');
+  // XSS 방어: matName은 items 마스터에서 올 수 있어 escape
+  const _matNameE=(typeof _escHtml==='function')?_escHtml(matName):matName;
   formEl.innerHTML=`
-    <div style="font-size:13px;color:#1e40af;margin-bottom:10px"><strong style="color:#0f172a">${matName}</strong> — 발주 수량 ${totalQty}개 · 정척 ${stdLen}mm</div>
+    <div style="font-size:13px;color:#1e40af;margin-bottom:10px"><strong style="color:#0f172a">${_matNameE}</strong> — 발주 수량 ${totalQty}개 · 정척 ${stdLen}mm</div>
     <div class="split-rows" style="display:flex;flex-direction:column;gap:6px"></div>
     <div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">
       <button type="button" class="btn btn-outline btn-sm split-add-btn"><i class="fas fa-plus"></i> 길이 추가</button>

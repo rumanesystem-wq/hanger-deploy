@@ -644,12 +644,17 @@ function openOrderConfirmModal(targetStatus){
   if(!shipDate||!/^\d{4}-\d{2}-\d{2}$/.test(shipDate)){toast('출고일을 입력해주세요.','error');return;}
   const whVal=document.getElementById('o-warehouse')?.value||'';
   if(!whVal){toast('출고 창고를 선택해주세요. (시흥 또는 평택)','error');return;}
-  // [2026-07-15] 색상 필수 조건부 — 해당 카테고리에 수량 입력한 품목이 있을 때만
-  // [H1] 옷봉(rodEntries)도 상부자재 색상 사용
-  const hasUpperItems = Array.from(document.querySelectorAll('.upper-qty'))
-    .some(inp => (parseInt(inp.value)||0) > 0)
+  // [2026-07-15] 색상 필수 조건부 — 색상 있는 상부자재 or 옷봉에 수량 입력이 있을 때만
+  // (noColor 품목만 있으면 색상 검증 skip)
+  const hasColoredUpperItems = Array.from(document.querySelectorAll('.upper-qty'))
+    .some(inp => {
+      if((parseInt(inp.value)||0) <= 0) return false;
+      const mat = inp.dataset.mat || '';
+      const noColor = (typeof window._isUpperNoColor==='function') ? window._isUpperNoColor(mat) : false;
+      return !noColor;
+    })
     || (typeof rodEntries !== 'undefined' && rodEntries.length > 0);
-  if (hasUpperItems) {
+  if (hasColoredUpperItems) {
     const ucCheck=document.getElementById('upper-common-color');
     if(!ucCheck||!ucCheck.value){toast('상부자재 색상을 선택해주세요.','error');return;}
   }
@@ -743,12 +748,15 @@ function _buildPreviewOrderFromForm(){
       const isFixed=(typeof UPPER_FIXED!=='undefined'&&UPPER_FIXED.includes)?UPPER_FIXED.includes(mat):false;
       const noteEl=isFixed?(inp.closest('tr')&&inp.closest('tr').querySelector('.upper-note')):null;
       const note=noteEl?noteEl.value.trim():'';
-      const colorKey={'화이트':'white','블랙':'black','실버':'silver','샴페인골드':'champagne'}[upperCommonColor]||'white';
+      // noColor 품목은 색상 없이 저장
+      const _matNoColor=(typeof window._isUpperNoColor==='function')?window._isUpperNoColor(mat):false;
+      const rowColor=_matNoColor?'':upperCommonColor;
+      const colorKey={'화이트':'white','블랙':'black','실버':'silver','샴페인골드':'champagne'}[rowColor]||'white';
       const unitPrice=(typeof getActivePriceForItem==='function')?getActivePriceForItem(mat):null;
       const supply=(unitPrice!==null&&unitPrice!==undefined)?unitPrice*val:null;
       const vatAmt=supply!==null?Math.round(supply*0.1):null;
-      const row={name:mat,color:upperCommonColor,qty:val,note,unitPrice,amount:supply,vatAmount:vatAmt,white:0,black:0,silver:0,champagne:0};
-      row[colorKey]=val;
+      const row={name:mat,color:rowColor,qty:val,note,unitPrice,amount:supply,vatAmount:vatAmt,white:0,black:0,silver:0,champagne:0};
+      if(!_matNoColor)row[colorKey]=val;
       try{
         const splitsRaw=inp.dataset.splits;
         if(splitsRaw){
@@ -1410,13 +1418,19 @@ function openOrderDetail(orderId){
         <table class="det-tbl">
           <thead><tr><th>품목</th><th class="td-center">색상</th><th class="td-center">수량</th><th style="text-align:left">비고</th></tr></thead>
           <tbody>${order.upperMaterials.map(r=>{
-            // 신형: color+qty
-            if(r.color&&r.qty){
-              return `<tr><td class="dn">${compatUpperName(r.name)}</td><td class="td-center"><span class="det-color-badge">${r.color}</span></td><td class="dnum">${r.qty}</td><td style="font-size:12px;color:#374151">${r.note||''}</td></tr>`;
+            // XSS 방어: r.name/color/note는 사용자 입력이 저장된 값 (신규 상부자재 이후)
+            const _nameE=(typeof _escHtml==='function')?_escHtml(compatUpperName(r.name)):compatUpperName(r.name);
+            const _noteE=(typeof _escHtml==='function')?_escHtml(r.note||''):(r.note||'');
+            // 신형: color 프로퍼티 명시적 있음 (typeof === 'string') → color='' 도 noColor 신형으로 인정
+            // 레거시(color 프로퍼티 미존재)는 white/black/silver/champagne 카운터 분기로
+            if(r.qty && typeof r.color==='string'){
+              const _colorE=(typeof _escHtml==='function')?_escHtml(r.color):r.color;
+              const colorCell=_colorE?`<span class="det-color-badge">${_colorE}</span>`:'<span style="color:var(--text-3);font-size:11px">-</span>';
+              return `<tr><td class="dn">${_nameE}</td><td class="td-center">${colorCell}</td><td class="dnum">${r.qty}</td><td style="font-size:12px;color:#374151">${_noteE}</td></tr>`;
             }
-            // 구형: white/black/silver/champagne
+            // 구형: white/black/silver/champagne (color 프로퍼티 미존재)
             const colorMap={white:'화이트',black:'블랙',silver:'실버',champagne:'샴페인골드'};
-            return ['white','black','silver','champagne'].filter(c=>r[c]>0).map(c=>`<tr><td class="dn">${compatUpperName(r.name)}</td><td class="td-center"><span class="det-color-badge">${colorMap[c]}</span></td><td class="dnum">${r[c]}</td><td style="font-size:12px;color:#374151">${r.note||''}</td></tr>`).join('');
+            return ['white','black','silver','champagne'].filter(c=>r[c]>0).map(c=>`<tr><td class="dn">${_nameE}</td><td class="td-center"><span class="det-color-badge">${colorMap[c]}</span></td><td class="dnum">${r[c]}</td><td style="font-size:12px;color:#374151">${_noteE}</td></tr>`).join('');
           }).join('')}</tbody>
         </table>
       </div>
@@ -1951,6 +1965,8 @@ async function openEditOrder(orderId){
   closeModal('order-detail-modal');
 
   // ── 2단계: 모달 렌더링 (항상 빈 상태로 시작) ──
+  // [2026-07-14] 편집 대상 order를 렌더 전에 노출 → renderUpperTable이 참조해서 items에 없는(비활성/이름변경) 신규 상부자재 라인도 렌더 (편집 시 사라짐 방지)
+  window._pendingEditOrder = order;
   _openOrderModalRender(null);
 
   // ── 3단계: 기존 발주값 복원 (재고 롤백과 독립적으로 order 원본 참조) ──
@@ -2086,9 +2102,8 @@ async function submitEditOrder(orderId, saveMode){
 
   // ── 기존 splice + DB.set 제거 (race condition 원인) ──
   // saveOrder가 _editOverride.id로 같은 자리에 교체 처리하므로 사전 삭제 불필요
-  // 기존 발주 필요 목록만 제거 (submitOrder가 새로 추가)
-  const prs=DB.get('purchase_requests',[]).filter(p=>p.orderId!==orderId);
-  DB.set('purchase_requests',prs);
+  // 기존 발주 필요 목록은 saveOrder의 주문 트랜잭션 안에서 새 목록으로 교체한다.
+  // 검증/ID 발급/재고 CAS가 실패해도 기존 PR이 먼저 사라지면 안 된다.
   // 모달 제목/버튼 원복
   const titleEl=document.querySelector('#order-modal .modal-title');
   if(titleEl)titleEl.textContent=isAdmin()?'대리 발주서 작성':'새 발주서 등록';
@@ -2108,6 +2123,8 @@ function copyOrder(orderId){
   if(!order){toast('발주서를 찾을 수 없습니다.','error');return;}
   if(!isAdmin()&&order.createdBy&&order.createdBy!==currentUser.id){toast('본인 발주서만 복사할 수 있습니다.','error');return;}
   closeModal('order-detail-modal');
+  // [2026-07-14] 편집과 동일: 복사 대상 order를 렌더 전에 노출 → renderUpperTable이 items에 없는 신규 상부자재도 렌더
+  window._pendingEditOrder = order;
   // openOrderModal() 대신 직접 빈 모달 렌더 — 임시저장 자동불러오기 confirm 방지
   _openOrderModalRender(null);
   setTimeout(()=>{
