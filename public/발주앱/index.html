@@ -366,6 +366,48 @@
           return value;
         }
       };
+      // [Phase 1] items doc-per-id 리팩토링 — dual-write feature flag
+      //   기본 OFF (window._itemsDocPerId_dualWrite = true 로 켜야 dual-write 활성)
+      //   ON 시: legacy hanger_data/items 배열 write 성공 후 hanger_items 컬렉션에 개별 문서 mirror
+      //   실패해도 legacy는 정상 커밋 (best-effort mirror). 콘솔에만 경고
+      //   다음 phase에서 read 전환 + legacy 제거
+      if (typeof window._itemsDocPerId_dualWrite === 'undefined') window._itemsDocPerId_dualWrite = false;
+      async function _mirrorItemsToDocs(committedItems, prevItems) {
+        if (!window._itemsDocPerId_dualWrite) return;
+        try {
+          const col = db.collection('hanger_items');
+          const prevIds = new Set((prevItems || []).map(i => i && i.id).filter(id => id != null));
+          const nextIds = new Set((committedItems || []).map(i => i && i.id).filter(id => id != null));
+          // 삭제: prev에 있고 committed에 없음
+          const toDelete = [...prevIds].filter(id => !nextIds.has(id));
+          // upsert: committed 전체 (필드 단위 diff는 legacy 트랜잭션이 이미 처리 → committed가 최종 상태)
+          const batches = [];
+          let batch = db.batch(), n = 0;
+          const flush = () => { if (n > 0) { batches.push(batch.commit()); batch = db.batch(); n = 0; } };
+          committedItems.forEach(item => {
+            if (!item || item.id == null) return;
+            batch.set(col.doc(String(item.id)), { ...item, updatedAt: new Date().toISOString() });
+            if (++n >= 400) flush();
+          });
+          toDelete.forEach(id => {
+            batch.delete(col.doc(String(id)));
+            if (++n >= 400) flush();
+          });
+          flush();
+          await Promise.all(batches);
+          console.log(`[items mirror] ${committedItems.length} upsert, ${toDelete.length} delete`);
+        } catch (e) {
+          console.warn('[items mirror 실패 — legacy는 정상]', e && e.message);
+        }
+      }
+      let _itemsMirrorQueue = Promise.resolve();
+      const _enqueueItemsMirror = (committedItems, prevItems) => {
+        if (!window._itemsDocPerId_dualWrite) return Promise.resolve();
+        const task = _itemsMirrorQueue.catch(() => {}).then(() => _mirrorItemsToDocs(committedItems, prevItems));
+        _itemsMirrorQueue = task;
+        return task;
+      };
+
       // 같은 키의 fire-and-forget 저장 순서를 보장하고, 발주 CAS가 이 클라이언트의
       // 직전 items 저장을 외부 변경으로 오인하지 않도록 pending write를 조회 가능하게 한다.
       const _writeQueues = new Map();
@@ -423,6 +465,9 @@
           committed = out;
           tx.set(ref, { value: out, updatedAt: new Date().toISOString() });
         });
+        // [Phase 1] items dual-write: legacy 커밋 성공 후 doc-per-id 컬렉션에 mirror
+        //   flag OFF 시 no-op. mirror 실패해도 legacy는 정상
+        if (key === 'items' && window._itemsDocPerId_dualWrite) _enqueueItemsMirror(committed, prevLocal).catch(() => {});
         return committed;
       }
 
@@ -572,12 +617,14 @@
           const nextOrder=clean(order);
           let committedPrs=[];
           let committedLogs=[];
+          let prevItems=[];
           await db.runTransaction(async tx=>{
             const itemsSnap=await tx.get(itemsRef);
             const orderSnap=await tx.get(orderRef);
             const prsSnap=await tx.get(prsRef);
             const logsSnap=await tx.get(logsRef);
             const currentItems=itemsSnap.exists&&Array.isArray(itemsSnap.data().value)?itemsSnap.data().value:[];
+            if(window._itemsDocPerId_dualWrite)prevItems=clean(currentItems);
             if(JSON.stringify(stable(currentItems))!==JSON.stringify(stable(baseline))){
               throw new Error('저장 직전에 재고가 변경되었습니다. 새로고침 후 다시 시도해주세요.');
             }
@@ -612,6 +659,7 @@
             tx.set(logsRef,{value:committedLogs,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
             tx.set(orderRef,nextOrder);
           });
+          if(window._itemsDocPerId_dualWrite)_enqueueItemsMirror(nextItems,prevItems).catch(()=>{});
           if(!window._mem)window._mem={};
           window._mem.items=nextItems;
           const localOrders=Array.isArray(window._mem.orders)?window._mem.orders.slice():[];
@@ -644,11 +692,13 @@
           const nextPrs=clean(purchaseRequests||[]);
           const baselinePrs=clean(expectedPurchaseRequests||[]);
           let committedLogs=[];
+          let prevItems=[];
           await db.runTransaction(async tx=>{
             const itemsSnap=await tx.get(itemsRef);
             const logsSnap=await tx.get(logsRef);
             const prsSnap=await tx.get(prsRef);
             const currentItems=itemsSnap.exists&&Array.isArray(itemsSnap.data().value)?itemsSnap.data().value:[];
+            if(window._itemsDocPerId_dualWrite)prevItems=clean(currentItems);
             const currentPrs=prsSnap.exists&&Array.isArray(prsSnap.data().value)?prsSnap.data().value:[];
             if(JSON.stringify(stable(currentItems))!==JSON.stringify(stable(baselineItems)))throw new Error('처리 중 재고가 변경되었습니다. 다시 시도해주세요.');
             if(JSON.stringify(stable(currentPrs))!==JSON.stringify(stable(baselinePrs)))throw new Error('처리 중 발주 필요 목록이 변경되었습니다. 다시 시도해주세요.');
@@ -660,6 +710,7 @@
             tx.set(logsRef,{value:committedLogs,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
             tx.set(prsRef,{value:nextPrs,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
           });
+          if(window._itemsDocPerId_dualWrite)_enqueueItemsMirror(nextItems,prevItems).catch(()=>{});
           if(!window._mem)window._mem={};
           window._mem.items=nextItems;
           window._mem.logs=committedLogs;
