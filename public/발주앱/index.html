@@ -371,31 +371,56 @@
       //   ON 시: legacy hanger_data/items 배열 write 성공 후 hanger_items 컬렉션에 개별 문서 mirror
       //   실패해도 legacy는 정상 커밋 (best-effort mirror). 콘솔에만 경고
       //   다음 phase에서 read 전환 + legacy 제거
-      if (typeof window._itemsDocPerId_dualWrite === 'undefined') window._itemsDocPerId_dualWrite = false;
+      // [2026-08-26 Phase 4] 운영 마이그레이션 완료 후 dual-write 활성화
+      if (typeof window._itemsDocPerId_dualWrite === 'undefined') window._itemsDocPerId_dualWrite = true;
       async function _mirrorItemsToDocs(committedItems, prevItems) {
         if (!window._itemsDocPerId_dualWrite) return;
         try {
+          const legacyRef = db.collection('hanger_data').doc('items');
           const col = db.collection('hanger_items');
-          const prevIds = new Set((prevItems || []).map(i => i && i.id).filter(id => id != null));
-          const nextIds = new Set((committedItems || []).map(i => i && i.id).filter(id => id != null));
+          const prevIds = new Set((prevItems || []).map(i => i && i.id).filter(id => id != null).map(String));
+          const nextIds = new Set((committedItems || []).map(i => i && i.id).filter(id => id != null).map(String));
           // 삭제: prev에 있고 committed에 없음
           const toDelete = [...prevIds].filter(id => !nextIds.has(id));
-          // upsert: committed 전체 (필드 단위 diff는 legacy 트랜잭션이 이미 처리 → committed가 최종 상태)
-          const batches = [];
-          let batch = db.batch(), n = 0;
-          const flush = () => { if (n > 0) { batches.push(batch.commit()); batch = db.batch(); n = 0; } };
-          committedItems.forEach(item => {
-            if (!item || item.id == null) return;
-            batch.set(col.doc(String(item.id)), { ...item, updatedAt: new Date().toISOString() });
-            if (++n >= 400) flush();
+          const operations = [];
+          (committedItems || []).forEach(item => {
+            if (item && item.id != null) operations.push({ type: 'set', id: String(item.id), item });
           });
-          toDelete.forEach(id => {
-            batch.delete(col.doc(String(id)));
-            if (++n >= 400) flush();
-          });
-          flush();
-          await Promise.all(batches);
-          console.log(`[items mirror] ${committedItems.length} upsert, ${toDelete.length} delete`);
+          toDelete.forEach(id => operations.push({ type: 'delete', id }));
+
+          const transactions = [];
+          for (let i = 0; i < operations.length; i += 400) {
+            const chunk = operations.slice(i, i + 400);
+            transactions.push(db.runTransaction(async tx => {
+              const legacySnap = await tx.get(legacyRef);
+              const legacyItems = legacySnap.exists && Array.isArray(legacySnap.data().value)
+                ? legacySnap.data().value : [];
+              const legacyById = new Map();
+              legacyItems.forEach(item => {
+                if (item && item.id != null) legacyById.set(String(item.id), item);
+              });
+              let setCount = 0, deleteCount = 0;
+              chunk.forEach(op => {
+                const currentItem = legacyById.get(op.id);
+                if (op.type === 'set') {
+                  if (_stableJSON(currentItem) !== _stableJSON(op.item)) return;
+                  tx.set(col.doc(String(op.id)), {
+                    ...op.item,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                  });
+                  setCount++;
+                } else if (!legacyById.has(op.id)) {
+                  tx.delete(col.doc(String(op.id)));
+                  deleteCount++;
+                }
+              });
+              return { setCount, deleteCount };
+            }));
+          }
+          const results = await Promise.all(transactions);
+          const setCount = results.reduce((sum, result) => sum + result.setCount, 0);
+          const deleteCount = results.reduce((sum, result) => sum + result.deleteCount, 0);
+          console.log(`[items mirror] ${setCount} upsert, ${deleteCount} delete`);
         } catch (e) {
           console.warn('[items mirror 실패 — legacy는 정상]', e && e.message);
         }

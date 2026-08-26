@@ -174,7 +174,8 @@ const DB={
     // Firestore에 저장 — items는 initData 마이그레이션 중 잠금 (race condition 방지)
     if(window._FS && !(opts&&opts.skipRemote) && !(k==='items' && window._itemsInitLock)){
       // 큐 실행 시점에 직전 write의 committed baseline을 읽도록 _FS에 위임한다.
-      window._FS.set(k,toStore).catch(e=>console.warn('[Firestore sync 실패]',k,e.message));
+      const syncPromise=window._FS.set(k,toStore).catch(e=>console.warn('[Firestore sync 실패]',k,e.message));
+      if(k==='items')return syncPromise;
     }
   },
 
