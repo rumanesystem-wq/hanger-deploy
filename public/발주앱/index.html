@@ -1619,6 +1619,16 @@
 </div>
 
 <script src="js/store/db.js"></script>
+<script>
+// items 병합기가 서버 배열에서 시작하므로 로컬 삭제 ID는 명시적으로 제거한다.
+const _mergeItemsKeepingDeletes = window._mergeItemsByLocalChanges;
+window._mergeItemsByLocalChanges = (serverItems, prevItems, nextItems) => {
+  const prevIds = new Set((prevItems || []).map(i => i && i.id).filter(id => id != null));
+  const nextIds = new Set((nextItems || []).map(i => i && i.id).filter(id => id != null));
+  return _mergeItemsKeepingDeletes(serverItems, prevItems, nextItems)
+    .filter(i => !prevIds.has(i && i.id) || nextIds.has(i.id));
+};
+</script>
 <script src="js/utils/uiUtils.js"></script>
 <script src="js/utils/dateUtils.js"></script>
 <script src="js/utils.js"></script>
