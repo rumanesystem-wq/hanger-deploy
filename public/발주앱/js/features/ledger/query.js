@@ -132,8 +132,9 @@ async function fetchAllCompletedOrders() {
   const allOrders = (typeof DB !== 'undefined' && typeof DB.get === 'function')
     ? DB.get('orders', [])
     : [];
+  // [2026-08-26] 정책: 발주대기(화면 '출고대기') 제외 → 관리자 '출고 확정' 이후만 원장 반영
   // 출고완료 + 발주확정(=UI '출고확정') 둘 다 매출 인식 (운영 워크플로우)
-  return allOrders.filter(o => o && _canViewLedgerOrder(o) && (o.status === '출고완료' || o.status === '발주확정' || o.status === '발주대기'));
+  return allOrders.filter(o => o && _canViewLedgerOrder(o) && (o.status === '출고완료' || o.status === '발주확정'));
 }
 
 function _canViewLedgerOrder(o) {
