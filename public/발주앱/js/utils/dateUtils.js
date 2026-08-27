@@ -36,10 +36,61 @@ function coerceDateForFilter(s) {
   return normalizeDateStr(s);
 }
 
+// [2026-08-27] KST 변환 헬퍼 — UTC ISO 문자열/Date/Timestamp를 KST 날짜(YYYY-MM-DD)로
+// changedAt은 UTC(new Date().toISOString())로 기록되므로 .slice(0,10)은 UTC 날짜.
+// KST(UTC+9)로 변환 후 잘라야 자정~오전 9시 처리 건이 하루 밀리지 않음.
+function _toKstDateStr(raw) {
+  if (!raw) return '';
+  let d;
+  if (typeof raw === 'string') {
+    d = new Date(raw);
+  } else if (typeof raw === 'number') {
+    // epoch ms
+    d = new Date(raw);
+  } else if (raw && typeof raw.toDate === 'function') {
+    // Firestore Timestamp 객체 방어 (향후 Admin SDK 경로 대비)
+    d = raw.toDate();
+  } else if (raw && (typeof raw.seconds === 'number' || typeof raw._seconds === 'number')) {
+    // JSON 직렬화된 Firestore Timestamp: {seconds, nanoseconds} 또는 {_seconds, _nanoseconds}
+    const sec = typeof raw.seconds === 'number' ? raw.seconds : raw._seconds;
+    const nano = typeof raw.nanoseconds === 'number' ? raw.nanoseconds
+      : (typeof raw._nanoseconds === 'number' ? raw._nanoseconds : 0);
+    d = new Date(sec * 1000 + Math.floor(nano / 1e6));
+  } else if (raw instanceof Date) {
+    d = raw;
+  } else {
+    return '';
+  }
+  if (isNaN(d.getTime())) return '';
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  return kst.toISOString().slice(0, 10);
+}
+
+// 정산·원장 기준일: **최초** 관리자 발주확정 시각 우선(KST 기준, 회계 관행: 최초 확정일 고정)
+// 폴백: shipDate → orderDate (옛 데이터에 statusHistory 없고 shipDate=0000-00-00인 경우 방어)
+function getSettlementDate(order) {
+  if (!order) return '';
+  const history = Array.isArray(order.statusHistory) ? order.statusHistory : [];
+  // [2026-08-27] 최초 확정일 정책: 앞에서부터 스캔 → 첫 '발주확정' 이벤트 채택.
+  //   재확정(취소→되돌리기, 해제→재확정 등) 시에도 정산 월이 흔들리지 않도록 고정.
+  for (let i = 0; i < history.length; i++) {
+    const entry = history[i];
+    if (!entry || entry.status !== '발주확정') continue;
+    const kstDate = _toKstDateStr(entry.changedAt);
+    if (kstDate) return coerceDateForFilter(kstDate);
+  }
+  const shipDate = coerceDateForFilter(order.shipDate || '');
+  if (shipDate && shipDate !== '0000-00-00') return shipDate;
+  // [2026-08-27] 옛 데이터 회귀 방어: statusHistory 없고 shipDate도 무효면 orderDate로 폴백
+  const orderDate = coerceDateForFilter(order.orderDate || '');
+  return orderDate === '0000-00-00' ? '' : orderDate;
+}
+
 if (typeof window !== 'undefined') {
   window.normalizeYear = normalizeYear;
   window.normalizeDateStr = normalizeDateStr;
   window.coerceDateForFilter = coerceDateForFilter;
+  window.getSettlementDate = getSettlementDate;
 }
 
 // ── 분리형 날짜 입력 헬퍼 ──
@@ -191,4 +242,3 @@ function getDateValue(prefix){
 function setupDateInput(id){
   // 분리형으로 교체됐으므로 no-op (호환용)
 }
-

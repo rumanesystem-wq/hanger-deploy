@@ -108,7 +108,7 @@ td{padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:middle
 tbody tr:hover{background:#fafafa}
 tbody tr:last-child td{border-bottom:none}
 .td-name{font-weight:600;color:var(--text)}
-.td-muted{color:var(--text-3)}
+.td-muted{color:var(--text-2)}
 .td-center{text-align:center}
 .td-num{font-weight:700;font-size:15px}
 .td-shortage{color:#dc2626;font-weight:700}

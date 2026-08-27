@@ -563,7 +563,9 @@ async function uncancelOrder(orderId){
   delete orders[idx].cancelledAt;
   orders[idx].stockDeducted=restoredAnyInventory;
   orders[idx].updatedAt=restoreNow2;
-  addStatusHistory(idx, orders, prevStatus, '취소 되돌림');
+  // [2026-08-27] 취소 되돌림 감사 로그: prevStatus='발주확정' 복원 시 note에 명시.
+  //   getSettlementDate는 정책 A(최초 확정일 채택)라 정산 기준일은 원래 확정 이벤트로 유지 — 안전.
+  addStatusHistory(idx, orders, prevStatus, prevStatus==='발주확정'?'취소 되돌림(복원, 재확정 아님)':'취소 되돌림');
   // [2026-07-09] 유케이 사고 재발 방지: 저장 완료 확인
   try {
     await DB.set('orders',orders);
@@ -908,11 +910,43 @@ function _buildPreviewOrderFromForm(){
 async function toggleOrderLock(orderId){
   if(!isAdmin()){toast('관리자만 확정/해제할 수 있습니다.','error');return;}
   return _withOrderLock(orderId, 'lock', async () => {
-  const orders=DB.get('orders',[]);
+  let orders;
+  try{
+    orders=typeof window._FS.getAllOrders==='function'
+      ? await window._FS.getAllOrders({fromServer:true})
+      : await window._FS.get('orders',{fromServer:true});
+  }catch(e){
+    console.error('[toggleOrderLock] 서버 최신 발주 조회 실패:',e&&e.message);
+    toast('서버 발주 상태 확인 실패. 새로고침 후 다시 시도해주세요.','error');return;
+  }
+  if(!Array.isArray(orders)){toast('서버 최신 발주를 불러오지 못했습니다.','error');return;}
   const idx=orders.findIndex(o=>o.id===orderId);
   if(idx===-1){toast('발주서를 찾을 수 없습니다.','error');return;}
   const order=orders[idx];
   const now=new Date().toISOString();
+  // [2026-08-27] confirm은 최신 order 재조회 후 판정 (다른 탭 stale 우회 방지)
+  const _snapshotUpdatedAt=order.updatedAt||'';
+  const _snapshotIsLocked=isOrderLockedState(order);
+  if(_snapshotIsLocked&&!confirm('확정을 해제하면 이 발주가 정산·원장에서 사라집니다.\n계속 진행하시겠습니까?'))return;
+  // [2026-08-27] 저장 직전 CAS 재검증 — 확정/해제 양방향 다 검사
+  //   confirm~write 사이 경합창 방어. 다른 관리자가 이미 조작했으면 abort.
+  try{
+    const _refetch=typeof window._FS.getAllOrders==='function'
+      ? await window._FS.getAllOrders({fromServer:true})
+      : await window._FS.get('orders',{fromServer:true});
+    const _cur=Array.isArray(_refetch)?_refetch.find(o=>o.id===orderId):null;
+    // [2026-08-27] fail-safe: 문서 사라졌으면 abort (다른 관리자가 삭제/취소했을 수 있음)
+    if(!_cur){toast('발주서가 사라졌습니다(다른 관리자가 삭제·취소했을 수 있음). 새로고침 후 확인해주세요.','warning');return;}
+    if((_cur.updatedAt||'')!==_snapshotUpdatedAt){
+      toast('다른 관리자가 이 발주 상태를 이미 변경했습니다. 새로고침 후 다시 시도해주세요.','warning');return;
+    }
+    if(isOrderLockedState(_cur)!==_snapshotIsLocked){
+      toast('이 발주의 확정 상태가 이미 바뀌었습니다. 새로고침 후 다시 시도해주세요.','warning');return;
+    }
+  }catch(e){
+    console.warn('[toggleOrderLock] CAS 재검증 실패:',e&&e.message);
+    toast('서버 상태 재확인 실패. 새로고침 후 다시 시도해주세요.','error');return;
+  }
 
   // 재고는 발주 넣는 시점에 이미 차감됨 — 확정/해제 시 재고 변동 없음
   if(!isOrderLockedState(order)){
@@ -1095,7 +1129,10 @@ function renderOrders(){
       // M1 fix: escapeHtml로 XSS 차단 (title 속성 + 텍스트 노드 양쪽)
       const _esc=(typeof escapeHtml==='function'?escapeHtml:(s=>String(s||'')));
       const cancelReasonCell=orderListSubTab==='cancelled'?`<td class="td-muted" style="font-size:12px;color:#dc2626;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_esc(o.cancelReason||'')}">${_esc(o.cancelReason||'-')}</td>`:'';
-      return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer" title="클릭하여 상세 보기"><td class="td-name">${dTo}</td><td class="td-muted" style="font-size:12px">${addr}</td><td style="font-size:12px;font-weight:600;color:#0f172a">${orderNumEsc}${lockBadge}</td><td class="td-muted">${fmt(o.orderDate)}</td><td class="td-muted">${o.shipDate?fmt(o.shipDate):'-'}</td><td class="td-center">${statusBadge}</td><td class="td-center td-muted">${fmt(o.createdAt)}</td>${cancelReasonCell}<td class="td-center">${cancelBtn} ${uncancelBtn} ${reorderBtn} ${invoiceBtn}</td></tr>`;
+      // [2026-08-27] 출고일 셀: 확정 시 statusHistory 발주확정 changedAt(KST), 미확정이면 발주자 shipDate, 둘 다 없으면 '-'
+      const _shipDateForCell=(typeof getSettlementDate==='function')?getSettlementDate(o):(o.shipDate||'');
+      const _shipCell=_shipDateForCell?fmt(_shipDateForCell):'-';
+      return `<tr class="order-row" data-order-id="${o.id}" style="cursor:pointer" title="클릭하여 상세 보기"><td class="td-name">${dTo}</td><td class="td-muted" style="font-size:12px">${addr}</td><td style="font-size:12px;font-weight:600;color:#0f172a">${orderNumEsc}${lockBadge}</td><td class="td-muted">${fmt(o.orderDate)}</td><td class="td-muted">${_shipCell}</td><td class="td-center">${statusBadge}</td><td class="td-center td-muted">${fmt(o.createdAt)}</td>${cancelReasonCell}<td class="td-center">${cancelBtn} ${uncancelBtn} ${reorderBtn} ${invoiceBtn}</td></tr>`;
     }).join('')}</tbody></table></div>`;
   }
   // 지역 드롭다운: 모든 발주서의 주소에서 첫 단어(시/도) 추출

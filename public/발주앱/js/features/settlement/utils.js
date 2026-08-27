@@ -143,7 +143,7 @@ function aggregateByDay(orders) {
   /** @type {Object<string, {count:number, total:number}>} */
   const daily = {};
   orders.forEach(o => {
-    const k = o.shipDate || '';
+    const k = getSettlementDate(o);
     if (!k) return;
     if (!daily[k]) daily[k] = { count: 0, total: 0 };
     daily[k].count++;
@@ -163,14 +163,18 @@ function aggregateByDay(orders) {
  * @returns {Array<{month:string, count:number, total:number}>}
  */
 function aggregateByMonth(orders) {
+  // [2026-08-27] aggregateByDay와 동일하게 활성 invoice 금액 우선 반영
+  //   기존: o.totalAmount만 → 명세서 수기 편집 시 일별·월별 합계 어긋남
+  const invMap = _buildInvoiceMapForSettlement();
   /** @type {Object<string, {count:number, total:number}>} */
   const monthly = {};
   orders.forEach(o => {
-    const k = (o.shipDate || '').slice(0, 7);
+    const k = getSettlementDate(o).slice(0, 7);
     if (!k) return;
     if (!monthly[k]) monthly[k] = { count: 0, total: 0 };
     monthly[k].count++;
-    monthly[k].total += o.totalAmount || 0;
+    const inv = invMap[o.orderNum];
+    monthly[k].total += inv ? (inv.totalAmount || 0) : (o.totalAmount || 0);
   });
   return Object.keys(monthly).sort().map(month => ({
     month,

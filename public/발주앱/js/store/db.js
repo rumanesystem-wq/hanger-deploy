@@ -2319,7 +2319,18 @@ async function saveOrder(payload, saveMode='발주확정'){
     proxyAdminId:payload.proxyCreatedByAdmin&&currentUser?currentUser.id:'',
     proxyAdminName:payload.proxyCreatedByAdmin&&currentUser?currentUser.name:'',
     proxyOrdererName:payload.proxyOrdererName||'',
-    statusHistory:_eo?(_eo.statusHistory||[{status:effectiveSaveMode,changedBy:currentUser?currentUser.id:'',changedByName:currentUser?currentUser.name:'',changedAt:now,note:'발주서 수정'}]):[{status:effectiveSaveMode,changedBy:currentUser?currentUser.id:'',changedByName:currentUser?currentUser.name:'',changedAt:now,note:'발주서 등록'}],
+    // [2026-08-27] 편집 저장 시 상태 변화 감지해 statusHistory에 append
+    //   기존: _eo.statusHistory를 그대로 재사용 → 임시저장→즉시확정 시 확정 이벤트 누락
+    //        → getSettlementDate가 shipDate 폴백 → shipDate=0000-00-00이면 정산·원장에서 사라짐
+    //   fix: _originalOrderForEdit.status와 effectiveSaveMode 비교, 다르면 새 이벤트 append
+    statusHistory:(()=>{
+      const _mkEntry=(note)=>({status:effectiveSaveMode,changedBy:currentUser?currentUser.id:'',changedByName:currentUser?currentUser.name:'',changedAt:now,note});
+      if(!_eo) return [_mkEntry('발주서 등록')];
+      const _base=Array.isArray(_eo.statusHistory)?_eo.statusHistory.slice():[];
+      const _origStatus=(_originalOrderForEdit&&_originalOrderForEdit.status)||_eo.status||'';
+      if(_origStatus!==effectiveSaveMode) _base.push(_mkEntry('발주서 수정(상태변경)'));
+      return _base.length?_base:[_mkEntry('발주서 수정')];
+    })(),
     // 하위 호환
     items:savedDrawerItems,
     siteName:payload.deliveryTo||'',

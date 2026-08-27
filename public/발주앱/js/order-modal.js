@@ -1774,10 +1774,15 @@ function renderStatusTimeline(order){
     '임시저장':'#94a3b8','발주대기':'#f59e0b','발주확정':'#3b82f6',
     '출고준비':'#8b5cf6','출고완료':'#10b981','취소':'#ef4444','보관':'#6b7280'
   };
+  // [2026-08-27] XSS 방어: h.note, h.changedByName 사용자 입력 유래 → escape 필수
+  //   목록 셀은 이미 escape됐는데 이 타임라인만 누락되어 있었음 (patch 회귀)
+  const _esc=(typeof escapeHtml==='function'?escapeHtml:(s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))));
   const items=history.map((h,i)=>{
     const color=statusColors[h.status]||'#94a3b8';
     const isLast=i===history.length-1;
     const dt=h.changedAt?fmtDt(h.changedAt):'-';
+    const nameEsc=h.changedByName?_esc(h.changedByName):'';
+    const noteEsc=h.note?_esc(h.note):'';
     return`<div style="display:flex;gap:12px;align-items:flex-start">
       <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0">
         <div style="width:12px;height:12px;border-radius:50%;background:${color};margin-top:3px;flex-shrink:0;border:2px solid ${color}33"></div>
@@ -1785,11 +1790,11 @@ function renderStatusTimeline(order){
       </div>
       <div style="padding-bottom:${isLast?0:14}px;min-width:0">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span style="background:${color}18;color:${color};border:1px solid ${color}44;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:700">${h.status}</span>
+          <span style="background:${color}18;color:${color};border:1px solid ${color}44;padding:2px 10px;border-radius:20px;font-size:12px;font-weight:700">${_esc(h.status)}</span>
           <span style="font-size:11px;color:#9ca3af">${dt}</span>
-          ${h.changedByName?`<span style="font-size:11px;color:#6b7280">${h.changedByName}</span>`:''}
+          ${nameEsc?`<span style="font-size:11px;color:#6b7280">${nameEsc}</span>`:''}
         </div>
-        ${h.note?`<div style="font-size:12px;color:#6b7280;margin-top:3px">${h.note}</div>`:''}
+        ${noteEsc?`<div style="font-size:12px;color:#6b7280;margin-top:3px">${noteEsc}</div>`:''}
       </div>
     </div>`;
   }).join('');

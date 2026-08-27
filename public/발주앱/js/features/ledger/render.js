@@ -444,9 +444,7 @@ function calcCarryOver(stats, startDate) {
   let carry = 0;
   // A.1: 거래명세서 있는 발주서만 이월잔액 계산
   (stats.orders || []).forEach(o => {
-    // [2026-07-03] 원장 일자는 발주일 기준
-    // 방어: orderDate가 '0000-00-00'이면 shipDate 폴백 (옛 데이터 이월잔액 누락 방지)
-    const dateField = (o.orderDate && o.orderDate !== '0000-00-00') ? o.orderDate : (o.shipDate || '');
+    const dateField = getSettlementDate(o);
     if (dateField && dateField < startDate) {
       const inv = invoiceMap && invoiceMap[o.orderNum];
       if (!inv || typeof inv.totalAmount !== 'number') return; // 거래명세서 없으면 매출 인식 안 함
@@ -464,15 +462,9 @@ function calcCarryOver(stats, startDate) {
  */
 function filterOrdersInRange(orders, range) {
   if (!range.startDate || !range.endDate) return [...orders];
-  // [2026-07-03] 옛 오염 데이터(0026-XX-XX)도 정규화 후 비교
-  const _norm = (s) => (typeof window !== 'undefined' && typeof window.normalizeDateStr === 'function')
-    ? window.normalizeDateStr(s) : s;
   return orders.filter(o => {
-    // [2026-07-03] 원장 일자는 발주일 기준
-    // 방어: orderDate가 '0000-00-00'이면 shipDate 폴백 (옛 데이터 사라짐 방지)
-    let d = (o.orderDate && o.orderDate !== '0000-00-00') ? o.orderDate : (o.shipDate || '');
-    d = _norm(d);
-    if (!d || d === '0000-00-00') return false;
+    const d = getSettlementDate(o);
+    if (!d) return false;
     return d >= range.startDate && d <= range.endDate;
   });
 }
@@ -499,9 +491,7 @@ function buildTimelineEvents(orders, payments, invoiceMap) {
     const withVat = typeof inv.totalAmount === 'number' ? inv.totalAmount : (o.totalAmount || Math.round(supply * 1.1));
     events.push({
       type: 'out',
-      // [2026-07-03] 원장 일자는 발주일 기준 (거래 인식 시점)
-      // 방어: orderDate가 '0000-00-00'이면 shipDate 폴백
-      date: (o.orderDate && o.orderDate !== '0000-00-00') ? o.orderDate : (o.shipDate || ''),
+      date: getSettlementDate(o),
       shipDate: o.shipDate || '',   // 참고용 (적요에 함께 표시)
       orderDate: o.orderDate || '', // 참고용
       orderNum: o.orderNum,

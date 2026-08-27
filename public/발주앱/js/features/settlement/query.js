@@ -42,9 +42,6 @@ async function fetchCompletedOrders(filter) {
     ? DB.get('orders', [])
     : [];
   const invoiceMap = await _fetchSettlementInvoiceMap();
-  // [2026-07-03] 옛 오염 데이터(0026-XX-XX, 26-XX-XX)도 필터 통과하도록 정규화 후 비교
-  const _norm = (s) => (typeof window !== 'undefined' && typeof window.normalizeDateStr === 'function')
-    ? window.normalizeDateStr(s) : s;
   return allOrders.filter(o => {
     if (!o) return false;
     if (!_canViewSettlementOrder(o)) return false;
@@ -57,11 +54,8 @@ async function fetchCompletedOrders(filter) {
     // 기존 운영/테스트 데이터 호환: 예전에는 내부값 '발주확정'을 화면상 출고확정처럼 썼으므로,
     // 이미 거래명세서가 있는 발주확정 건은 정산에 포함한다.
     if (o.status !== '출고완료' && o.status !== '발주확정') return false;
-    // [2026-07-03] 정산도 발주일 기준으로 통일 (원장과 일치)
-    // 방어: orderDate가 '0000-00-00'이면 shipDate 폴백 (옛 데이터 사라짐 방지)
-    let dateField = (o.orderDate && o.orderDate !== '0000-00-00') ? o.orderDate : (o.shipDate || '');
-    dateField = _norm(dateField);
-    if (!dateField || dateField === '0000-00-00') return false;
+    const dateField = getSettlementDate(o);
+    if (!dateField) return false;
     if (dateField < filter.range.startDate || dateField > filter.range.endDate) return false;
     if (filter.ordererSearch && !(o.deliveryTo || '').includes(filter.ordererSearch)) return false;
     if (filter.warehouse && o.warehouse !== filter.warehouse) return false;

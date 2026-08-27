@@ -147,18 +147,21 @@ test.describe("정산 — 정렬 + 검색 회귀", () => {
     expect(hiddenAfter).toBe(hiddenBefore);
   });
 
-  test("R3: admin settlement includes completed orders even when invoice is missing", async ({ page }) => {
+  test("R3: admin settlement uses the order-confirmed date for its month filter", async ({ page }) => {
     const result = await page.evaluate(async () => {
       const orders = (window as any).DB.get("orders", []);
       orders.push({
         id: 88001,
-        orderNum: "NO-INVOICE-ADMIN-1",
+        orderNum: "CONFIRMED-IN-JULY-ADMIN-1",
         deliveryTo: "명세서없음관리자표시",
         address: "테스트 주소",
-        orderDate: "2026-07-31",
+        orderDate: "2026-06-30",
         shipDate: "2026-08-01",
         warehouse: "시흥",
         status: "출고완료",
+        statusHistory: [
+          { status: "발주확정", changedAt: "2026-07-05T00:00:00.000Z" },
+        ],
         createdBy: "orderer",
         totalSupply: 10000,
         totalVat: 1000,
@@ -170,7 +173,7 @@ test.describe("정산 — 정렬 + 검색 회귀", () => {
         ordererSearch: "",
         warehouse: "",
       });
-      return rows.some((o: any) => o.orderNum === "NO-INVOICE-ADMIN-1");
+      return rows.some((o: any) => o.orderNum === "CONFIRMED-IN-JULY-ADMIN-1");
     });
 
     expect(result).toBe(true);
