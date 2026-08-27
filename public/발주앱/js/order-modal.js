@@ -839,6 +839,7 @@ async function openOrderModal(){
   window._pendingEditOrder=null;
   // [P1-A stale fix 2026-08-27] 신규 모달 진입 시 draft 승격 상태 정리 (검증 실패 잔재 방지)
   window._promotingDraftId=null;
+  window._promotingLegacyDraftId=null;
   _resetOrderModalBtn(); // saveBtn onclick 항상 초기화
   if(!isAdmin()){
     // [Phase 3 + P2-A 2026-08-27] draft 조회: flag ON이면 drafts + orders 병합
@@ -897,10 +898,11 @@ function confirmCloseOrderModal(){
   closeModal('order-modal');
   _resetOrderModalBtn();
   window._editOverride=null; // 수정 모달 취소 시 정리 (다음 신규 등록에 누수 방지)
-  // [P1-A stale fix 2026-08-27] 모달 닫기 시 draft 승격 상태 정리
+  // [P1-A stale fix 2026-08-27] 모달 닫기 시 draft/legacy 승격 상태 정리
   //   검증 실패 early return 후 사용자가 모달 닫고 무관한 발주 저장하면 stale draftId가
   //   무관한 draft를 삭제할 위험 → 여기서 확실히 초기화.
   window._promotingDraftId=null;
+  window._promotingLegacyDraftId=null;
   if(typeof window._releaseActiveOrderEditLock==='function'){
     window._releaseActiveOrderEditLock().catch(()=>{});
   }
@@ -1434,7 +1436,10 @@ function _restoreDraftToModal(order){
         window._promotingDraftId = order.draftId;
         window._editOverride = null; // 신규 order로 진행 → 오늘 날짜 orderNum·발주일 자동 할당
       } else {
-        // 기존 흐름: orders 컬렉션에서 draft splice
+        // 기존 흐름: legacy orders 임시저장 승격
+        // [P1-3 fix 2026-08-27] splice + DB.set을 saveOrder 성공 후로 이동:
+        //   기존: splice 먼저 → submitOrder 검증 실패 return → 원본 유실
+        //   신규: _editOverride만 세팅 → saveOrder 성공 후 splice + PR 정리
         const allOrders=DB.get('orders',[]);
         const draftIdx=allOrders.findIndex(o=>o.id===order.id);
         if(draftIdx>-1){
@@ -1448,10 +1453,7 @@ function _restoreDraftToModal(order){
             createdAt:orig.createdAt||new Date().toISOString(),
             statusHistory:orig.statusHistory||[]
           };
-          allOrders.splice(draftIdx,1);
-          DB.set('orders',allOrders);
-          const prs=DB.get('purchase_requests',[]).filter(p=>p.orderId!==order.id);
-          DB.set('purchase_requests',prs);
+          window._promotingLegacyDraftId=orig.id;
         }
       }
       const titleEl=document.querySelector('#order-modal .modal-title');
@@ -1816,8 +1818,11 @@ async function submitOrder(saveMode='발주확정'){
     }
     ({orderId,shortageCount,order:savedOrder}=await saveOrder({deliveryTo,address,orderDate,shipDate,note,upperMaterials,upperCommonColor,rodItems,rod2400Required,rodTotalLen,rodUnitPrice,rodAmount,rodVat,shelfItems,drawerItems,drawerMemo,etcMemo,sharedColor,totalSupply,totalVat:totalVatAmt,totalAmount,warehouse,proxyOrdererId,proxyOrdererName,proxyCreatedByAdmin:isAdmin()},saveMode));
   }catch(_e){
-    // saveOrder 실패: draft 삭제 안 했으니 그대로 유지. 그냥 에러 토스트.
+    // saveOrder 실패: draft/legacy 원본 그대로 유지. 그냥 에러 토스트.
     window._promotingDraftId=null;
+    // [P1-3 팀 지적 fix 2026-08-27] legacy는 _editOverride가 catch에서 유지되므로
+    //   _promotingLegacyDraftId도 함께 유지 → 재시도 성공 시 PR 정리 일관성 확보.
+    //   모달 닫기·새 발주 진입 시 stale은 openOrderModal/confirmCloseOrderModal에서 정리됨.
     toast(((_e&&_e.message)||'발주 저장 실패. 다시 시도해주세요.'),'error');
     return;
   }
@@ -1832,6 +1837,18 @@ async function submitOrder(saveMode='발주확정'){
       console.warn('[draft 승격] deleteDraft 실패 (order 저장 성공, draft 잔존):', _delErr&&_delErr.message);
     }
     window._promotingDraftId=null;
+  }
+  // [P1-3 fix 2026-08-27] legacy draft 승격 성공 후 PR 정리
+  //   saveOrder가 편집 모드로 원본 문서를 발주대기로 update함 (splice 불필요).
+  //   PR만 정리: 임시저장 시점의 PR은 제거.
+  if(window._promotingLegacyDraftId){
+    try{
+      const prs=DB.get('purchase_requests',[]).filter(p=>p.orderId!==window._promotingLegacyDraftId);
+      DB.set('purchase_requests',prs);
+    }catch(_prErr){
+      console.warn('[legacy draft 승격] PR 정리 실패:', _prErr&&_prErr.message);
+    }
+    window._promotingLegacyDraftId=null;
   }
   const shouldCreateInvoice=savedOrder&&(savedOrder.status==='발주대기'||savedOrder.status==='발주확정'||savedOrder.status==='출고완료');
   if(shouldCreateInvoice&&window.LumaneInvoice&&typeof window.LumaneInvoice.autoCreateForOrder==='function'){

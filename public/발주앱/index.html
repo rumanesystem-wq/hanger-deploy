@@ -700,6 +700,32 @@
           window._memBaseline.logs=_deepCopyBaseline(committedLogs);
           return nextOrder;
         },
+        // [2026-08-27] toggleOrderLock 완전 원자화 — hanger_orders/{orderNum} transaction
+        //   서버 fetch → confirm → refetch(CAS) → DB.set 분리 방식의 race window를 제거.
+        //   기대: expectedUpdatedAt/expectedIsLocked와 현재 문서 일치할 때만 update.
+        //   다른 관리자·탭·PC 동시 조작 완전 방어.
+        async transactToggleOrderLock({orderNum, expectedUpdatedAt, expectedIsLocked, nextStatus, nextIsLocked, newStatusHistoryEntry, now}) {
+          if(!orderNum) throw new Error('orderNum 필수');
+          const orderRef = db.collection('hanger_orders').doc(String(orderNum));
+          let committedOrder = null;
+          await db.runTransaction(async tx => {
+            const snap = await tx.get(orderRef);
+            if(!snap.exists) throw new Error('CAS_MISS_NOT_FOUND');
+            const cur = snap.data();
+            if((cur.updatedAt||'') !== (expectedUpdatedAt||'')) throw new Error('CAS_MISS_UPDATED');
+            if((cur.isLocked===true) !== (expectedIsLocked===true)) throw new Error('CAS_MISS_LOCKED');
+            const nextDoc = {
+              ...cur,
+              status: nextStatus,
+              isLocked: nextIsLocked===true,
+              updatedAt: now,
+              statusHistory: Array.isArray(cur.statusHistory) ? [...cur.statusHistory, newStatusHistoryEntry] : [newStatusHistoryEntry],
+            };
+            tx.set(orderRef, nextDoc);
+            committedOrder = nextDoc;
+          });
+          return committedOrder;
+        },
         async transactInventory({items,expectedItems,stockLogs,purchaseRequests,expectedPurchaseRequests}) {
           const itemsRef=db.collection('hanger_data').doc('items');
           const logsRef=db.collection('hanger_data').doc('logs');

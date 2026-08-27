@@ -910,6 +910,10 @@ function _buildPreviewOrderFromForm(){
 async function toggleOrderLock(orderId){
   if(!isAdmin()){toast('관리자만 확정/해제할 수 있습니다.','error');return;}
   return _withOrderLock(orderId, 'lock', async () => {
+  // [2026-08-27] 완전 원자화: Firestore transaction으로 check+write 하나로 묶음
+  //   기존: 서버 fetch → confirm → refetch(CAS) → DB.set (별도 단계, race window)
+  //   신규: transactToggleOrderLock — 서버 tx로 updatedAt/isLocked 검증+상태 갱신 원자적
+  //   다른 관리자·탭·PC 동시 조작 완전 방어.
   let orders;
   try{
     orders=typeof window._FS.getAllOrders==='function'
@@ -924,68 +928,69 @@ async function toggleOrderLock(orderId){
   if(idx===-1){toast('발주서를 찾을 수 없습니다.','error');return;}
   const order=orders[idx];
   const now=new Date().toISOString();
-  // [2026-08-27] confirm은 최신 order 재조회 후 판정 (다른 탭 stale 우회 방지)
   const _snapshotUpdatedAt=order.updatedAt||'';
   const _snapshotIsLocked=isOrderLockedState(order);
   if(_snapshotIsLocked&&!confirm('확정을 해제하면 이 발주가 정산·원장에서 사라집니다.\n계속 진행하시겠습니까?'))return;
-  // [2026-08-27] 저장 직전 CAS 재검증 — 확정/해제 양방향 다 검사
-  //   confirm~write 사이 경합창 방어. 다른 관리자가 이미 조작했으면 abort.
+
+  // 확정/해제 값 준비
+  const _nextIsLocked = !_snapshotIsLocked;
+  const _nextStatus = _nextIsLocked ? '발주확정' : '발주대기';
+  const _historyNote = _nextIsLocked ? '관리자 확정' : '확정 해제';
+  const _historyEntry = {
+    status: _nextStatus,
+    changedBy: currentUser?currentUser.id:'',
+    changedByName: currentUser?currentUser.name:'',
+    changedAt: now,
+    note: _historyNote,
+  };
+
+  // 원자적 트랜잭션 실행. 실패 시 사유별 토스트.
+  let committedOrder;
   try{
-    const _refetch=typeof window._FS.getAllOrders==='function'
-      ? await window._FS.getAllOrders({fromServer:true})
-      : await window._FS.get('orders',{fromServer:true});
-    const _cur=Array.isArray(_refetch)?_refetch.find(o=>o.id===orderId):null;
-    // [2026-08-27] fail-safe: 문서 사라졌으면 abort (다른 관리자가 삭제/취소했을 수 있음)
-    if(!_cur){toast('발주서가 사라졌습니다(다른 관리자가 삭제·취소했을 수 있음). 새로고침 후 확인해주세요.','warning');return;}
-    if((_cur.updatedAt||'')!==_snapshotUpdatedAt){
+    if(typeof window._FS.transactToggleOrderLock!=='function'){
+      throw new Error('원자 트랜잭션 함수 미로드');
+    }
+    committedOrder = await window._FS.transactToggleOrderLock({
+      orderNum: order.orderNum,
+      expectedUpdatedAt: _snapshotUpdatedAt,
+      expectedIsLocked: _snapshotIsLocked,
+      nextStatus: _nextStatus,
+      nextIsLocked: _nextIsLocked,
+      newStatusHistoryEntry: _historyEntry,
+      now,
+    });
+  }catch(e){
+    const msg = e && e.message || '';
+    if(msg==='CAS_MISS_NOT_FOUND'){
+      toast('발주서가 사라졌습니다(다른 관리자가 삭제·취소했을 수 있음). 새로고침 후 확인해주세요.','warning');return;
+    }
+    if(msg==='CAS_MISS_UPDATED' || msg==='CAS_MISS_LOCKED'){
       toast('다른 관리자가 이 발주 상태를 이미 변경했습니다. 새로고침 후 다시 시도해주세요.','warning');return;
     }
-    if(isOrderLockedState(_cur)!==_snapshotIsLocked){
-      toast('이 발주의 확정 상태가 이미 바뀌었습니다. 새로고침 후 다시 시도해주세요.','warning');return;
-    }
-  }catch(e){
-    console.warn('[toggleOrderLock] CAS 재검증 실패:',e&&e.message);
-    toast('서버 상태 재확인 실패. 새로고침 후 다시 시도해주세요.','error');return;
+    console.error('[toggleOrderLock] transaction 실패:', msg);
+    toast('상태 저장 실패. 페이지를 새로고침한 후 다시 시도해주세요.','error');return;
   }
 
-  // 재고는 발주 넣는 시점에 이미 차감됨 — 확정/해제 시 재고 변동 없음
-  if(!isOrderLockedState(order)){
-    // 발주 확정: status → 발주확정, 자물쇠 잠금
-    orders[idx].isLocked=true;
-    orders[idx].status='발주확정';
-    orders[idx].updatedAt=now;
-    addStatusHistory(idx, orders, '발주확정', '관리자 확정');
-    // [2026-07-09] 유케이 사고 재발 방지: 저장 완료 확인 후 성공 토스트
-    try {
-      await DB.set('orders',orders);
-    } catch (e) {
-      toast('확정 저장 실패. 페이지를 새로고침한 후 다시 시도해주세요.','error');
-      return;
+  // 로컬 mem 반영 (서버가 이미 커밋한 최신 문서로 덮음)
+  orders[idx] = committedOrder;
+  try{
+    if(window._mem && Array.isArray(window._mem.orders)){
+      const _mIdx = window._mem.orders.findIndex(o=>o.id===orderId);
+      if(_mIdx>-1) window._mem.orders[_mIdx] = committedOrder;
     }
+  }catch(_e){}
+
+  if(_nextIsLocked){
     toast('발주가 확정되었습니다.','success');
     // 거래명세서 자동 발급 (best-effort, 실패해도 발주확정은 유지)
     if(window.LumaneInvoice && typeof window.LumaneInvoice.autoCreateForOrder==='function'){
-      window.LumaneInvoice.autoCreateForOrder(orders[idx],{reason:'lock'}).catch(e=>console.warn('[Invoice 자동발급]',e&&e.message));
+      window.LumaneInvoice.autoCreateForOrder(committedOrder,{reason:'lock'}).catch(e=>console.warn('[Invoice 자동발급]',e&&e.message));
     }
   } else {
-    // 확정 해제: status → 발주대기, 자물쇠 열림
-    orders[idx].isLocked=false;
-    orders[idx].status='발주대기';
-    orders[idx].updatedAt=now;
-    addStatusHistory(idx, orders, '발주대기', '확정 해제');
-    // [2026-07-09] 유케이 사고 재발 방지: 저장 완료 확인 후 성공 토스트
-    try {
-      await DB.set('orders',orders);
-    } catch (e) {
-      toast('해제 저장 실패. 페이지를 새로고침한 후 다시 시도해주세요.','error');
-      return;
-    }
     toast('확정이 해제되었습니다.','warning');
     // [2026-08-03] 확정 해제 후에도 발주는 살아있음(발주대기) → 명세서 재발급.
-    // autoCreateForOrder 가 기존 명세서를 원자적으로 갱신하고 발주자 노출을 중단한다.
-    // 결과: 확정→해제 후에도 원장 유지 (기존엔 cancel 만 되어 원장에서 사라졌음)
     if(window.LumaneInvoice && typeof window.LumaneInvoice.autoCreateForOrder==='function'){
-      window.LumaneInvoice.autoCreateForOrder(orders[idx],{reason:'unlock',forceUnsend:true}).catch(e=>console.warn('[Invoice 재발급]',e&&e.message));
+      window.LumaneInvoice.autoCreateForOrder(committedOrder,{reason:'unlock',forceUnsend:true}).catch(e=>console.warn('[Invoice 재발급]',e&&e.message));
     }
   }
   openOrderDetail(orderId);
