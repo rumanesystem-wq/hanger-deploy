@@ -833,21 +833,44 @@ function selectOrdererForOrder(ordererId){
   toast(proxyOrdererForOrder.deliveryName+' 업체로 선택했습니다.','success');
 }
 
-function openOrderModal(){
+async function openOrderModal(){
   proxyOrdererForOrder=null;
   // [2026-07-14] 편집 흐름 잔재 정리 — 신규 발주 진입 시 이전 편집 order의 이름이 UI에 남지 않도록
   window._pendingEditOrder=null;
   _resetOrderModalBtn(); // saveBtn onclick 항상 초기화
   if(!isAdmin()){
-    const myDrafts=getOrders().filter(o=>{
-      if(o.status!=='임시저장')return false;
-      if(o.createdBy&&currentUser&&o.createdBy!==currentUser.id)return false;
-      return true;
-    }).sort((a,b)=>(b.id||0)-(a.id||0));
+    // [Phase 3 2026-08-27] flag ON이면 hanger_drafts 컬렉션에서 draft 조회
+    //   기존: orders 컬렉션에서 status='임시저장' 필터
+    let myDrafts;
+    if(typeof _draftFlag==='function' && _draftFlag() && typeof getDrafts==='function'){
+      try{
+        const _drafts = await getDrafts(currentUser?currentUser.id:null);
+        // draft doc → 기존 order-like 객체로 매핑 (payload 병합)
+        myDrafts = (_drafts||[]).map(d => ({
+          ...(d.payload||{}),
+          id: d.draftId,          // 임시 id: draftId 사용
+          draftId: d.draftId,
+          orderNum: '',           // 임시저장은 발주번호 없음
+          status: '임시저장',
+          createdBy: d.createdBy||'',
+          createdAt: d.createdAt||'',
+          updatedAt: d.updatedAt||'',
+        })).sort((a,b)=>String(b.updatedAt||'').localeCompare(String(a.updatedAt||'')));
+      }catch(e){
+        console.warn('[openOrderModal] getDrafts 실패, orders 폴백:', e&&e.message);
+        myDrafts = getOrders().filter(o=>o.status==='임시저장' && (!o.createdBy||!currentUser||o.createdBy===currentUser.id)).sort((a,b)=>(b.id||0)-(a.id||0));
+      }
+    } else {
+      myDrafts=getOrders().filter(o=>{
+        if(o.status!=='임시저장')return false;
+        if(o.createdBy&&currentUser&&o.createdBy!==currentUser.id)return false;
+        return true;
+      }).sort((a,b)=>(b.id||0)-(a.id||0));
+    }
 
     if(myDrafts.length>0){
       const draft=myDrafts[0];
-      const label=draft.orderNum||('#'+draft.id);
+      const label=draft.orderNum||draft.draftId||('#'+draft.id);
       const doLoad=confirm(`임시저장된 발주서가 있습니다 [${label}].\n불러오시겠습니까?\n\n확인 → 임시저장 불러오기\n취소 → 새로 작성`);
       if(doLoad)window._pendingEditOrder=draft;
       _openOrderModalRender(null);
@@ -1387,25 +1410,46 @@ function _restoreDraftToModal(order){
   const saveBtn=document.querySelector('#order-modal .order-modal-bottom .btn-primary');
   if(saveBtn){
     saveBtn.textContent='발주 넣기';
-    saveBtn.onclick=()=>{
-      // 기존 draft 삭제 후 발주대기로 제출
-      const allOrders=DB.get('orders',[]);
-      const draftIdx=allOrders.findIndex(o=>o.id===order.id);
-      if(draftIdx>-1){
-        const orig=allOrders[draftIdx];
-        window._editOverride={
-          id:orig.id,
-          orderNum:orig.orderNum,
-          originalStatus:orig.status||'',
-          status:'발주대기',
-          createdBy:orig.createdBy||'',
-          createdAt:orig.createdAt||new Date().toISOString(),
-          statusHistory:orig.statusHistory||[]
-        };
-        allOrders.splice(draftIdx,1);
-        DB.set('orders',allOrders);
-        const prs=DB.get('purchase_requests',[]).filter(p=>p.orderId!==order.id);
-        DB.set('purchase_requests',prs);
+    saveBtn.onclick=async ()=>{
+      // [Phase 3 2026-08-27] draft 승격: flag ON이면 hanger_drafts에서 삭제 + 신규 order 생성
+      //   기존: orders에서 splice + _editOverride로 원본 id/orderNum 재사용
+      //   신규: draft 삭제 → _editOverride 없이 신규 order로 저장 (오늘 날짜 orderNum 부여)
+      const isDraftFlow = order.draftId && typeof _draftFlag==='function' && _draftFlag();
+      if(isDraftFlow){
+        // draft 백업(승격 후 order 저장 실패 시 draft 복원)
+        const _draftBackup = { ...order };
+        try{
+          await deleteDraft(order.draftId);
+        }catch(e){
+          console.warn('[draft 승격] deleteDraft 실패:', e&&e.message);
+          toast('임시저장 삭제 실패. 새로고침 후 다시 시도해주세요.','error');return;
+        }
+        // 승격 후 order 저장이 실패하면 draft 복원 (submitOrder 내부에서 throw 시)
+        // Phase 4 완전 원자화(Firestore transaction)는 별도 세션. 여기서는 rollback으로 안전망.
+        window._promotingDraftId = order.draftId;
+        window._promotingDraftBackup = _draftBackup;
+        // _editOverride 없이 신규 order로 진행 → 오늘 날짜 orderNum·발주일 자동 할당
+        window._editOverride = null;
+      } else {
+        // 기존 흐름: orders 컬렉션에서 draft splice
+        const allOrders=DB.get('orders',[]);
+        const draftIdx=allOrders.findIndex(o=>o.id===order.id);
+        if(draftIdx>-1){
+          const orig=allOrders[draftIdx];
+          window._editOverride={
+            id:orig.id,
+            orderNum:orig.orderNum,
+            originalStatus:orig.status||'',
+            status:'발주대기',
+            createdBy:orig.createdBy||'',
+            createdAt:orig.createdAt||new Date().toISOString(),
+            statusHistory:orig.statusHistory||[]
+          };
+          allOrders.splice(draftIdx,1);
+          DB.set('orders',allOrders);
+          const prs=DB.get('purchase_requests',[]).filter(p=>p.orderId!==order.id);
+          DB.set('purchase_requests',prs);
+        }
       }
       const titleEl=document.querySelector('#order-modal .modal-title');
       if(titleEl)titleEl.textContent=isAdmin()?'대리 발주서 작성':'새 발주서 등록';
@@ -1752,9 +1796,29 @@ async function submitOrder(saveMode='발주확정'){
   try{
     ({orderId,shortageCount,order:savedOrder}=await saveOrder({deliveryTo,address,orderDate,shipDate,note,upperMaterials,upperCommonColor,rodItems,rod2400Required,rodTotalLen,rodUnitPrice,rodAmount,rodVat,shelfItems,drawerItems,drawerMemo,etcMemo,sharedColor,totalSupply,totalVat:totalVatAmt,totalAmount,warehouse,proxyOrdererId,proxyOrdererName,proxyCreatedByAdmin:isAdmin()},saveMode));
   }catch(_e){
-    toast(((_e&&_e.message)||'발주 저장 실패. 다시 시도해주세요.'),'error');
+    // [Phase 4 안전망 2026-08-27] draft 승격 중 saveOrder 실패면 draft 복원
+    if(window._promotingDraftId && window._promotingDraftBackup && typeof saveDraft==='function'){
+      try{
+        await saveDraft(window._promotingDraftBackup.payload||window._promotingDraftBackup, {
+          draftId: window._promotingDraftId,
+          createdBy: window._promotingDraftBackup.createdBy,
+          createdAt: window._promotingDraftBackup.createdAt,
+        });
+        toast('발주 저장 실패 → 임시저장 복원됨. 다시 시도해주세요.','warning');
+      }catch(_rbErr){
+        console.error('[draft 승격 롤백 실패]', _rbErr&&_rbErr.message);
+        toast('발주 저장 실패 + 임시저장 복원도 실패. 관리자에게 알려주세요.','error');
+      }
+    } else {
+      toast(((_e&&_e.message)||'발주 저장 실패. 다시 시도해주세요.'),'error');
+    }
+    window._promotingDraftId=null;
+    window._promotingDraftBackup=null;
     return;
   }
+  // 성공: 승격 완료 → backup 정리
+  window._promotingDraftId=null;
+  window._promotingDraftBackup=null;
   const shouldCreateInvoice=savedOrder&&(savedOrder.status==='발주대기'||savedOrder.status==='발주확정'||savedOrder.status==='출고완료');
   if(shouldCreateInvoice&&window.LumaneInvoice&&typeof window.LumaneInvoice.autoCreateForOrder==='function'){
     window.LumaneInvoice.autoCreateForOrder(savedOrder,{reason:'order-save'}).catch(e=>console.warn('[주문 저장 후 명세서 자동생성 실패]',e&&e.message));

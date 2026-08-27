@@ -16,9 +16,19 @@ const FIRESTORE_HOST = "http://localhost:18080";
 
 async function getDoc(request, id: string | number) {
   const url = `${FIRESTORE_HOST}/v1/projects/${PROJECT_ID}/databases/(default)/documents/hanger_items/${id}`;
-  const res = await request.get(url);
-  if (!res.ok()) return null;
-  return res.json();
+  // [2026-08-27] flaky 방어: 전체 e2e 병렬 실행 시 로컬 에뮬레이터 부하로 timeout 발생 → 3회 재시도
+  let lastErr;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const res = await request.get(url, { timeout: 10000 });
+      if (!res.ok()) return null;
+      return res.json();
+    } catch (e) {
+      lastErr = e;
+      if (i < 2) await new Promise(r => setTimeout(r, 500 * (i + 1)));
+    }
+  }
+  throw lastErr;
 }
 
 async function bootAsAdmin(page) {

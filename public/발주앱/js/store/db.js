@@ -1957,6 +1957,13 @@ async function saveOrder(payload, saveMode='발주확정'){
   _saveOrderInFlight=true;
   let _saveLockAcquired=false;
   try{
+  // [Phase 2 2026-08-27] 임시저장 분리: flag ON + 신규 저장이면 hanger_drafts로 위임
+  //   편집(_editOverride) 흐름은 그대로 유지 (draft 편집은 별도 phase에서 이동).
+  //   호출부는 {orderId, shortageCount, order:{status:'임시저장'}} 형태 기대 → 그 형태로 감싸기.
+  if(saveMode==='임시저장' && _draftFlag() && !window._editOverride){
+    const _draft = await saveDraft(payload);
+    return { orderId: _draft.draftId, shortageCount: 0, order: { ...payload, id: _draft.draftId, draftId: _draft.draftId, status: '임시저장', createdAt: _draft.createdAt, updatedAt: _draft.updatedAt } };
+  }
   // [2026-07-31 라운드4 SAVE-RACE] 재고 차감 모드면 PC간 서버 락 획득.
   // 임시저장은 재고 안 건드리므로 락 없음. baseline과 함께 이중 방어.
   const _requestedSaveMode=(window._editOverride&&window._editOverride.status)||saveMode||'발주확정';
@@ -2446,6 +2453,64 @@ async function saveOrder(payload, saveMode='발주확정'){
       try{ await window._releaseServerSaveLock(); }catch(_e){}
     }
   }
+}
+
+// ══════════════════════════════════════════════════
+// [Phase 1 2026-08-27] 임시저장 분리 — hanger_drafts 컬렉션
+// 임시저장은 발주(hanger_orders)와 분리된 별도 컬렉션.
+// 발주번호·statusHistory·isLocked 없음. 미완성 초안 전용.
+// 승격은 promoteDraft로 트랜잭션 (draft 삭제 + order 신규 생성).
+// 롤아웃 flag: window.DRAFT_COLLECTION_ENABLED (기본 false).
+// ══════════════════════════════════════════════════
+function _draftFlag(){ return window.DRAFT_COLLECTION_ENABLED===true; }
+function _newDraftId(){
+  const t=Date.now().toString(36);
+  const r=Math.random().toString(36).slice(2,8);
+  return `draft-${t}-${r}`;
+}
+
+async function saveDraft(payload, opts={}){
+  if(!window._FS||typeof window._FS.collectionAdd!=='function'){
+    throw new Error('draft 저장 기능 미로드');
+  }
+  const now=new Date().toISOString();
+  const draftId=opts.draftId||_newDraftId();
+  const doc={
+    draftId,
+    createdBy: opts.createdBy||(currentUser?currentUser.id:''),
+    createdByName: currentUser?currentUser.name:'',
+    createdAt: opts.createdAt||now,
+    updatedAt: now,
+    payload: JSON.parse(JSON.stringify(payload||{})),
+  };
+  await window._FS.collectionAdd('hanger_drafts', draftId, doc);
+  return doc;
+}
+
+async function getDrafts(byUserId){
+  if(!window._FS||typeof window._FS.collectionGet!=='function') return [];
+  const arr=await window._FS.collectionGet('hanger_drafts');
+  if(!Array.isArray(arr)) return [];
+  return byUserId ? arr.filter(d=>d&&d.createdBy===byUserId) : arr;
+}
+
+async function getDraft(draftId){
+  const arr=await getDrafts();
+  return arr.find(d=>d&&d.draftId===draftId)||null;
+}
+
+async function deleteDraft(draftId){
+  if(!window._FS||typeof window._FS.collectionDelete!=='function'){
+    throw new Error('draft 삭제 기능 미로드');
+  }
+  await window._FS.collectionDelete('hanger_drafts', draftId);
+}
+
+if(typeof window!=='undefined'){
+  window.saveDraft=saveDraft;
+  window.getDrafts=getDrafts;
+  window.getDraft=getDraft;
+  window.deleteDraft=deleteDraft;
 }
 
 // [2026-07-24 Codex] localhost/127.0.0.1에서만 DB를 window에 노출 (E2E·QA 편의)
