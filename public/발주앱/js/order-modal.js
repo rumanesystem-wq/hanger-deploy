@@ -837,16 +837,19 @@ async function openOrderModal(){
   proxyOrdererForOrder=null;
   // [2026-07-14] 편집 흐름 잔재 정리 — 신규 발주 진입 시 이전 편집 order의 이름이 UI에 남지 않도록
   window._pendingEditOrder=null;
+  // [P1-A stale fix 2026-08-27] 신규 모달 진입 시 draft 승격 상태 정리 (검증 실패 잔재 방지)
+  window._promotingDraftId=null;
   _resetOrderModalBtn(); // saveBtn onclick 항상 초기화
   if(!isAdmin()){
-    // [Phase 3 2026-08-27] flag ON이면 hanger_drafts 컬렉션에서 draft 조회
-    //   기존: orders 컬렉션에서 status='임시저장' 필터
+    // [Phase 3 + P2-A 2026-08-27] draft 조회: flag ON이면 drafts + orders 병합
+    //   flag ON에서도 기존 orders 임시저장이 있을 수 있음(마이그레이션 전) → 둘 다 보여줘야 유실 없음
     let myDrafts;
+    const _legacyDrafts = getOrders().filter(o=>o.status==='임시저장' && (!o.createdBy||!currentUser||o.createdBy===currentUser.id));
     if(typeof _draftFlag==='function' && _draftFlag() && typeof getDrafts==='function'){
+      let _newDrafts = [];
       try{
         const _drafts = await getDrafts(currentUser?currentUser.id:null);
-        // draft doc → 기존 order-like 객체로 매핑 (payload 병합)
-        myDrafts = (_drafts||[]).map(d => ({
+        _newDrafts = (_drafts||[]).map(d => ({
           ...(d.payload||{}),
           id: d.draftId,          // 임시 id: draftId 사용
           draftId: d.draftId,
@@ -855,17 +858,18 @@ async function openOrderModal(){
           createdBy: d.createdBy||'',
           createdAt: d.createdAt||'',
           updatedAt: d.updatedAt||'',
-        })).sort((a,b)=>String(b.updatedAt||'').localeCompare(String(a.updatedAt||'')));
+        }));
       }catch(e){
-        console.warn('[openOrderModal] getDrafts 실패, orders 폴백:', e&&e.message);
-        myDrafts = getOrders().filter(o=>o.status==='임시저장' && (!o.createdBy||!currentUser||o.createdBy===currentUser.id)).sort((a,b)=>(b.id||0)-(a.id||0));
+        console.warn('[openOrderModal] getDrafts 실패, legacy만 사용:', e&&e.message);
       }
+      // 병합: 새 drafts + 기존 orders 임시저장. updatedAt/createdAt 순 정렬.
+      myDrafts = [..._newDrafts, ..._legacyDrafts].sort((a,b)=>{
+        const at = a.updatedAt||a.createdAt||'';
+        const bt = b.updatedAt||b.createdAt||'';
+        return String(bt).localeCompare(String(at));
+      });
     } else {
-      myDrafts=getOrders().filter(o=>{
-        if(o.status!=='임시저장')return false;
-        if(o.createdBy&&currentUser&&o.createdBy!==currentUser.id)return false;
-        return true;
-      }).sort((a,b)=>(b.id||0)-(a.id||0));
+      myDrafts=_legacyDrafts.sort((a,b)=>(b.id||0)-(a.id||0));
     }
 
     if(myDrafts.length>0){
@@ -893,6 +897,10 @@ function confirmCloseOrderModal(){
   closeModal('order-modal');
   _resetOrderModalBtn();
   window._editOverride=null; // 수정 모달 취소 시 정리 (다음 신규 등록에 누수 방지)
+  // [P1-A stale fix 2026-08-27] 모달 닫기 시 draft 승격 상태 정리
+  //   검증 실패 early return 후 사용자가 모달 닫고 무관한 발주 저장하면 stale draftId가
+  //   무관한 draft를 삭제할 위험 → 여기서 확실히 초기화.
+  window._promotingDraftId=null;
   if(typeof window._releaseActiveOrderEditLock==='function'){
     window._releaseActiveOrderEditLock().catch(()=>{});
   }
@@ -1312,7 +1320,11 @@ function _restoreDraftToModal(order){
     delivToEl2.tabIndex=-1;
   }
   document.getElementById('o-address').value=order.address||order.customerName||'';
-  setDateValue('o-date',order.orderDate||todayStr());
+  // [P2-B 2026-08-27] draft 복원 시 발주일=오늘 (실제 발주하는 날 = 발주일)
+  //   flag ON draft 승격 흐름에서만 오늘로 리셋. 기존 orders 임시저장 복원은 원래 값 유지 (호환).
+  //   shipDate(예정 출고일)는 발주자 의도값이므로 그대로 유지.
+  const _isDraftRestore = order.draftId && typeof _draftFlag==='function' && _draftFlag();
+  setDateValue('o-date', _isDraftRestore ? todayStr() : (order.orderDate||todayStr()));
   setDateValue('o-ship-date',order.shipDate||'');
   document.getElementById('o-note').value=order.note||'';
   document.getElementById('o-drawer-memo').value=order.drawerMemo||'';
@@ -1416,20 +1428,11 @@ function _restoreDraftToModal(order){
       //   신규: draft 삭제 → _editOverride 없이 신규 order로 저장 (오늘 날짜 orderNum 부여)
       const isDraftFlow = order.draftId && typeof _draftFlag==='function' && _draftFlag();
       if(isDraftFlow){
-        // draft 백업(승격 후 order 저장 실패 시 draft 복원)
-        const _draftBackup = { ...order };
-        try{
-          await deleteDraft(order.draftId);
-        }catch(e){
-          console.warn('[draft 승격] deleteDraft 실패:', e&&e.message);
-          toast('임시저장 삭제 실패. 새로고침 후 다시 시도해주세요.','error');return;
-        }
-        // 승격 후 order 저장이 실패하면 draft 복원 (submitOrder 내부에서 throw 시)
-        // Phase 4 완전 원자화(Firestore transaction)는 별도 세션. 여기서는 rollback으로 안전망.
+        // [P1-A 2026-08-27] draft 삭제를 submitOrder 성공 후로 이동:
+        //   기존: draft 먼저 삭제 → submitOrder 검증 실패(단순 return) → rollback 안 탐 → 유실
+        //   신규: submitOrder 성공 시점에 draft 삭제. 검증 실패 return 시 draft 그대로 유지.
         window._promotingDraftId = order.draftId;
-        window._promotingDraftBackup = _draftBackup;
-        // _editOverride 없이 신규 order로 진행 → 오늘 날짜 orderNum·발주일 자동 할당
-        window._editOverride = null;
+        window._editOverride = null; // 신규 order로 진행 → 오늘 날짜 orderNum·발주일 자동 할당
       } else {
         // 기존 흐름: orders 컬렉션에서 draft splice
         const allOrders=DB.get('orders',[]);
@@ -1794,31 +1797,42 @@ async function submitOrder(saveMode='발주확정'){
   }
   let orderId, shortageCount, savedOrder;
   try{
+    // [P1-B 2026-08-27] draft 승격이면 saveOrder 진입 전 draft 존재 재확인
+    //   두 탭 순차 승격 방어. 없으면 다른 탭이 이미 처리 → abort (재고 이중 차감 방지).
+    if(window._promotingDraftId && typeof getDraft==='function'){
+      try{
+        const _stillExists = await getDraft(window._promotingDraftId);
+        if(!_stillExists){
+          toast('이 임시저장은 다른 곳에서 이미 처리되었습니다. 새로고침 후 확인해주세요.','warning');
+          window._promotingDraftId=null;
+          return;
+        }
+      }catch(_chkErr){
+        console.warn('[draft 승격] 존재 재확인 실패:', _chkErr&&_chkErr.message);
+        toast('임시저장 상태 확인 실패. 새로고침 후 다시 시도해주세요.','error');
+        window._promotingDraftId=null;
+        return;
+      }
+    }
     ({orderId,shortageCount,order:savedOrder}=await saveOrder({deliveryTo,address,orderDate,shipDate,note,upperMaterials,upperCommonColor,rodItems,rod2400Required,rodTotalLen,rodUnitPrice,rodAmount,rodVat,shelfItems,drawerItems,drawerMemo,etcMemo,sharedColor,totalSupply,totalVat:totalVatAmt,totalAmount,warehouse,proxyOrdererId,proxyOrdererName,proxyCreatedByAdmin:isAdmin()},saveMode));
   }catch(_e){
-    // [Phase 4 안전망 2026-08-27] draft 승격 중 saveOrder 실패면 draft 복원
-    if(window._promotingDraftId && window._promotingDraftBackup && typeof saveDraft==='function'){
-      try{
-        await saveDraft(window._promotingDraftBackup.payload||window._promotingDraftBackup, {
-          draftId: window._promotingDraftId,
-          createdBy: window._promotingDraftBackup.createdBy,
-          createdAt: window._promotingDraftBackup.createdAt,
-        });
-        toast('발주 저장 실패 → 임시저장 복원됨. 다시 시도해주세요.','warning');
-      }catch(_rbErr){
-        console.error('[draft 승격 롤백 실패]', _rbErr&&_rbErr.message);
-        toast('발주 저장 실패 + 임시저장 복원도 실패. 관리자에게 알려주세요.','error');
-      }
-    } else {
-      toast(((_e&&_e.message)||'발주 저장 실패. 다시 시도해주세요.'),'error');
-    }
+    // saveOrder 실패: draft 삭제 안 했으니 그대로 유지. 그냥 에러 토스트.
     window._promotingDraftId=null;
-    window._promotingDraftBackup=null;
+    toast(((_e&&_e.message)||'발주 저장 실패. 다시 시도해주세요.'),'error');
     return;
   }
-  // 성공: 승격 완료 → backup 정리
-  window._promotingDraftId=null;
-  window._promotingDraftBackup=null;
+  // [P1-A 2026-08-27] saveOrder 성공 후 draft 삭제
+  //   실패 시 draft 그대로 유지(rollback 불필요). 이 지점부터는 draft·order 둘 다 존재 짧은 창.
+  //   완전 원자화(Firestore transaction)는 별도 세션.
+  if(window._promotingDraftId && typeof deleteDraft==='function'){
+    try{
+      await deleteDraft(window._promotingDraftId);
+    }catch(_delErr){
+      // draft 삭제 실패해도 order는 이미 저장됨. 관리자에게만 알림 (사용자는 발주 성공한 상태).
+      console.warn('[draft 승격] deleteDraft 실패 (order 저장 성공, draft 잔존):', _delErr&&_delErr.message);
+    }
+    window._promotingDraftId=null;
+  }
   const shouldCreateInvoice=savedOrder&&(savedOrder.status==='발주대기'||savedOrder.status==='발주확정'||savedOrder.status==='출고완료');
   if(shouldCreateInvoice&&window.LumaneInvoice&&typeof window.LumaneInvoice.autoCreateForOrder==='function'){
     window.LumaneInvoice.autoCreateForOrder(savedOrder,{reason:'order-save'}).catch(e=>console.warn('[주문 저장 후 명세서 자동생성 실패]',e&&e.message));
