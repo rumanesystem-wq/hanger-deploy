@@ -713,7 +713,11 @@
             if(!snap.exists) throw new Error('CAS_MISS_NOT_FOUND');
             const cur = snap.data();
             if((cur.updatedAt||'') !== (expectedUpdatedAt||'')) throw new Error('CAS_MISS_UPDATED');
-            if((cur.isLocked===true) !== (expectedIsLocked===true)) throw new Error('CAS_MISS_LOCKED');
+            // [P1-2 코덱스 지적 fix 2026-08-28] effective lock 판정 통일:
+            //   UI(isOrderLockedState)는 isLocked===true || status==='발주확정' 로 판정.
+            //   기존 문서 중 status='발주확정' + isLocked 미정/false 케이스가 항상 CAS 실패하던 것 fix.
+            const _curEffectiveLock = (cur.isLocked===true) || (cur.status==='발주확정');
+            if(_curEffectiveLock !== (expectedIsLocked===true)) throw new Error('CAS_MISS_LOCKED');
             const nextDoc = {
               ...cur,
               status: nextStatus,

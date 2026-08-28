@@ -1838,16 +1838,11 @@ async function submitOrder(saveMode='발주확정'){
     }
     window._promotingDraftId=null;
   }
-  // [P1-3 fix 2026-08-27] legacy draft 승격 성공 후 PR 정리
-  //   saveOrder가 편집 모드로 원본 문서를 발주대기로 update함 (splice 불필요).
-  //   PR만 정리: 임시저장 시점의 PR은 제거.
+  // [P1-1 코덱스 지적 fix 2026-08-28] legacy 승격 후처리에서 PR 삭제 제거
+  //   기존: saveOrder가 방금 새 PR 생성한 뒤 후처리가 같은 orderId PR 전부 삭제 → 발주필요 유실
+  //   신규: saveOrder의 원자적 PR 교체(db.js:transactOrderInventory)에 맡김. 후처리 없음.
+  //   플래그만 정리.
   if(window._promotingLegacyDraftId){
-    try{
-      const prs=DB.get('purchase_requests',[]).filter(p=>p.orderId!==window._promotingLegacyDraftId);
-      DB.set('purchase_requests',prs);
-    }catch(_prErr){
-      console.warn('[legacy draft 승격] PR 정리 실패:', _prErr&&_prErr.message);
-    }
     window._promotingLegacyDraftId=null;
   }
   const shouldCreateInvoice=savedOrder&&(savedOrder.status==='발주대기'||savedOrder.status==='발주확정'||savedOrder.status==='출고완료');
