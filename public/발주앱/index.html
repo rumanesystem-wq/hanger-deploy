@@ -623,12 +623,16 @@
           return committedResult;
         },
         // 발주서와 재고를 한 transaction으로 저장한다. 둘 중 하나만 저장되는 상태를 허용하지 않는다.
-        async transactOrderInventory({order,items,expectedItems,purchaseRequests,replacePurchaseRequestsForOrderId,stockLogs}) {
+        async transactOrderInventory({order,items,expectedItems,purchaseRequests,replacePurchaseRequestsForOrderId,stockLogs,draftId,draftOwnerExpected}) {
           if(!order||!order.orderNum) throw new Error('order/orderNum 필수');
           const itemsRef=db.collection('hanger_data').doc('items');
           const prsRef=db.collection('hanger_data').doc('purchase_requests');
           const logsRef=db.collection('hanger_data').doc('logs');
           const orderRef=db.collection('hanger_orders').doc(String(order.orderNum));
+          // [2026-08-28] draft 승격 시 hanger_drafts 문서를 같은 tx로 삭제
+          //   존재확인 + order 저장 + draft 삭제 원자 커밋 → 두 탭 방어
+          //   [코덱스 P1-2 fix] 소유자 검증 (draftOwnerExpected)도 tx 안에서
+          const draftRef=draftId?db.collection('hanger_drafts').doc(String(draftId)):null;
           const clean=v=>JSON.parse(JSON.stringify(v));
           const stable=v=>{
             if(Array.isArray(v))return v.map(stable);
@@ -644,10 +648,25 @@
           let committedLogs=[];
           let prevItems=[];
           await db.runTransaction(async tx=>{
+            // Firestore tx 규칙: 모든 read를 write 전에 수행
             const itemsSnap=await tx.get(itemsRef);
             const orderSnap=await tx.get(orderRef);
             const prsSnap=await tx.get(prsRef);
             const logsSnap=await tx.get(logsRef);
+            // [flag ON 원자화] draft 존재 확인 — 없으면 다른 곳에서 이미 처리 → abort
+            // [코덱스 P1-2 재fix] 소유자 검증 fail-close: expected/createdBy 하나라도 없으면 throw
+            //   fail-open 방어. 정상 흐름은 saveDraft가 항상 createdBy 세팅.
+            let draftSnap=null;
+            if(draftRef){
+              draftSnap=await tx.get(draftRef);
+              if(!draftSnap.exists){
+                throw new Error('DRAFT_MISSING');
+              }
+              const _draftOwner=draftSnap.data() && draftSnap.data().createdBy;
+              if(!draftOwnerExpected || !_draftOwner || String(_draftOwner)!==String(draftOwnerExpected)){
+                throw new Error('DRAFT_OWNER_MISMATCH');
+              }
+            }
             const currentItems=itemsSnap.exists&&Array.isArray(itemsSnap.data().value)?itemsSnap.data().value:[];
             if(window._itemsDocPerId_dualWrite)prevItems=clean(currentItems);
             if(JSON.stringify(stable(currentItems))!==JSON.stringify(stable(baseline))){
@@ -683,6 +702,8 @@
             tx.set(prsRef,{value:committedPrs,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
             tx.set(logsRef,{value:committedLogs,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});
             tx.set(orderRef,nextOrder);
+            // [flag ON 원자화] draft 원자 삭제 (order 저장과 같은 tx 커밋)
+            if(draftRef) tx.delete(draftRef);
           });
           if(window._itemsDocPerId_dualWrite)_enqueueItemsMirror(nextItems,prevItems).catch(()=>{});
           if(!window._mem)window._mem={};

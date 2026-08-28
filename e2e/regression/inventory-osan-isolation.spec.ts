@@ -1281,6 +1281,9 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
   test("SEC-P2: admin can create proxy order and owner is proxy orderer", async ({ page }) => {
     await loginAdmin(page);
 
+    // [2026-08-28] 임시저장은 hanger_drafts 컬렉션으로 저장됨. saved.order에 metadata 포함.
+    //   대리 임시저장: createdBy = payload.proxyOrdererId (발주자 id)
+    //   proxyCreatedByAdmin은 draft.payload에 포함되어 승격 시 order에 반영됨.
     const result = await evaluateWithNavigationRetry(page, async () => {
       const saved = await window.saveOrder({
         deliveryTo: "대리 발주 테스트 업체",
@@ -1296,10 +1299,9 @@ test.describe("Codex 3차 회귀 (오산 격리 + PR 안전 + atomicity)", () =>
         proxyCreatedByAdmin: true,
         proxyOrdererName: "대리 발주 테스트 업체",
       }, "임시저장");
-      const order = window.DB.get("orders", []).find((o: any) => o.id === saved.orderId);
       return {
-        createdBy: order?.createdBy,
-        proxyCreatedByAdmin: order?.proxyCreatedByAdmin,
+        createdBy: saved.order?.createdBy,
+        proxyCreatedByAdmin: saved.order?.proxyCreatedByAdmin,
       };
     });
 

@@ -842,35 +842,30 @@ async function openOrderModal(){
   window._promotingLegacyDraftId=null;
   _resetOrderModalBtn(); // saveBtn onclick 항상 초기화
   if(!isAdmin()){
-    // [Phase 3 + P2-A 2026-08-27] draft 조회: flag ON이면 drafts + orders 병합
-    //   flag ON에서도 기존 orders 임시저장이 있을 수 있음(마이그레이션 전) → 둘 다 보여줘야 유실 없음
-    let myDrafts;
-    const _legacyDrafts = getOrders().filter(o=>o.status==='임시저장' && (!o.createdBy||!currentUser||o.createdBy===currentUser.id));
-    if(typeof _draftFlag==='function' && _draftFlag() && typeof getDrafts==='function'){
-      let _newDrafts = [];
-      try{
-        const _drafts = await getDrafts(currentUser?currentUser.id:null);
-        _newDrafts = (_drafts||[]).map(d => ({
-          ...(d.payload||{}),
-          id: d.draftId,          // 임시 id: draftId 사용
-          draftId: d.draftId,
-          orderNum: '',           // 임시저장은 발주번호 없음
-          status: '임시저장',
-          createdBy: d.createdBy||'',
-          createdAt: d.createdAt||'',
-          updatedAt: d.updatedAt||'',
-        }));
-      }catch(e){
-        console.warn('[openOrderModal] getDrafts 실패, legacy만 사용:', e&&e.message);
-      }
-      // 병합: 새 drafts + 기존 orders 임시저장. updatedAt/createdAt 순 정렬.
+    // [2026-08-28] draft 조회: hanger_drafts 컬렉션에서 자기 것만
+    //   마이그레이션 전 기존 orders 임시저장도 병합 (배포 후 마이그레이션 1회 실행 시까지)
+    let myDrafts = [];
+    try{
+      const _drafts = await getDrafts(currentUser?currentUser.id:null);
+      const _newDrafts = (_drafts||[]).map(d => ({
+        ...(d.payload||{}),
+        id: d.draftId,
+        draftId: d.draftId,
+        orderNum: '',
+        status: '임시저장',
+        createdBy: d.createdBy||'',
+        createdAt: d.createdAt||'',
+        updatedAt: d.updatedAt||'',
+      }));
+      const _legacyDrafts = getOrders().filter(o=>o.status==='임시저장' && (!o.createdBy||!currentUser||o.createdBy===currentUser.id));
       myDrafts = [..._newDrafts, ..._legacyDrafts].sort((a,b)=>{
         const at = a.updatedAt||a.createdAt||'';
         const bt = b.updatedAt||b.createdAt||'';
         return String(bt).localeCompare(String(at));
       });
-    } else {
-      myDrafts=_legacyDrafts.sort((a,b)=>(b.id||0)-(a.id||0));
+    }catch(e){
+      console.warn('[openOrderModal] getDrafts 실패:', e&&e.message);
+      myDrafts = getOrders().filter(o=>o.status==='임시저장' && (!o.createdBy||!currentUser||o.createdBy===currentUser.id));
     }
 
     if(myDrafts.length>0){
@@ -1322,10 +1317,10 @@ function _restoreDraftToModal(order){
     delivToEl2.tabIndex=-1;
   }
   document.getElementById('o-address').value=order.address||order.customerName||'';
-  // [P2-B 2026-08-27] draft 복원 시 발주일=오늘 (실제 발주하는 날 = 발주일)
-  //   flag ON draft 승격 흐름에서만 오늘로 리셋. 기존 orders 임시저장 복원은 원래 값 유지 (호환).
+  // [2026-08-28] draft 복원 시 발주일=오늘 (실제 발주하는 날 = 발주일)
+  //   draftId 있으면 hanger_drafts에서 온 것 → 오늘로 리셋. 옛 orders 임시저장은 원래 값 유지.
   //   shipDate(예정 출고일)는 발주자 의도값이므로 그대로 유지.
-  const _isDraftRestore = order.draftId && typeof _draftFlag==='function' && _draftFlag();
+  const _isDraftRestore = !!order.draftId;
   setDateValue('o-date', _isDraftRestore ? todayStr() : (order.orderDate||todayStr()));
   setDateValue('o-ship-date',order.shipDate||'');
   document.getElementById('o-note').value=order.note||'';
@@ -1428,7 +1423,7 @@ function _restoreDraftToModal(order){
       // [Phase 3 2026-08-27] draft 승격: flag ON이면 hanger_drafts에서 삭제 + 신규 order 생성
       //   기존: orders에서 splice + _editOverride로 원본 id/orderNum 재사용
       //   신규: draft 삭제 → _editOverride 없이 신규 order로 저장 (오늘 날짜 orderNum 부여)
-      const isDraftFlow = order.draftId && typeof _draftFlag==='function' && _draftFlag();
+      const isDraftFlow = !!order.draftId;
       if(isDraftFlow){
         // [P1-A 2026-08-27] draft 삭제를 submitOrder 성공 후로 이동:
         //   기존: draft 먼저 삭제 → submitOrder 검증 실패(단순 return) → rollback 안 탐 → 유실
@@ -1823,19 +1818,18 @@ async function submitOrder(saveMode='발주확정'){
     // [P1-3 팀 지적 fix 2026-08-27] legacy는 _editOverride가 catch에서 유지되므로
     //   _promotingLegacyDraftId도 함께 유지 → 재시도 성공 시 PR 정리 일관성 확보.
     //   모달 닫기·새 발주 진입 시 stale은 openOrderModal/confirmCloseOrderModal에서 정리됨.
-    toast(((_e&&_e.message)||'발주 저장 실패. 다시 시도해주세요.'),'error');
+    // [flag ON 원자화 2026-08-28] transaction 안에서 draft 사라지면 DRAFT_MISSING throw
+    const _msg = (_e && _e.message) || '';
+    if(_msg.includes('DRAFT_MISSING')){
+      toast('이 임시저장은 다른 곳에서 이미 처리되었습니다. 새로고침 후 확인해주세요.','warning');
+    } else {
+      toast((_msg || '발주 저장 실패. 다시 시도해주세요.'),'error');
+    }
     return;
   }
-  // [P1-A 2026-08-27] saveOrder 성공 후 draft 삭제
-  //   실패 시 draft 그대로 유지(rollback 불필요). 이 지점부터는 draft·order 둘 다 존재 짧은 창.
-  //   완전 원자화(Firestore transaction)는 별도 세션.
-  if(window._promotingDraftId && typeof deleteDraft==='function'){
-    try{
-      await deleteDraft(window._promotingDraftId);
-    }catch(_delErr){
-      // draft 삭제 실패해도 order는 이미 저장됨. 관리자에게만 알림 (사용자는 발주 성공한 상태).
-      console.warn('[draft 승격] deleteDraft 실패 (order 저장 성공, draft 잔존):', _delErr&&_delErr.message);
-    }
+  // [flag ON 원자화 완결 2026-08-28] draft 삭제는 saveOrder 내부 transaction에서 원자 처리됨.
+  //   여기서는 성공 후 플래그 정리만 (기존 사후 deleteDraft 완전 제거 → 3단계 분리 사라짐).
+  if(window._promotingDraftId){
     window._promotingDraftId=null;
   }
   // [P1-1 코덱스 지적 fix 2026-08-28] legacy 승격 후처리에서 PR 삭제 제거

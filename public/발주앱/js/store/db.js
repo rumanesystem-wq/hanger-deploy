@@ -1957,12 +1957,20 @@ async function saveOrder(payload, saveMode='발주확정'){
   _saveOrderInFlight=true;
   let _saveLockAcquired=false;
   try{
-  // [Phase 2 2026-08-27] 임시저장 분리: flag ON + 신규 저장이면 hanger_drafts로 위임
-  //   편집(_editOverride) 흐름은 그대로 유지 (draft 편집은 별도 phase에서 이동).
+  // [2026-08-28] 임시저장 = 항상 hanger_drafts 컬렉션으로 저장 (발주번호·상태이력·재고 미포함)
+  //   편집(_editOverride) 흐름은 orders에서 진행 (임시저장 편집=완료 발주 편집과 무관)
+  //   대리 임시저장(관리자가 발주자 대신) 시 owner = payload.proxyOrdererId (발주자)
   //   호출부는 {orderId, shortageCount, order:{status:'임시저장'}} 형태 기대 → 그 형태로 감싸기.
-  if(saveMode==='임시저장' && _draftFlag() && !window._editOverride){
-    const _draft = await saveDraft(payload);
-    return { orderId: _draft.draftId, shortageCount: 0, order: { ...payload, id: _draft.draftId, draftId: _draft.draftId, status: '임시저장', createdAt: _draft.createdAt, updatedAt: _draft.updatedAt } };
+  if(saveMode==='임시저장' && !window._editOverride){
+    // [코덱스 P1-1 재fix 2026-08-28] payload가 frozen/Proxy여도 delete가 조용히 실패하지 않도록
+    //   새 객체 복사 + 관리자 아닐 때 proxy 필드 완전 배제 (source payload는 안 건드림)
+    const _isAdmin = !!(currentUser && currentUser.role === 'admin');
+    const _cleanPayload = _isAdmin
+      ? {...payload}
+      : (()=>{ const {proxyOrdererId, proxyOrdererName, proxyCreatedByAdmin, ...rest} = payload; return rest; })();
+    const _draftOwner = (_isAdmin && _cleanPayload.proxyOrdererId) || (currentUser?currentUser.id:'');
+    const _draft = await saveDraft(_cleanPayload, {createdBy: _draftOwner});
+    return { orderId: _draft.draftId, shortageCount: 0, order: { ..._cleanPayload, id: _draft.draftId, draftId: _draft.draftId, status: '임시저장', createdAt: _draft.createdAt, updatedAt: _draft.updatedAt, createdBy: _draftOwner } };
   }
   // [2026-07-31 라운드4 SAVE-RACE] 재고 차감 모드면 PC간 서버 락 획득.
   // 임시저장은 재고 안 건드리므로 락 없음. baseline과 함께 이중 방어.
@@ -2357,13 +2365,21 @@ async function saveOrder(payload, saveMode='발주확정'){
   if(!window._FS||typeof window._FS.transactOrderInventory!=='function'){
     throw new Error('원자 저장 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해주세요.');
   }
+  // [2026-08-28] draft 승격 시 draftId를 tx로 전달 → 원자 삭제
+  //   window._promotingDraftId는 order-modal.js의 draft 승격 흐름에서만 세팅됨.
+  //   신규 저장·편집은 draftId 없음 → 기존 동작 유지.
+  // [코덱스 P1-2 fix 2026-08-28] draft 소유자 검증
+  //   기본: currentUser.id (발주자 자기 draft 승격)
+  //   관리자 대리 승격 대비: payload.proxyOrdererId 우선 (미래 확장 방어)
   await window._FS.transactOrderInventory({
     order:orderDoc,
     items:dbItems,
     expectedItems:_itemsBeforeOrderMutation,
     purchaseRequests:newPrs,
     replacePurchaseRequestsForOrderId:_eo?orderDoc.id:null,
-    stockLogs
+    stockLogs,
+    draftId: window._promotingDraftId || null,
+    draftOwnerExpected: payload.proxyOrdererId || (currentUser?currentUser.id:null),
   });
   delete orderDoc._expectedPreviousUpdatedAt;
   // [2026-08-03] 편집 저장이면 발주 수정 이력 로그. 뭐 바뀌었는지 요약 텍스트로.
@@ -2456,13 +2472,10 @@ async function saveOrder(payload, saveMode='발주확정'){
 }
 
 // ══════════════════════════════════════════════════
-// [Phase 1 2026-08-27] 임시저장 분리 — hanger_drafts 컬렉션
-// 임시저장은 발주(hanger_orders)와 분리된 별도 컬렉션.
-// 발주번호·statusHistory·isLocked 없음. 미완성 초안 전용.
-// 승격은 promoteDraft로 트랜잭션 (draft 삭제 + order 신규 생성).
-// 롤아웃 flag: window.DRAFT_COLLECTION_ENABLED (기본 false).
+// [2026-08-28] 임시저장 = hanger_drafts 컬렉션 (완전 분리)
+// 발주번호·statusHistory·isLocked·재고차감 없음. 미완성 초안 전용.
+// 승격은 transactOrderInventory에 draftId 전달 → draft 삭제 + order 생성 원자적.
 // ══════════════════════════════════════════════════
-function _draftFlag(){ return window.DRAFT_COLLECTION_ENABLED===true; }
 function _newDraftId(){
   const t=Date.now().toString(36);
   const r=Math.random().toString(36).slice(2,8);
